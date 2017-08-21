@@ -1,6 +1,10 @@
 module Main where
 
-import Lib
+import Anapo.Core
+import Anapo.Loop
+import Anapo.TestApps
 
 main :: IO ()
-main = run
+main = runClientM $ do
+  st <- testAppsInit
+  installComponent st testAppsComponent
