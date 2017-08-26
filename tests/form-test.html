@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>test</title>
+  </head>
+<body>
+  <div id="container"></div>
+  <script>
+    var container = document.getElementById("container");
+
+    function injectForm(inputText) {
+      // Remove all container children
+      while (container.hasChildNodes()) {
+        container.removeChild(container.lastChild);
+      }
+      // Insert form
+      var form = document.createElement("form");
+      container.appendChild(form);
+      form.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        console.log("Form submitted!");
+      });
+      var input = document.createElement("input");
+      input.value = inputText;
+      input.addEventListener("change", function () {
+        console.log("Input changed, replacing form");
+        injectForm(input.value);
+      });
+      form.appendChild(input);
+      var button = document.createElement("button");
+      form.appendChild(button);
+      button.appendChild(document.createTextNode("Test Button"));
+    }
+
+    injectForm("");
+  </script>
+</body>
