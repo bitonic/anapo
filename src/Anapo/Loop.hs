@@ -14,7 +14,7 @@ import Anapo.Render
 
 componentLoop :: forall state acc.
      (Show state)
-  => state -> Component state
+  => state -> Component' state
   -> acc -> (acc -> VirtualDom -> ClientM acc)
   -> ClientM acc
   -- ^ returns the final accumulator, when there is nothing left to do.
@@ -38,7 +38,7 @@ componentLoop !st0 vdom !acc0 useDom = do
           go (Just st) st' acc'
   go Nothing st0 acc0
 
-installComponent :: Show state => RenderOptions -> state -> Component state -> ClientM ()
+installComponent :: Show state => RenderOptions -> state -> Component' state -> ClientM ()
 installComponent ro st0 vdom0 = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.getBodyUnchecked doc

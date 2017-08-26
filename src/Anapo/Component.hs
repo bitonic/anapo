@@ -9,8 +9,11 @@ module Anapo.Component
     -- * ComponentM
   , ComponentM
   , Component
+  , Component'
   , KeyedComponent
+  , KeyedComponent'
   , Node
+  , Node'
   , runComponentM
   , runComponent
   , askDispatch
@@ -24,6 +27,8 @@ module Anapo.Component
   , text
   , marked
   , zoom
+  , zoom_
+  , zoom'
   , rawNode
 
     -- * elements
@@ -75,83 +80,91 @@ import Anapo.Core
 -- Monad
 -- --------------------------------------------------------------------
 
-type Dispatch state = (state -> ClientM state) -> ClientM ()
+type DispatchM state = (state -> ClientM state) -> ClientM ()
+type Dispatch state = (state -> state) -> ClientM ()
 
-newtype ComponentM dom state a = ComponentM
-  { unComponentM :: forall out. Lens' out state -> Dispatch out -> Maybe out -> out -> (dom, a) }
-type Component state = ComponentM VirtualDom state ()
-type KeyedComponent state = ComponentM KeyedVirtualDom state ()
-type Node state = ComponentM () state VirtualDomNode
+newtype ComponentM dom read write a = ComponentM
+  { unComponentM :: forall out. Lens' out write -> DispatchM out -> Maybe write -> read -> (dom, a) }
 
-instance IsString (Node state) where
+type ComponentM' dom state = ComponentM dom state state
+type Component' state = ComponentM VirtualDom state state ()
+type Component read write = ComponentM VirtualDom read write ()
+type KeyedComponent' state = ComponentM KeyedVirtualDom state state ()
+type KeyedComponent read write = ComponentM KeyedVirtualDom read write ()
+type Node read write = ComponentM () read write VirtualDomNode
+type Node' state = ComponentM () state state VirtualDomNode
+
+instance IsString (Node read write) where
   fromString = text . T.pack
 
 {-# INLINE runComponentM #-}
-runComponentM :: ComponentM dom state a -> Dispatch state -> Maybe state -> state -> (dom, a)
+runComponentM :: ComponentM dom read write a -> DispatchM write -> Maybe write -> read -> (dom, a)
 runComponentM vdom = unComponentM vdom id
 
 {-# INLINE runComponent #-}
-runComponent :: Component state -> Dispatch state -> Maybe state -> state -> VirtualDom
+runComponent :: Component read write -> DispatchM write -> Maybe write -> read -> VirtualDom
 runComponent vdom d mbst st = fst (unComponentM vdom id d mbst st)
 
-instance Functor (ComponentM dom state) where
+instance Functor (ComponentM dom read write) where
   {-# INLINE fmap #-}
   fmap f (ComponentM g) = ComponentM $ \l d mbst st -> let
     (dom, x) = g l d mbst st
     in (dom, f x)
 
-instance (Monoid dom) => Applicative (ComponentM dom state) where
+instance (Monoid dom) => Applicative (ComponentM dom read write) where
   {-# INLINE pure #-}
   pure = return
   {-# INLINE (<*>) #-}
   (<*>) = ap
 
-instance (Monoid dom) => Monad (ComponentM dom state) where
+instance (Monoid dom) => Monad (ComponentM dom read write) where
   {-# INLINE return #-}
   return x = ComponentM (\_l _d _mbst _st -> (mempty, x))
   {-# INLINE (>>=) #-}
   ma >>= mf = ComponentM $ \l d mbst st -> let
-    (vdom1, x) = unComponentM ma l d mbst st
-    (vdom2, y) = unComponentM (mf x) l d mbst st
+    (!vdom1, x) = unComponentM ma l d mbst st
+    (!vdom2, y) = unComponentM (mf x) l d mbst st
     !vdom = vdom1 <> vdom2
     in (vdom, y)
 
 {-# INLINE askDispatchM #-}
-askDispatchM :: (Monoid dom) => ComponentM dom state (Dispatch state)
+askDispatchM :: (Monoid dom) => ComponentM dom read write (DispatchM write)
 askDispatchM = ComponentM $ \lst d _mbst _st ->
   ( mempty
-  , \modifySt -> d (\st -> do st' <- modifySt (view lst st); return (set lst st' st))
+  , \modifySt -> d $ \st -> do
+      st' <- modifySt (view lst st)
+      return (set lst st' st)
   )
 
 {-# INLINE askDispatch #-}
-askDispatch :: (Monoid dom) => ComponentM dom state ((state -> state) -> ClientM ())
+askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch write)
 askDispatch = ComponentM $ \lst d _mbst _st ->
   ( mempty
   , \modifySt -> d (\st -> return (over lst modifySt st))
   )
 
 {-# INLINE askState #-}
-askState :: (Monoid dom) => ComponentM dom state state
-askState = ComponentM (\lst _d _mbst st -> (mempty, view lst st))
+askState :: (Monoid dom) => ComponentM dom read write read
+askState = ComponentM (\_lst _d _mbst st -> (mempty, st))
 
 {-# INLINE askPreviousState #-}
-askPreviousState :: (Monoid dom) => ComponentM dom state (Maybe state)
-askPreviousState = ComponentM (\lst _d mbst _st -> (mempty, fmap (view lst) mbst))
+askPreviousState :: (Monoid dom) => ComponentM dom read write (Maybe write)
+askPreviousState = ComponentM (\_lst _d mbst _st -> (mempty, mbst))
 
 {-# INLINE key #-}
-key :: T.Text -> Node state -> KeyedComponent state
+key :: T.Text -> Node read write -> KeyedComponent read write
 key k getNode = ComponentM $ \l d mbst st -> let
   !(_, !nod) = unComponentM getNode l d mbst st
   in (KeyedVirtualDom (HMS.singleton k nod) (DList.singleton k), ())
 
 {-# INLINE n #-}
-n :: Node state -> Component state
+n :: Node read write -> Component read write
 n getNode = ComponentM $ \l d mbst st -> let
   !(_, !nod) = unComponentM getNode l d mbst st
   in (DList.singleton nod, ())
 
 {-# INLINE text #-}
-text :: T.Text -> Node state
+text :: T.Text -> Node read write
 text txt = return $ VirtualDomNode
   { vdnMark = Nothing
   , vdnWrap = DOM.Text
@@ -161,13 +174,11 @@ text txt = return $ VirtualDomNode
 
 {-# INLINE marked #-}
 marked ::
-     (state -> state -> Render)
-  -> StaticPtr (Node state)
-  -> Node state
+     (Maybe write -> read -> Render)
+  -> StaticPtr (Node read write)
+  -> Node read write
 marked rerender domPtr = ComponentM $ \l d mbst st -> let
-  !render = case mbst of
-    Nothing -> ReRender
-    Just oldSt -> rerender (view l oldSt) (view l st)
+  !render = rerender mbst st
   !fprint = staticKey domPtr
   -- do not force evaluation for this one since we actually
   -- want it to be lazy to avoid computing the vdom if we don't
@@ -175,12 +186,31 @@ marked rerender domPtr = ComponentM $ \l d mbst st -> let
   (_, dom) = unComponentM (deRefStaticPtr domPtr) l d mbst st
   in ((), dom{ vdnMark = Just (VirtualDomNodeMark fprint render) })
 
+{-# INLINE zoom' #-}
+zoom' :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
+zoom' l' dom = ComponentM $ \l d mbst st ->
+  unComponentM dom (l . l') d (fmap (view l') mbst) (view l' st)
+
 {-# INLINE zoom #-}
-zoom :: Lens' out in_ -> ComponentM dom in_ a -> ComponentM dom out a
-zoom l' dom = ComponentM (\l d mbst st -> unComponentM dom (l . l') d mbst st)
+zoom ::
+     (readOut -> readIn)
+  -> Lens' writeOut writeIn
+  -> ComponentM dom readIn writeIn a
+  -> ComponentM dom readOut writeOut a
+zoom f l' dom = ComponentM $ \l d mbst st ->
+  unComponentM dom (l . l') d (fmap (view l') mbst) (f st)
+
+{-# INLINE zoom_ #-}
+zoom_ ::
+     readIn
+  -> Lens' writeOut writeIn
+  -> ComponentM dom readIn writeIn a
+  -> ComponentM dom readOut writeOut a
+zoom_ x l' dom = ComponentM $ \l d mbst _st ->
+  unComponentM dom (l . l') d (fmap (view l') mbst) x
 
 {-# INLINE rawNode #-}
-rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node state
+rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node read write
 rawNode wrap x = return $ VirtualDomNode
   { vdnMark = Nothing
   , vdnBody = VDNBRawNode x
@@ -212,18 +242,18 @@ constructVirtualDomElement_ tag f attrs evts child = VirtualDomNode
   , vdnCallbacks = noVirtualDomNodeCallbacks
   }
 
-instance (DOM.IsElement el) => ConstructVirtualDomElement el (ComponentM () state VirtualDomNode) where
+instance (DOM.IsElement el) => ConstructVirtualDomElement el (ComponentM () read write VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts =
     return (constructVirtualDomElement_ tag f attrs evts (VDCNormal mempty))
 
-instance (DOM.IsElement el, state1 ~ state2) => ConstructVirtualDomElement el (ComponentM VirtualDom state1 () -> ComponentM () state2 VirtualDomNode) where
+instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVirtualDomElement el (ComponentM VirtualDom read1 write1 () -> ComponentM () read2 write2 VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
     in ((), constructVirtualDomElement_ tag f attrs evts (VDCNormal vdom))
 
-instance (DOM.IsElement el, state1 ~ state2) => ConstructVirtualDomElement el (ComponentM KeyedVirtualDom state1 () -> ComponentM () state2 VirtualDomNode) where
+instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVirtualDomElement el (ComponentM KeyedVirtualDom read1 write1 () -> ComponentM () read2 write2 VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
@@ -231,7 +261,7 @@ instance (DOM.IsElement el, state1 ~ state2) => ConstructVirtualDomElement el (C
 
 newtype UnsafeRawHtml = UnsafeRawHtml T.Text
 
-instance (DOM.IsElement el) => ConstructVirtualDomElement el (UnsafeRawHtml -> ComponentM () state VirtualDomNode) where
+instance (DOM.IsElement el) => ConstructVirtualDomElement el (UnsafeRawHtml -> ComponentM () read write VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts (UnsafeRawHtml html) = return (constructVirtualDomElement_ tag f attrs evts (VDCRawHtml html))
 

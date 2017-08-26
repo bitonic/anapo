@@ -19,7 +19,7 @@ data TestAppsState = TestAppsState
   } deriving (Eq, Show)
 makeLenses ''TestAppsState
 
-testAppsComponent :: Component TestAppsState
+testAppsComponent :: Component' TestAppsState
 testAppsComponent = do
   n$ select_
     (forM_ [Blank, Todo] $ \which -> do
@@ -29,7 +29,7 @@ testAppsComponent = do
   which <- view tasWhich <$> askState
   case which of
     Blank -> return ()
-    Todo -> zoom tasTodo todoComponent
+    Todo -> zoom' tasTodo todoComponent
 
 testAppsInit :: ClientM TestAppsState
 testAppsInit = TestAppsState

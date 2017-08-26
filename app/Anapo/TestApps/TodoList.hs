@@ -5,7 +5,7 @@ module Anapo.TestApps.TodoList
   , todoInit
   ) where
 
-import Control.Lens (makeLenses, over, (^.), _Just, set, at)
+import Control.Lens (makeLenses, over, (^.), set, at)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import Control.Monad (forM_, when)
@@ -25,22 +25,19 @@ data TodoItemState = TodoItemState
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
-todoItemComponent :: Component (Maybe TodoItemState)
+todoItemComponent :: Component TodoItemState (Maybe TodoItemState)
 todoItemComponent = do
-  mbSt <- askState
-  case mbSt of
-    Nothing -> fail "item component state not present!"
-    Just st -> do
-      dispatch <- askDispatch
-      n$ input_
-        (type_ "checkbox")
-        (checked_ (st ^. tisCompleted))
-        (name_ (st ^. tisBody))
-        (onchange_ $ \el ev -> do
-          DOM.preventDefault ev
-          checked <- DOM.getChecked el
-          dispatch (set (_Just . tisCompleted) checked))
-      n$ text (st ^. tisBody)
+  st <- askState
+  dispatch <- askDispatch
+  n$ input_
+    (type_ "checkbox")
+    (checked_ (st ^. tisCompleted))
+    (name_ (st ^. tisBody))
+    (onchange_ $ \el ev -> do
+      DOM.preventDefault ev
+      checked <- DOM.getChecked el
+      dispatch (set (traverse . tisCompleted) checked))
+  n$ text (st ^. tisBody)
 
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
@@ -49,7 +46,7 @@ data TodoState = TodoState
   } deriving (Eq, Show)
 makeLenses ''TodoState
 
-todoComponent :: Component TodoState
+todoComponent :: Component' TodoState
 todoComponent = do
   st <- askState
   dispatch <- askDispatch
@@ -87,13 +84,14 @@ todoComponent = do
   -- active / completed todos
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =
-        n$ ul_ $ forM_ items $ \itemKey ->
-          zoom (tsTodoElements . at itemKey) (key (tshow itemKey) (li_ todoItemComponent))
+        n$ ul_ $ forM_ items $ \(itemKey, itemState) ->
+          zoom_ itemState (tsTodoElements . at itemKey) $
+            key (tshow itemKey) (li_ todoItemComponent)
   n$ h2_ (n$ "Things to do")
-  renderItems (map fst active)
+  renderItems active
   when (st ^. tsShowCompleted) $ do
     n$ h2_ (n$ "Things already done")
-    renderItems (map fst done)
+    renderItems done
 
 todoInit :: ClientM TodoState
 todoInit = return $ TodoState
