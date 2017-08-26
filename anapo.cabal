@@ -28,7 +28,9 @@ library
     ghcjs-dom,
     containers,
     mtl,
-    dlist
+    dlist,
+    time,
+    stm
   if impl(ghcjs)
     build-depends:
       ghcjs-base

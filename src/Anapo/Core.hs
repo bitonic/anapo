@@ -33,15 +33,42 @@ data Render = ReRender | DontRender
   deriving (Eq, Show)
 
 -- Something that will turn in a single DOM node.
-data VirtualDomNode =
-    -- TODO this existential might be detrimental for performance,
-    -- consider removing it
-    forall el. (DOM.IsElement el) => VDNElement (VirtualDomElement el)
-  | VDNText T.Text
-  | VDNRawNode DOM.Node
-  | VDNMarked Fingerprint Render ~VirtualDomNode
+data VirtualDomNode = forall el. (DOM.IsNode el) => VirtualDomNode
+  { vdnMark :: Maybe VirtualDomNodeMark
+  , vdnBody :: ~(VirtualDomNodeBody el)
   -- ^ the dom node is lazy here to avoid recomputing it if we don't
   -- end up rerendering
+  , vdnWrap :: DOM.JSVal -> el
+  , vdnCallbacks :: VirtualDomNodeCallbacks el
+  }
+
+data VirtualDomNodeCallbacks el = VirtualDomNodeCallbacks
+  { vdncUnsafeWillMount :: el -> ClientM ()
+  , vdncUnsafeDidMount :: el -> ClientM ()
+  , vdncUnsafeWillPatch :: el -> ClientM ()
+  , vdncUnsafeDidPatch :: el -> ClientM ()
+  , vdncUnsafeWillRemove :: el -> ClientM ()
+  }
+
+{-# NOINLINE noVirtualDomNodeCallbacks #-}
+noVirtualDomNodeCallbacks :: VirtualDomNodeCallbacks el
+noVirtualDomNodeCallbacks = VirtualDomNodeCallbacks
+  { vdncUnsafeWillMount = \_ -> return ()
+  , vdncUnsafeDidMount = \_ -> return ()
+  , vdncUnsafeWillPatch = \_ -> return ()
+  , vdncUnsafeDidPatch = \_ -> return ()
+  , vdncUnsafeWillRemove = \_ -> return ()
+  }
+
+data VirtualDomNodeMark = VirtualDomNodeMark
+  { vdnmFingerprint :: Fingerprint
+  , vdnmRender :: Render
+  }
+
+data VirtualDomNodeBody el where
+  VDNBElement :: (DOM.IsElement el) => VirtualDomElement el -> VirtualDomNodeBody el
+  VDNBText :: T.Text -> VirtualDomNodeBody DOM.Text
+  VDNBRawNode :: el -> VirtualDomNodeBody el
 
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
   SomeEvent (DOM.EventName el e) (el -> e -> ClientM ())
@@ -52,7 +79,6 @@ type ElementEvents el = [SomeEvent el]
 
 data VirtualDomElement el = VirtualDomElement
   { vdeTag :: ElementTag
-  , vdeElement :: DOM.JSVal -> el
   , vdeAttributes :: ElementAttributes
   , vdeEvents :: ElementEvents el
   , vdeChildren :: VirtualDomChildren

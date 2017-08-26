@@ -8,9 +8,10 @@ module Anapo.TestApps.TodoList
 import Control.Lens (makeLenses, over, (^.), _Just, set, at)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
-import Control.Monad (unless, forM_, when)
+import Control.Monad (forM_, when)
 import Data.List (partition)
 import Data.Monoid ((<>))
+import Control.Monad.IO.Class (liftIO)
 
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
@@ -31,10 +32,14 @@ todoItemComponent = do
     Nothing -> fail "item component state not present!"
     Just st -> do
       dispatch <- askDispatch
-      unless (st ^. tisCompleted) $
-        n$ input_
-          (type_ "checkbox")
-          (onchange_ (\_ _ -> dispatch (over (_Just . tisCompleted) not)))
+      n$ input_
+        (type_ "checkbox")
+        (checked_ (st ^. tisCompleted))
+        (name_ (st ^. tisBody))
+        (onchange_ $ \el ev -> do
+          DOM.preventDefault ev
+          checked <- DOM.getChecked el
+          dispatch (set (_Just . tisCompleted) checked))
       n$ text (st ^. tisBody)
 
 data TodoState = TodoState
@@ -61,16 +66,20 @@ todoComponent = do
   n$ form_
     (onsubmit_ $ \_ ev -> do
       DOM.preventDefault ev
-      dispatch $ \st' -> let
-        newTodoItem = TodoItemState False (st' ^. tsCurrentText)
-        itemKey = if Map.null (st' ^. tsTodoElements)
-          then 0
-          else fst (Map.findMax (st' ^. tsTodoElements)) + 1
-        in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st'))
+      liftIO (putStrLn "Submitting new item")
+      dispatch $ \st' -> if st' ^. tsCurrentText /= ""
+        then let
+          newTodoItem = TodoItemState False (st' ^. tsCurrentText)
+          itemKey = if Map.null (st' ^. tsTodoElements)
+            then 0
+            else fst (Map.findMax (st' ^. tsTodoElements)) + 1
+          in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
+        else st')
     (do
       n$ input_
         (value_ (st ^. tsCurrentText))
         (onchange_ $ \inp _ -> do
+          liftIO (putStrLn "Setting new text!")
           txt <- DOM.getValue inp
           dispatch (set tsCurrentText txt))
       n$ button_ $
@@ -90,8 +99,8 @@ todoInit :: ClientM TodoState
 todoInit = return $ TodoState
   { _tsShowCompleted = True
   , _tsTodoElements = Map.fromList
-      [ (1, TodoItemState{_tisCompleted = True, _tisBody = "Buy milk"})
-      , (2, TodoItemState{_tisCompleted = False, _tisBody = "Get a life"})
+      [ (1, TodoItemState{_tisCompleted = False, _tisBody = "Buy milk"})
+      , (2, TodoItemState{_tisCompleted = True, _tisBody = "Get a life"})
       ]
   , _tsCurrentText = ""
   }

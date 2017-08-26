@@ -38,11 +38,11 @@ componentLoop !st0 vdom !acc0 useDom = do
           go (Just st) st' acc'
   go Nothing st0 acc0
 
-installComponent :: Show state => state -> Component state -> ClientM ()
-installComponent st0 vdom0 = do
+installComponent :: Show state => RenderOptions -> state -> Component state -> ClientM ()
+installComponent ro st0 vdom0 = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.getBodyUnchecked doc
   void $ componentLoop st0 vdom0 Nothing $ \mbVdom vdom -> do
-    evts <- renderVirtualDom doc body mbVdom vdom
+    evts <- renderVirtualDom ro doc body mbVdom vdom
     DOM.syncPoint -- force jssaddle stuff
     return (Just (vdom, evts))

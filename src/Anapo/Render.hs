@@ -1,8 +1,10 @@
-module Anapo.Render (VirtualDomEvents, renderVirtualDom) where
+module Anapo.Render (RenderOptions(..), VirtualDomEvents, renderVirtualDom) where
 
 import qualified Data.HashMap.Strict as HMS
 import Control.Monad (forM_, when, forM)
 import qualified Data.DList as DList
+import Control.Monad.IO.Class (liftIO)
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -23,11 +25,16 @@ data VirtualDomNodeEvents = VirtualDomNodeEvents
 noEvents :: VirtualDomNodeEvents
 noEvents = VirtualDomNodeEvents mempty mempty
 
+data RenderOptions = RenderOptions
+  { roAlwaysRerender :: Bool
+  , roDebugOutput :: Bool
+  }
+
 renderVirtualDom :: forall el0.
      (DOM.IsElement el0)
-  => DOM.Document -> el0 -> Maybe (VirtualDom, VirtualDomEvents) -> VirtualDom
+  => RenderOptions -> DOM.Document -> el0 -> Maybe (VirtualDom, VirtualDomEvents) -> VirtualDom
   -> ClientM VirtualDomEvents
-renderVirtualDom doc = let
+renderVirtualDom RenderOptions{..} doc = let
   {-# INLINE removeAllChildren #-}
   removeAllChildren :: (DOM.IsNode el) => el -> ClientM ()
   removeAllChildren el = let
@@ -55,11 +62,12 @@ renderVirtualDom doc = let
     => el -- ^ the node
     -> VirtualDomNode -- ^ the virtual dom nodes describing what's the node
     -> ClientM ()
-  removeDomNode domNode = \case
-    VDNText{} -> return ()
-    VDNRawNode{} -> return ()
-    VDNMarked _ _ n -> removeDomNode domNode n
-    VDNElement VirtualDomElement{vdeChildren} -> removeDomNodeChildren domNode vdeChildren
+  removeDomNode domNode VirtualDomNode{..} = do
+    vdncUnsafeWillRemove vdnCallbacks =<< DOM.unsafeCastTo vdnWrap domNode
+    case vdnBody of
+      VDNBText{} -> return ()
+      VDNBRawNode{} -> return ()
+      VDNBElement VirtualDomElement{vdeChildren} -> removeDomNodeChildren domNode vdeChildren
 
   {-# INLINE removeDom #-}
   removeDom ::
@@ -120,18 +128,23 @@ renderVirtualDom doc = let
        VirtualDomNode
     -> (forall el. (DOM.IsNode el) => el -> VirtualDomNodeEvents -> ClientM a)
     -> ClientM a
-  renderDomNode vnode cont = case vnode of
-    VDNText txt -> do
-      txtNode <- DOM.createTextNode doc txt
-      cont txtNode noEvents
-    VDNRawNode el -> cont el noEvents
-    VDNMarked _ _ vnode' -> renderDomNode vnode' cont
-    VDNElement VirtualDomElement{..} -> do
-      el_ <- DOM.unsafeCastTo vdeElement =<< DOM.createElement doc vdeTag
-      forM_ (HMS.toList vdeAttributes) (uncurry (DOM.setAttribute el_))
-      evts <- addEvents el_ vdeEvents
-      childrenEvents <- renderDomChildren el_ vdeChildren
-      cont el_ (VirtualDomNodeEvents evts childrenEvents)
+  renderDomNode VirtualDomNode{..} cont0 = do
+    let cont el callbacks evts = do
+          vdncUnsafeWillMount callbacks el
+          x <- cont0 el evts
+          vdncUnsafeDidMount callbacks el
+          return x
+    case vdnBody of
+      VDNBText txt -> do
+        txtNode <- DOM.createTextNode doc txt
+        cont txtNode vdnCallbacks noEvents
+      VDNBRawNode el -> cont el vdnCallbacks noEvents
+      VDNBElement VirtualDomElement{..} -> do
+        el_ <- DOM.unsafeCastTo vdnWrap =<< DOM.createElement doc vdeTag
+        forM_ (HMS.toList vdeAttributes) (uncurry (DOM.setAttribute el_))
+        evts <- addEvents el_ vdeEvents
+        childrenEvents <- renderDomChildren el_ vdeChildren
+        cont el_ vdnCallbacks (VirtualDomNodeEvents evts childrenEvents)
 
   {-# INLINE renderDom #-}
   renderDom ::
@@ -139,7 +152,7 @@ renderVirtualDom doc = let
     => el -- ^ the node that should contain the dom
     -> [VirtualDomNode]
     -> ClientM [VirtualDomNodeEvents]
-  renderDom container = mapM $ \node -> do
+  renderDom container = mapM $ \node@VirtualDomNode{..} -> do
     renderDomNode node $ \el evts -> do
       DOM.appendChild_ container el
       return evts
@@ -169,18 +182,14 @@ renderVirtualDom doc = let
   -- | Note that the elements are already assumed to be of the same
   -- tag.
   {-# INLINE patchDomElement #-}
-  patchDomElement :: forall el el1 el2.
-       (DOM.IsElement el, DOM.IsElement el1, DOM.IsElement el2)
-    => el -- ^ the node we're patching
+  patchDomElement :: forall el1 el2.
+       (DOM.IsElement el1, DOM.IsElement el2)
+    => el2 -- ^ the node we're patching
     -> VirtualDomElement el1
     -> VirtualDomNodeEvents
     -> VirtualDomElement el2
     -> ClientM VirtualDomNodeEvents
-  patchDomElement rawNode prevEl prevElEvts el = do
-    mbNode <- DOM.castTo (vdeElement el) rawNode
-    node <- case mbNode of
-      Nothing -> fail "patchDomElement: could not cast the node into the required type!"
-      Just node -> return node
+  patchDomElement node prevEl prevElEvts el = do
     -- remove attributes which are gone
     let removedAttrs = vdeAttributes prevEl `HMS.difference` vdeAttributes el
     forM_ (HMS.keys removedAttrs) (DOM.removeAttribute node)
@@ -193,13 +202,15 @@ renderVirtualDom doc = let
     -- remove all events
     -- TODO we should probably have an option to be able to have stable events, so
     -- that we do not have to delete everything each time
+    -- TODO can it be that changing the attributes triggers some events? we should
+    -- check
     forM_ (vdneEvents prevElEvts) $ \(evtName, evt) -> do
       DOM.removeEventListener node evtName (Just evt) False
     -- add all events
     evts <- addEvents node (vdeEvents el)
     -- patch children
     childrenEvts <-
-      patchDomChildren rawNode (vdeChildren prevEl) (vdneChildren prevElEvts) (vdeChildren el)
+      patchDomChildren node (vdeChildren prevEl) (vdneChildren prevElEvts) (vdeChildren el)
     return (VirtualDomNodeEvents evts childrenEvts)
 
   {-# INLINE patchDomNode #-}
@@ -211,35 +222,29 @@ renderVirtualDom doc = let
     -> VirtualDomNodeEvents -- ^ the previous vdom events
     -> VirtualDomNode -- ^ the next vdom
     -> ClientM VirtualDomNodeEvents
-  patchDomNode container node prevVdom00 prevVdomEvents00 vdom00 = do
-    let
-      go prevVdom0 prevVdomEvents0 vdom0 = case (prevVdom0, vdom0) of
+  patchDomNode container node prevVdom@(VirtualDomNode prevMark prevBody _ _) prevVdomEvents vdom@(VirtualDomNode mark body wrap callbacks) = do
+    -- check if they're both marked and without the rerender
+    case (prevMark, mark) of
+      (Just (VirtualDomNodeMark prevFprint _), Just (VirtualDomNodeMark fprint render))
+        | prevFprint == fprint && render == DontRender -> return prevVdomEvents
+      _ -> case (prevBody, body) of
         -- Text
         -- TODO consider ref. equality, also for rawnode
         -- TODO consider asserting no events when appropriate
-        (VDNText prevTxt, VDNText txt) | prevTxt == txt -> return noEvents
-        -- Marked, we traverse down in the diagonal cases
-        (VDNMarked prevFprint _ prevVdom, VDNMarked fprint render vdom) ->
-          if prevFprint /= fprint
-            then go prevVdom prevVdomEvents0 vdom
-            else case render of
-              ReRender -> go prevVdom prevVdomEvents0 vdom
-              DontRender -> return prevVdomEvents0
-        (VDNMarked _ _ prevVdom, vdom) -> go prevVdom prevVdomEvents0 vdom
-        (prevVdom, VDNMarked _ _ vdom) -> go prevVdom prevVdomEvents0 vdom
+        (VDNBText prevTxt, VDNBText txt) | prevTxt == txt -> return noEvents
         -- Element
-        (VDNElement prevElement, VDNElement element) | vdeTag prevElement == vdeTag element -> do
-          node' <- DOM.unsafeCastTo DOM.Element node
-          patchDomElement node' prevElement prevVdomEvents0 element
+        (VDNBElement prevElement, VDNBElement element) | vdeTag prevElement == vdeTag element -> do
+          node' <- DOM.unsafeCastTo wrap node
+          vdncUnsafeWillPatch callbacks node'
+          x <- patchDomElement node' prevElement prevVdomEvents element
+          vdncUnsafeDidPatch callbacks node'
+          return x
         -- In all other cases we erase and rerender
-        (prevVdom, vdom) -> do
-          -- TODO this is basically just a sanity check, since we replace everything
-          -- right after anyway. We need to remove it for speed
+        _ -> do
           removeDomNode node prevVdom
           renderDomNode vdom $ \el evts -> do
             DOM.replaceChild_ container el node
             return evts
-    go prevVdom00 prevVdomEvents00 vdom00
 
   {-# INLINE patchKeyedDom #-}
   patchKeyedDom ::
@@ -290,8 +295,22 @@ renderVirtualDom doc = let
               return (evt : evts)
     mbCursor <- DOM.getFirstChild container
     go mbCursor (DList.toList prevVnodes0) prevVnodesEvents0 (DList.toList vnodes0)
-  in \container mbPrevVdom vdom -> case mbPrevVdom of
-    Nothing -> do
-      removeAllChildren container
-      renderDom container (DList.toList vdom)
-    Just (prevVdom, prevVdomEvents) -> patchDom container prevVdom prevVdomEvents vdom
+
+  debugOutput s = liftIO (when roDebugOutput (putStrLn s))
+
+  in \container mbPrevVdom vdom -> do
+    debugOutput "About to render vdom"
+    t0 <- liftIO getCurrentTime
+    x <- case mbPrevVdom of
+      Nothing -> do
+        removeAllChildren container
+        renderDom container (DList.toList vdom)
+      Just (prevVdom, prevVdomEvents) -> if roAlwaysRerender
+        then do
+          removeDom container Nothing (DList.toList prevVdom)
+          renderDom container (DList.toList vdom)
+        else do
+          patchDom container prevVdom prevVdomEvents vdom
+    t1 <- liftIO getCurrentTime
+    debugOutput ("Vdom rendered (" ++ show (diffUTCTime t1 t0) ++ ")")
+    return x

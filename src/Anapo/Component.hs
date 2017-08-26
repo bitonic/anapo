@@ -38,8 +38,6 @@ module Anapo.Component
   , option_
 
     -- * attributes
-  , Attr(..)
-  , (.=)
   , class_
   , type_
   , href_
@@ -47,6 +45,8 @@ module Anapo.Component
   , li_
   , ul_
   , button_
+  , checked_
+  , name_
 
     -- * events
   , onclick_
@@ -59,12 +59,13 @@ module Anapo.Component
 
 import qualified Data.HashMap.Strict as HMS
 import Control.Lens (Lens', view, set, over)
-import Control.Monad (ap)
+import Control.Monad (ap, guard)
 import qualified Data.Text as T
 import Data.Monoid ((<>))
 import GHC.StaticPtr
 import qualified Data.DList as DList
 import Data.String (IsString(..))
+import Data.List (foldl')
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
@@ -77,7 +78,7 @@ import Anapo.Core
 type Dispatch state = (state -> ClientM state) -> ClientM ()
 
 newtype ComponentM dom state a = ComponentM
-  { unComponent :: forall out. Lens' out state -> Dispatch out -> Maybe out -> out -> (dom, a) }
+  { unComponentM :: forall out. Lens' out state -> Dispatch out -> Maybe out -> out -> (dom, a) }
 type Component state = ComponentM VirtualDom state ()
 type KeyedComponent state = ComponentM KeyedVirtualDom state ()
 type Node state = ComponentM () state VirtualDomNode
@@ -87,11 +88,11 @@ instance IsString (Node state) where
 
 {-# INLINE runComponentM #-}
 runComponentM :: ComponentM dom state a -> Dispatch state -> Maybe state -> state -> (dom, a)
-runComponentM vdom = unComponent vdom id
+runComponentM vdom = unComponentM vdom id
 
 {-# INLINE runComponent #-}
 runComponent :: Component state -> Dispatch state -> Maybe state -> state -> VirtualDom
-runComponent vdom d mbst st = fst (unComponent vdom id d mbst st)
+runComponent vdom d mbst st = fst (unComponentM vdom id d mbst st)
 
 instance Functor (ComponentM dom state) where
   {-# INLINE fmap #-}
@@ -110,8 +111,8 @@ instance (Monoid dom) => Monad (ComponentM dom state) where
   return x = ComponentM (\_l _d _mbst _st -> (mempty, x))
   {-# INLINE (>>=) #-}
   ma >>= mf = ComponentM $ \l d mbst st -> let
-    (vdom1, x) = unComponent ma l d mbst st
-    (vdom2, y) = unComponent (mf x) l d mbst st
+    (vdom1, x) = unComponentM ma l d mbst st
+    (vdom2, y) = unComponentM (mf x) l d mbst st
     !vdom = vdom1 <> vdom2
     in (vdom, y)
 
@@ -140,18 +141,23 @@ askPreviousState = ComponentM (\lst _d mbst _st -> (mempty, fmap (view lst) mbst
 {-# INLINE key #-}
 key :: T.Text -> Node state -> KeyedComponent state
 key k getNode = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponent getNode l d mbst st
+  !(_, !nod) = unComponentM getNode l d mbst st
   in (KeyedVirtualDom (HMS.singleton k nod) (DList.singleton k), ())
 
 {-# INLINE n #-}
 n :: Node state -> Component state
 n getNode = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponent getNode l d mbst st
+  !(_, !nod) = unComponentM getNode l d mbst st
   in (DList.singleton nod, ())
 
 {-# INLINE text #-}
 text :: T.Text -> Node state
-text txt = return (VDNText txt)
+text txt = return $ VirtualDomNode
+  { vdnMark = Nothing
+  , vdnWrap = DOM.Text
+  , vdnBody = VDNBText txt
+  , vdnCallbacks = noVirtualDomNodeCallbacks
+  }
 
 {-# INLINE marked #-}
 marked ::
@@ -166,30 +172,44 @@ marked rerender domPtr = ComponentM $ \l d mbst st -> let
   -- do not force evaluation for this one since we actually
   -- want it to be lazy to avoid computing the vdom if we don't
   -- have to
-  (_, dom) = unComponent (deRefStaticPtr domPtr) l d mbst st
-  in ((), VDNMarked fprint render dom)
+  (_, dom) = unComponentM (deRefStaticPtr domPtr) l d mbst st
+  in ((), dom{ vdnMark = Just (VirtualDomNodeMark fprint render) })
 
 {-# INLINE zoom #-}
 zoom :: Lens' out in_ -> ComponentM dom in_ a -> ComponentM dom out a
-zoom l' dom = ComponentM (\l d mbst st -> unComponent dom (l . l') d mbst st)
+zoom l' dom = ComponentM (\l d mbst st -> unComponentM dom (l . l') d mbst st)
 
 {-# INLINE rawNode #-}
-rawNode :: DOM.Node -> Node state
-rawNode x = return (VDNRawNode x)
+rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node state
+rawNode wrap x = return $ VirtualDomNode
+  { vdnMark = Nothing
+  , vdnBody = VDNBRawNode x
+  , vdnWrap = wrap
+  , vdnCallbacks = noVirtualDomNodeCallbacks
+  }
 
 class (DOM.IsElement el) => ConstructVirtualDomElement el a where
-  constructVirtualDomElement :: ElementTag -> (DOM.JSVal -> el) -> [(T.Text, T.Text)] -> [SomeEvent el] -> a
+  constructVirtualDomElement :: ElementTag -> (DOM.JSVal -> el) -> [Attr] -> [SomeEvent el] -> a
 
 {-# INLINE constructVirtualDomElement_ #-}
 constructVirtualDomElement_ ::
      (DOM.IsElement el)
-  => ElementTag -> (DOM.JSVal -> el) -> [(T.Text, T.Text)] -> [SomeEvent el] -> VirtualDomChildren -> VirtualDomNode
-constructVirtualDomElement_ tag f attrs evts child = VDNElement $ VirtualDomElement
-  { vdeTag = tag
-  , vdeElement = f
-  , vdeAttributes = HMS.fromList (reverse attrs)
-  , vdeEvents = reverse evts
-  , vdeChildren = child
+  => ElementTag -> (DOM.JSVal -> el) -> [Attr] -> [SomeEvent el] -> VirtualDomChildren -> VirtualDomNode
+constructVirtualDomElement_ tag f attrs evts child = VirtualDomNode
+  { vdnMark = Nothing
+  , vdnWrap = f
+  , vdnBody = VDNBElement $ VirtualDomElement
+      { vdeTag = tag
+      , vdeAttributes = foldl'
+          (\attrMap (Attr attrName mbAttr) -> case mbAttr of
+              Just attr -> HMS.insert attrName attr attrMap
+              Nothing -> HMS.delete attrName attrMap)
+          HMS.empty
+          (reverse attrs)
+      , vdeEvents = reverse evts
+      , vdeChildren = child
+      }
+  , vdnCallbacks = noVirtualDomNodeCallbacks
   }
 
 instance (DOM.IsElement el) => ConstructVirtualDomElement el (ComponentM () state VirtualDomNode) where
@@ -200,13 +220,13 @@ instance (DOM.IsElement el) => ConstructVirtualDomElement el (ComponentM () stat
 instance (DOM.IsElement el, state1 ~ state2) => ConstructVirtualDomElement el (ComponentM VirtualDom state1 () -> ComponentM () state2 VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts dom = ComponentM $ \l d mbst st -> let
-    !(!vdom, _) = unComponent dom l d mbst st
+    !(!vdom, _) = unComponentM dom l d mbst st
     in ((), constructVirtualDomElement_ tag f attrs evts (VDCNormal vdom))
 
 instance (DOM.IsElement el, state1 ~ state2) => ConstructVirtualDomElement el (ComponentM KeyedVirtualDom state1 () -> ComponentM () state2 VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts dom = ComponentM $ \l d mbst st -> let
-    !(!vdom, _) = unComponent dom l d mbst st
+    !(!vdom, _) = unComponentM dom l d mbst st
     in ((), constructVirtualDomElement_ tag f attrs evts (VDCKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml T.Text
@@ -215,16 +235,12 @@ instance (DOM.IsElement el) => ConstructVirtualDomElement el (UnsafeRawHtml -> C
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts (UnsafeRawHtml html) = return (constructVirtualDomElement_ tag f attrs evts (VDCRawHtml html))
 
-data Attr = Attr T.Text T.Text
-
-{-# INLINE (.=) #-}
-(.=) :: T.Text -> T.Text -> Attr
-(.=) = Attr
+data Attr = Attr T.Text (Maybe T.Text)
 
 instance (ConstructVirtualDomElement el a) => ConstructVirtualDomElement el (Attr -> a) where
   {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts (Attr attrName attr) =
-    constructVirtualDomElement tag f ((attrName, attr) : attrs) evts
+  constructVirtualDomElement tag f attrs evts attr =
+    constructVirtualDomElement tag f (attr : attrs) evts
 
 instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (SomeEvent el2 -> a) where
   {-# INLINE constructVirtualDomElement #-}
@@ -289,16 +305,22 @@ option_ = el "option" DOM.HTMLOptionElement
 -- --------------------------------------------------------------------
 
 class_ :: T.Text -> Attr
-class_ = Attr "class"
+class_ = Attr "class" . Just
 
 type_ :: T.Text -> Attr
-type_ = Attr "type"
+type_ = Attr "type" . Just
 
 href_ :: T.Text -> Attr
-href_ = Attr "href"
+href_ = Attr "href" . Just
 
 value_ :: T.Text -> Attr
-value_ = Attr "value"
+value_ = Attr "value" . Just
+
+checked_ :: Bool -> Attr
+checked_ b = Attr "checked" ("" <$ guard b)
+
+name_ :: T.Text -> Attr
+name_ = Attr "name" . Just
 
 -- Events
 -- --------------------------------------------------------------------
