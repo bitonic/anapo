@@ -45,8 +45,8 @@ booleanCheckbox = do
   st <- askState
   dispatch <- askDispatch
   input_
-    (inputType_ "checkbox")
-    (inputChecked_ st)
+    (type_ "checkbox")
+    (checked_ st)
     (onchange_ $ \el ev -> do
       DOM.preventDefault ev
       checked <- DOM.getChecked el

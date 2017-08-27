@@ -55,12 +55,15 @@ module Anapo.Component
 
     -- * attributes
   , class_
-  , inputType_
-  , aHref_
-  , inputValue_
-  , optionValue_
-  , inputChecked_
+  , HasTypeProperty(..)
+  , type_
+  , HasHrefProperty(..)
+  , href_
+  , HasValueProperty(..)
+  , value_
   , selected_
+  , HasCheckedProperty(..)
+  , checked_
 
     -- * events
   , onclick_
@@ -353,38 +356,67 @@ class_ txt = NamedElementProperty "className" $ ElementProperty
   , eaValue = txt
   }
 
-inputType_ :: T.Text -> NamedElementProperty DOM.HTMLInputElement
-inputType_ txt = NamedElementProperty "type" $ ElementProperty
-  { eaGetProperty = DOM.Input.getType
-  , eaSetProperty = DOM.Input.setType
+class HasTypeProperty el where
+  htpGetType :: el -> ClientM T.Text
+  htpSetType :: el -> T.Text -> ClientM ()
+
+instance HasTypeProperty DOM.HTMLInputElement where
+  htpGetType = DOM.Input.getType
+  htpSetType = DOM.Input.setType
+
+type_ :: (HasTypeProperty el) => T.Text -> NamedElementProperty el
+type_ txt = NamedElementProperty "type" $ ElementProperty
+  { eaGetProperty = htpGetType
+  , eaSetProperty = htpSetType
   , eaValue = txt
   }
 
-aHref_ :: (DOM.IsHTMLHyperlinkElementUtils el) => T.Text -> NamedElementProperty el
-aHref_ txt = NamedElementProperty "href" $ ElementProperty
-  { eaGetProperty = DOM.HyperlinkElementUtils.getHref
-  , eaSetProperty = DOM.HyperlinkElementUtils.setHref
+class HasHrefProperty el where
+  htpGetHref :: el -> ClientM T.Text
+  htpSetHref :: el -> T.Text -> ClientM ()
+
+instance HasHrefProperty DOM.HTMLAnchorElement where
+  htpGetHref = DOM.HyperlinkElementUtils.getHref
+  htpSetHref = DOM.HyperlinkElementUtils.setHref
+
+href_ :: (HasHrefProperty el) => T.Text -> NamedElementProperty el
+href_ txt = NamedElementProperty "href" $ ElementProperty
+  { eaGetProperty = htpGetHref
+  , eaSetProperty = htpSetHref
   , eaValue = txt
   }
 
-inputValue_ :: T.Text -> NamedElementProperty DOM.HTMLInputElement
-inputValue_ txt = NamedElementProperty "value" $ ElementProperty
-  { eaGetProperty = DOM.Input.getValue
-  , eaSetProperty = DOM.Input.setValue
+class HasValueProperty el where
+  hvpGetValue :: el -> ClientM T.Text
+  hvpSetValue :: el -> T.Text -> ClientM ()
+
+instance HasValueProperty DOM.HTMLInputElement where
+  hvpGetValue = DOM.Input.getValue
+  hvpSetValue = DOM.Input.setValue
+
+instance HasValueProperty DOM.HTMLOptionElement where
+  hvpGetValue = DOM.Option.getValue
+  hvpSetValue = DOM.Option.setValue
+
+value_ :: (HasValueProperty el) => T.Text -> NamedElementProperty el
+value_ txt = NamedElementProperty "value" $ ElementProperty
+  { eaGetProperty = hvpGetValue
+  , eaSetProperty = hvpSetValue
   , eaValue = txt
   }
 
-optionValue_ :: T.Text -> NamedElementProperty DOM.HTMLOptionElement
-optionValue_ txt = NamedElementProperty "value" $ ElementProperty
-  { eaGetProperty = DOM.Option.getValue
-  , eaSetProperty = DOM.Option.setValue
-  , eaValue = txt
-  }
+class HasCheckedProperty el where
+  hcpGetChecked :: el -> ClientM Bool
+  hcpSetChecked :: el -> Bool -> ClientM ()
 
-inputChecked_ :: Bool -> NamedElementProperty DOM.HTMLInputElement
-inputChecked_ b = NamedElementProperty "checked" $ ElementProperty
-  { eaGetProperty = DOM.Input.getChecked
-  , eaSetProperty = DOM.Input.setChecked
+instance HasCheckedProperty DOM.HTMLInputElement where
+  hcpGetChecked = DOM.Input.getChecked
+  hcpSetChecked = DOM.Input.setChecked
+
+checked_ :: (HasCheckedProperty el) => Bool -> NamedElementProperty el
+checked_ b = NamedElementProperty "checked" $ ElementProperty
+  { eaGetProperty = hcpGetChecked
+  , eaSetProperty = hcpSetChecked
   , eaValue = b
   }
 

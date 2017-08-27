@@ -42,7 +42,7 @@ testAppsComponent = do
             return (set tasWhich newApp st''))
         (forM_ [Blank, Todo, Timer] $ \which -> do
           n$ option_
-            (optionValue_ (tshow which))
+            (value_ (tshow which))
             (selected_ (which == st ^. tasWhich))
             (n$ text (tshow which)))
     bootstrapCol $ do

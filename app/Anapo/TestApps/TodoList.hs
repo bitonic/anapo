@@ -45,7 +45,7 @@ todoComponent = do
   -- toggle completed tasks
   bootstrapRow $ bootstrapCol $ do
     n$ a_
-      (aHref_ "#")
+      (href_ "#")
       (onclick_ $ \_ ev -> do
         DOM.preventDefault ev
         dispatch (over tsShowCompleted not))
@@ -68,7 +68,7 @@ todoComponent = do
           else st')
       (do
         n$ input_
-          (inputValue_ (st ^. tsCurrentText))
+          (value_ (st ^. tsCurrentText))
           (oninput_ $ \inp _ -> do
             liftIO (putStrLn "Setting new text!")
             txt <- DOM.getValue inp
