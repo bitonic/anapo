@@ -52,9 +52,7 @@ module Anapo.Component
   , inputValue_
   , optionValue_
   , inputChecked_
-  {-
-  , name_
-  -}
+  , selected_
 
     -- * events
   , onclick_
@@ -376,6 +374,13 @@ inputChecked_ :: Bool -> NamedElementProperty DOM.HTMLInputElement
 inputChecked_ b = NamedElementProperty "checked" $ ElementProperty
   { eaGetProperty = DOM.Input.getChecked
   , eaSetProperty = DOM.Input.setChecked
+  , eaValue = b
+  }
+
+selected_ :: Bool -> NamedElementProperty DOM.HTMLOptionElement
+selected_ b = NamedElementProperty "selected" $ ElementProperty
+  { eaGetProperty = DOM.Option.getSelected
+  , eaSetProperty = DOM.Option.setSelected
   , eaValue = b
   }
 

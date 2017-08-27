@@ -50,54 +50,58 @@ todoComponent = do
   st <- askState
   dispatch <- askDispatch
   -- toggle completed tasks
-  n$ a_
-    (aHref_ "#")
-    (onclick_ $ \_ ev -> do
-      DOM.preventDefault ev
-      dispatch (over tsShowCompleted not))
-    (n$ if st ^. tsShowCompleted
-      then "Hide completed tasks"
-      else "Show completed tasks")
+  bootstrapRow $ bootstrapCol $ do
+    n$ a_
+      (aHref_ "#")
+      (onclick_ $ \_ ev -> do
+        DOM.preventDefault ev
+        dispatch (over tsShowCompleted not))
+      (n$ if st ^. tsShowCompleted
+        then "Hide completed tasks"
+        else "Show completed tasks")
   -- submit new item
-  n$ form_
-    (onsubmit_ $ \_ ev -> do
-      DOM.preventDefault ev
-      liftIO (putStrLn "Submitting new item")
-      dispatch $ \st' -> if st' ^. tsCurrentText /= ""
-        then let
-          newTodoItem = TodoItemState False (st' ^. tsCurrentText)
-          itemKey = if Map.null (st' ^. tsTodoElements)
-            then 0
-            else fst (Map.findMax (st' ^. tsTodoElements)) + 1
-          in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
-        else st')
-    (do
-      n$ input_
-        (inputValue_ (st ^. tsCurrentText))
-        (onchange_ $ \inp _ -> do
-          liftIO (putStrLn "Setting new text!")
-          txt <- DOM.getValue inp
-          dispatch (set tsCurrentText txt))
-      n$ button_ $
-        n$ text ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)))
+  bootstrapRow $ bootstrapCol $ do
+    n$ form_
+      (onsubmit_ $ \_ ev -> do
+        DOM.preventDefault ev
+        liftIO (putStrLn "Submitting new item")
+        dispatch $ \st' -> if st' ^. tsCurrentText /= ""
+          then let
+            newTodoItem = TodoItemState False (st' ^. tsCurrentText)
+            itemKey = if Map.null (st' ^. tsTodoElements)
+              then 0
+              else fst (Map.findMax (st' ^. tsTodoElements)) + 1
+            in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
+          else st')
+      (do
+        n$ input_
+          (inputValue_ (st ^. tsCurrentText))
+          (onchange_ $ \inp _ -> do
+            liftIO (putStrLn "Setting new text!")
+            txt <- DOM.getValue inp
+            dispatch (set tsCurrentText txt))
+        n$ button_ $
+          n$ text ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)))
   -- active / completed todos
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =
         n$ ul_ $ forM_ items $ \(itemKey, itemState) ->
           zoom_ itemState (tsTodoElements . at itemKey) $
             key (tshow itemKey) (li_ todoItemComponent)
-  n$ h2_ (n$ "Things to do")
-  renderItems active
+  bootstrapRow $ bootstrapCol $ do
+    n$ h2_ (n$ "Things to do")
+    renderItems active
   when (st ^. tsShowCompleted) $ do
-    n$ h2_ (n$ "Things already done")
-    renderItems done
+    bootstrapRow $ bootstrapCol $ do
+      n$ h2_ (n$ "Things already done")
+      renderItems done
 
 todoInit :: ClientM TodoState
 todoInit = return $ TodoState
   { _tsShowCompleted = True
   , _tsTodoElements = Map.fromList
-      [ (1, TodoItemState{_tisCompleted = False, _tisBody = "Buy milk"})
-      , (2, TodoItemState{_tisCompleted = True, _tisBody = "Get a life"})
+      [ (1, TodoItemState{_tisCompleted = True, _tisBody = "Buy milk"})
+      , (2, TodoItemState{_tisCompleted = False, _tisBody = "Learn CT"})
       ]
   , _tsCurrentText = ""
   }
