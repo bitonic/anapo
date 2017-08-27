@@ -30,9 +30,8 @@ todoItemComponent = do
   st <- askState
   dispatch <- askDispatch
   n$ input_
-    (type_ "checkbox")
-    (checked_ (st ^. tisCompleted))
-    (name_ (st ^. tisBody))
+    (inputType_ "checkbox")
+    (inputChecked_ (st ^. tisCompleted))
     (onchange_ $ \el ev -> do
       DOM.preventDefault ev
       checked <- DOM.getChecked el
@@ -52,7 +51,7 @@ todoComponent = do
   dispatch <- askDispatch
   -- toggle completed tasks
   n$ a_
-    (href_ "#")
+    (aHref_ "#")
     (onclick_ $ \_ ev -> do
       DOM.preventDefault ev
       dispatch (over tsShowCompleted not))
@@ -74,7 +73,7 @@ todoComponent = do
         else st')
     (do
       n$ input_
-        (value_ (st ^. tsCurrentText))
+        (inputValue_ (st ^. tsCurrentText))
         (onchange_ $ \inp _ -> do
           liftIO (putStrLn "Setting new text!")
           txt <- DOM.getValue inp

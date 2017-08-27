@@ -41,17 +41,20 @@ module Anapo.Component
   , h2_
   , select_
   , option_
+  , button_
+  , ul_
+  , li_
 
     -- * attributes
   , class_
-  , type_
-  , href_
-  , value_
-  , li_
-  , ul_
-  , button_
-  , checked_
+  , inputType_
+  , aHref_
+  , inputValue_
+  , optionValue_
+  , inputChecked_
+  {-
   , name_
+  -}
 
     -- * events
   , onclick_
@@ -64,16 +67,19 @@ module Anapo.Component
 
 import qualified Data.HashMap.Strict as HMS
 import Control.Lens (Lens', view, set, over)
-import Control.Monad (ap, guard)
+import Control.Monad (ap)
 import qualified Data.Text as T
 import Data.Monoid ((<>))
 import GHC.StaticPtr
 import qualified Data.DList as DList
 import Data.String (IsString(..))
-import Data.List (foldl')
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
+import qualified GHCJS.DOM.Element as DOM
+import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
+import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
+import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtils
 
 import Anapo.Core
 
@@ -219,23 +225,20 @@ rawNode wrap x = return $ VirtualDomNode
   }
 
 class (DOM.IsElement el) => ConstructVirtualDomElement el a where
-  constructVirtualDomElement :: ElementTag -> (DOM.JSVal -> el) -> [Attr] -> [SomeEvent el] -> a
+  constructVirtualDomElement :: ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> a
 
 {-# INLINE constructVirtualDomElement_ #-}
 constructVirtualDomElement_ ::
      (DOM.IsElement el)
-  => ElementTag -> (DOM.JSVal -> el) -> [Attr] -> [SomeEvent el] -> VirtualDomChildren -> VirtualDomNode
-constructVirtualDomElement_ tag f attrs evts child = VirtualDomNode
+  => ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> VirtualDomChildren -> VirtualDomNode
+constructVirtualDomElement_ tag f props evts child = VirtualDomNode
   { vdnMark = Nothing
   , vdnWrap = f
   , vdnBody = VDNBElement $ VirtualDomElement
       { vdeTag = tag
-      , vdeAttributes = foldl'
-          (\attrMap (Attr attrName mbAttr) -> case mbAttr of
-              Just attr -> HMS.insert attrName attr attrMap
-              Nothing -> HMS.delete attrName attrMap)
-          HMS.empty
-          (reverse attrs)
+      , vdeProperties = HMS.fromList $ do
+          NamedElementProperty name prop <- reverse props
+          return (name, prop)
       , vdeEvents = reverse evts
       , vdeChildren = child
       }
@@ -265,9 +268,9 @@ instance (DOM.IsElement el) => ConstructVirtualDomElement el (UnsafeRawHtml -> C
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts (UnsafeRawHtml html) = return (constructVirtualDomElement_ tag f attrs evts (VDCRawHtml html))
 
-data Attr = Attr T.Text (Maybe T.Text)
+data NamedElementProperty el = NamedElementProperty T.Text (ElementProperty el)
 
-instance (ConstructVirtualDomElement el a) => ConstructVirtualDomElement el (Attr -> a) where
+instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (NamedElementProperty el2 -> a) where
   {-# INLINE constructVirtualDomElement #-}
   constructVirtualDomElement tag f attrs evts attr =
     constructVirtualDomElement tag f (attr : attrs) evts
@@ -331,26 +334,55 @@ select_ = el "select" DOM.HTMLSelectElement
 option_ :: (ConstructVirtualDomElement DOM.HTMLOptionElement a) => a
 option_ = el "option" DOM.HTMLOptionElement
 
--- Attributes
+-- Properties
 -- --------------------------------------------------------------------
 
-class_ :: T.Text -> Attr
-class_ = Attr "class" . Just
+class_ :: (DOM.IsElement el) => T.Text -> NamedElementProperty el
+class_ txt = NamedElementProperty "className" $ ElementProperty
+  { eaGetProperty = DOM.getClassName
+  , eaSetProperty = DOM.setClassName
+  , eaValue = txt
+  }
 
-type_ :: T.Text -> Attr
-type_ = Attr "type" . Just
+inputType_ :: T.Text -> NamedElementProperty DOM.HTMLInputElement
+inputType_ txt = NamedElementProperty "type" $ ElementProperty
+  { eaGetProperty = DOM.Input.getType
+  , eaSetProperty = DOM.Input.setType
+  , eaValue = txt
+  }
 
-href_ :: T.Text -> Attr
-href_ = Attr "href" . Just
+aHref_ :: (DOM.IsHTMLHyperlinkElementUtils el) => T.Text -> NamedElementProperty el
+aHref_ txt = NamedElementProperty "href" $ ElementProperty
+  { eaGetProperty = DOM.HyperlinkElementUtils.getHref
+  , eaSetProperty = DOM.HyperlinkElementUtils.setHref
+  , eaValue = txt
+  }
 
-value_ :: T.Text -> Attr
-value_ = Attr "value" . Just
+inputValue_ :: T.Text -> NamedElementProperty DOM.HTMLInputElement
+inputValue_ txt = NamedElementProperty "value" $ ElementProperty
+  { eaGetProperty = DOM.Input.getValue
+  , eaSetProperty = DOM.Input.setValue
+  , eaValue = txt
+  }
 
-checked_ :: Bool -> Attr
-checked_ b = Attr "checked" ("" <$ guard b)
+optionValue_ :: T.Text -> NamedElementProperty DOM.HTMLOptionElement
+optionValue_ txt = NamedElementProperty "value" $ ElementProperty
+  { eaGetProperty = DOM.Option.getValue
+  , eaSetProperty = DOM.Option.setValue
+  , eaValue = txt
+  }
 
+inputChecked_ :: Bool -> NamedElementProperty DOM.HTMLInputElement
+inputChecked_ b = NamedElementProperty "checked" $ ElementProperty
+  { eaGetProperty = DOM.Input.getChecked
+  , eaSetProperty = DOM.Input.setChecked
+  , eaValue = b
+  }
+
+{-
 name_ :: T.Text -> Attr
 name_ = Attr "name" . Just
+-}
 
 -- Events
 -- --------------------------------------------------------------------

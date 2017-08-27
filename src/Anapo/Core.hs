@@ -73,13 +73,20 @@ data VirtualDomNodeBody el where
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
   SomeEvent (DOM.EventName el e) (el -> e -> ClientM ())
 
+data ElementProperty el = forall a. ElementProperty
+  { eaGetProperty :: el -> ClientM a
+  , eaSetProperty :: el -> a -> ClientM ()
+  , eaValue :: a
+  }
+
 type ElementTag = T.Text
-type ElementAttributes = HMS.HashMap T.Text T.Text
+type ElementPropertyName = T.Text
+type ElementProperties el = HMS.HashMap ElementPropertyName (ElementProperty el)
 type ElementEvents el = [SomeEvent el]
 
 data VirtualDomElement el = VirtualDomElement
   { vdeTag :: ElementTag
-  , vdeAttributes :: ElementAttributes
+  , vdeProperties :: ElementProperties el
   , vdeEvents :: ElementEvents el
   , vdeChildren :: VirtualDomChildren
   }

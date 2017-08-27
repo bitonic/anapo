@@ -24,7 +24,7 @@ testAppsComponent = do
   n$ select_
     (forM_ [Blank, Todo] $ \which -> do
       n$ option_
-        (value_ (tshow which))
+        (optionValue_ (tshow which))
         (n$ text (tshow which)))
   which <- view tasWhich <$> askState
   case which of
