@@ -5,6 +5,8 @@ module Anapo.Component
   , VirtualDomNode
   , ClientM
   , runClientM
+  , DispatchM
+  , Dispatch
 
     -- * ComponentM
   , ComponentM
@@ -58,13 +60,14 @@ module Anapo.Component
   , onclick_
   , onchange_
   , onsubmit_
+  , oninput_
 
     -- * Type class machinery
   , ConstructVirtualDomElement
   ) where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Lens (Lens', view, set, over)
+import Control.Lens (Traversal', Lens', view)
 import Control.Monad (ap)
 import qualified Data.Text as T
 import Data.Monoid ((<>))
@@ -88,7 +91,7 @@ type DispatchM state = (state -> ClientM state) -> ClientM ()
 type Dispatch state = (state -> state) -> ClientM ()
 
 newtype ComponentM dom read write a = ComponentM
-  { unComponentM :: forall out. Lens' out write -> DispatchM out -> Maybe write -> read -> (dom, a) }
+  { unComponentM :: forall out. Traversal' out write -> DispatchM out -> Maybe out -> read -> (dom, a) }
 
 type ComponentM' dom state = ComponentM dom state state
 type Component' state = ComponentM VirtualDom state state ()
@@ -135,16 +138,14 @@ instance (Monoid dom) => Monad (ComponentM dom read write) where
 askDispatchM :: (Monoid dom) => ComponentM dom read write (DispatchM write)
 askDispatchM = ComponentM $ \lst d _mbst _st ->
   ( mempty
-  , \modifySt -> d $ \st -> do
-      st' <- modifySt (view lst st)
-      return (set lst st' st)
+  , \modifySt -> d (lst modifySt)
   )
 
 {-# INLINE askDispatch #-}
 askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch write)
 askDispatch = ComponentM $ \lst d _mbst _st ->
   ( mempty
-  , \modifySt -> d (\st -> return (over lst modifySt st))
+  , \modifySt -> d (lst (return . modifySt))
   )
 
 {-# INLINE askState #-}
@@ -152,8 +153,12 @@ askState :: (Monoid dom) => ComponentM dom read write read
 askState = ComponentM (\_lst _d _mbst st -> (mempty, st))
 
 {-# INLINE askPreviousState #-}
-askPreviousState :: (Monoid dom) => ComponentM dom read write (Maybe write)
-askPreviousState = ComponentM (\_lst _d mbst _st -> (mempty, mbst))
+askPreviousState ::
+     (Monoid dom)
+  => (forall out. Traversal' out write -> Maybe out -> ComponentM dom read write a)
+  -> ComponentM dom read write a
+askPreviousState cont = ComponentM $ \lst d mbst st ->
+  unComponentM (cont lst mbst) lst d mbst st
 
 {-# INLINE key #-}
 key :: T.Text -> Node read write -> KeyedComponent read write
@@ -178,11 +183,11 @@ text txt = return $ VirtualDomNode
 
 {-# INLINE marked #-}
 marked ::
-     (Maybe write -> read -> Render)
+     (forall out. Traversal' out write -> Maybe out -> read -> Render)
   -> StaticPtr (Node read write)
   -> Node read write
 marked rerender domPtr = ComponentM $ \l d mbst st -> let
-  !render = rerender mbst st
+  !render = rerender l mbst st
   !fprint = staticKey domPtr
   -- do not force evaluation for this one since we actually
   -- want it to be lazy to avoid computing the vdom if we don't
@@ -193,25 +198,25 @@ marked rerender domPtr = ComponentM $ \l d mbst st -> let
 {-# INLINE zoom' #-}
 zoom' :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
 zoom' l' dom = ComponentM $ \l d mbst st ->
-  unComponentM dom (l . l') d (fmap (view l') mbst) (view l' st)
+  unComponentM dom (l . l') d mbst (view l' st)
 
 {-# INLINE zoom #-}
 zoom ::
      (readOut -> readIn)
-  -> Lens' writeOut writeIn
+  -> Traversal' writeOut writeIn
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
 zoom f l' dom = ComponentM $ \l d mbst st ->
-  unComponentM dom (l . l') d (fmap (view l') mbst) (f st)
+  unComponentM dom (l . l') d mbst (f st)
 
 {-# INLINE zoom_ #-}
 zoom_ ::
      readIn
-  -> Lens' writeOut writeIn
+  -> Traversal' writeOut writeIn
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
 zoom_ x l' dom = ComponentM $ \l d mbst _st ->
-  unComponentM dom (l . l') d (fmap (view l') mbst) x
+  unComponentM dom (l . l') d mbst x
 
 {-# INLINE rawNode #-}
 rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node read write
@@ -401,6 +406,11 @@ onchange_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
   => (el -> DOM.Event -> ClientM ()) -> SomeEvent el
 onchange_ = SomeEvent DOM.change
+
+oninput_ ::
+     (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
+  => (el -> DOM.Event -> ClientM ()) -> SomeEvent el
+oninput_ = SomeEvent DOM.input
 
 onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)

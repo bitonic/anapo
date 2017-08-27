@@ -72,18 +72,23 @@ executable test-app
     text,
     lens,
     containers,
-    ghcjs-dom
+    ghcjs-dom,
+    lifted-async,
+    time
   if impl(ghcjs)
     build-depends:
       ghcjs-base
   else
     build-depends:
       jsaddle,
-      jsaddle-warp
+      jsaddle-warp,
+      monad-control,
+      transformers-base
   other-modules:
     Anapo.TestApps
     Anapo.TestApps.Prelude
     Anapo.TestApps.TodoList
+    Anapo.TestApps.Timer
   default-language: Haskell2010
   default-extensions:
     BangPatterns
@@ -106,6 +111,7 @@ executable test-app
     TupleSections
     TypeFamilies
     NamedFieldPuns
+    StandaloneDeriving
 
 source-repository head
   type:     git

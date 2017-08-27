@@ -329,7 +329,6 @@ renderVirtualDom RenderOptions{..} doc = let
   debugOutput s = liftIO (when roDebugOutput (putStrLn s))
 
   in \container mbPrevVdom vdom -> do
-    debugOutput "About to render vdom"
     t0 <- liftIO getCurrentTime
     x <- case mbPrevVdom of
       Nothing -> do

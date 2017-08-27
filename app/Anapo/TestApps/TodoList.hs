@@ -5,7 +5,7 @@ module Anapo.TestApps.TodoList
   , todoInit
   ) where
 
-import Control.Lens (makeLenses, over, (^.), set, at)
+import Control.Lens (makeLenses, over, (^.), set, ix)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import Control.Monad (forM_, when)
@@ -25,17 +25,10 @@ data TodoItemState = TodoItemState
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
-todoItemComponent :: Component TodoItemState (Maybe TodoItemState)
+todoItemComponent :: Component' TodoItemState
 todoItemComponent = do
   st <- askState
-  dispatch <- askDispatch
-  n$ input_
-    (inputType_ "checkbox")
-    (inputChecked_ (st ^. tisCompleted))
-    (onchange_ $ \el ev -> do
-      DOM.preventDefault ev
-      checked <- DOM.getChecked el
-      dispatch (set (traverse . tisCompleted) checked))
+  zoom' tisCompleted (n$ booleanCheckbox)
   n$ text (st ^. tisBody)
 
 data TodoState = TodoState
@@ -76,7 +69,7 @@ todoComponent = do
       (do
         n$ input_
           (inputValue_ (st ^. tsCurrentText))
-          (onchange_ $ \inp _ -> do
+          (oninput_ $ \inp _ -> do
             liftIO (putStrLn "Setting new text!")
             txt <- DOM.getValue inp
             dispatch (set tsCurrentText txt))
@@ -86,7 +79,7 @@ todoComponent = do
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =
         n$ ul_ $ forM_ items $ \(itemKey, itemState) ->
-          zoom_ itemState (tsTodoElements . at itemKey) $
+          zoom_ itemState (tsTodoElements . ix itemKey) $
             key (tshow itemKey) (li_ todoItemComponent)
   bootstrapRow $ bootstrapCol $ do
     n$ h2_ (n$ "Things to do")
