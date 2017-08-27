@@ -1,4 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- | Note: we use 'Traversal' to keep a cursor to the
+-- write end of the state, but really we should use an
+-- "affine traversal" which guarantees we have either 0
+-- or 1 positions to traverse. See
+-- <https://www.reddit.com/r/haskell/comments/60fha5/affine_traversal/>
+-- for why affine traversals do not play well with lens.
 module Anapo.Component
   ( -- * Re-exports
     VirtualDom
