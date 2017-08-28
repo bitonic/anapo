@@ -1,4 +1,4 @@
-module Anapo.Render (RenderOptions(..), VirtualDomOverlay, renderVirtualDom) where
+module Anapo.Render (RenderOptions(..), Overlay, renderVirtualDom) where
 
 import qualified Data.HashMap.Strict as HMS
 import Control.Monad (forM_, when, forM)
@@ -14,24 +14,25 @@ import qualified GHCJS.DOM.Element as DOM
 import qualified GHCJS.DOM.EventTargetClosures as DOM
 import qualified GHCJS.DOM.EventTarget as DOM
 
-import Anapo.Core
+import Anapo.ClientM
+import qualified Anapo.VDOM as V
 
-type VirtualDomOverlay = [VirtualDomNodeOverlay]
+type Overlay = [NodeOverlay]
 
 newtype ResetProperty = ResetProperty
   { resetProperty :: forall el. (DOM.IsElement el) => el -> ClientM ()
   }
 
-data VirtualDomNodeOverlay = VirtualDomNodeOverlay
-  { vdnoEvents :: [(DOM.DOMString, DOM.EventListener)]
-  , vdnoResetProperties :: HMS.HashMap ElementPropertyName ResetProperty
+data NodeOverlay = NodeOverlay
+  { noEvents :: [(DOM.DOMString, DOM.EventListener)]
+  , noResetProperties :: HMS.HashMap V.ElementPropertyName ResetProperty
   -- ^ holds functions that can reset all the properties that
   -- have been set.
-  , vdnoChildren :: VirtualDomOverlay
+  , noChildren :: Overlay
   }
 
-emptyOverlay :: VirtualDomNodeOverlay
-emptyOverlay = VirtualDomNodeOverlay mempty mempty mempty
+emptyOverlay :: NodeOverlay
+emptyOverlay = NodeOverlay mempty mempty mempty
 
 data RenderOptions = RenderOptions
   { roAlwaysRerender :: Bool
@@ -40,8 +41,8 @@ data RenderOptions = RenderOptions
 
 renderVirtualDom :: forall el0.
      (DOM.IsElement el0)
-  => RenderOptions -> DOM.Document -> el0 -> Maybe (VirtualDom, VirtualDomOverlay) -> VirtualDom
-  -> ClientM VirtualDomOverlay
+  => RenderOptions -> DOM.Document -> el0 -> Maybe (V.Dom, Overlay) -> V.Dom
+  -> ClientM Overlay
 renderVirtualDom RenderOptions{..} doc = let
   {-# INLINE removeAllChildren #-}
   removeAllChildren :: (DOM.IsNode el) => el -> ClientM ()
@@ -57,25 +58,25 @@ renderVirtualDom RenderOptions{..} doc = let
   removeDomNodeChildren ::
        (DOM.IsNode el)
     => el -- ^ the node
-    -> VirtualDomChildren
+    -> V.Children
     -> ClientM ()
   removeDomNodeChildren domNode = \case
-    VDCRawHtml{} -> return ()
-    VDCKeyed kvd -> removeDom domNode Nothing (DList.toList (unkeyedVirtualDom kvd))
-    VDCNormal vdom -> removeDom domNode Nothing (DList.toList vdom)
+    V.CRawHtml{} -> return ()
+    V.CKeyed kvd -> removeDom domNode Nothing (DList.toList (V.unkeyDom kvd))
+    V.CNormal vdom -> removeDom domNode Nothing (DList.toList vdom)
 
   {-# INLINE removeDomNode #-}
   removeDomNode ::
        (DOM.IsNode el)
     => el -- ^ the node
-    -> VirtualDomNode -- ^ the virtual dom nodes describing what's the node
+    -> V.Node -- ^ the virtual dom nodes describing what's the node
     -> ClientM ()
-  removeDomNode domNode VirtualDomNode{..} = do
-    vdncUnsafeWillRemove vdnCallbacks =<< DOM.unsafeCastTo vdnWrap domNode
-    case vdnBody of
-      VDNBText{} -> return ()
-      VDNBRawNode{} -> return ()
-      VDNBElement VirtualDomElement{vdeChildren} -> removeDomNodeChildren domNode vdeChildren
+  removeDomNode domNode V.Node{..} = do
+    V.callbacksUnsafeWillRemove nodeCallbacks =<< DOM.unsafeCastTo nodeWrap domNode
+    case nodeBody of
+      V.NBText{} -> return ()
+      V.NBRawNode{} -> return ()
+      V.NBElement V.Element{V.elementChildren} -> removeDomNodeChildren domNode elementChildren
 
   {-# INLINE removeDom #-}
   removeDom ::
@@ -85,11 +86,11 @@ renderVirtualDom RenderOptions{..} doc = let
     -> Maybe DOM.Node
     -- ^ the node to start removing from. if 'Nothing' will start from
     -- first child of container
-    -> [VirtualDomNode] -- ^ the virtual dom nodes describing what's in the node
+    -> [V.Node] -- ^ the virtual dom nodes describing what's in the node
     -> ClientM ()
   removeDom container mbCursor0 nodes0 = do
     let
-      go :: Maybe DOM.Node -> [VirtualDomNode] -> ClientM ()
+      go :: Maybe DOM.Node -> [V.Node] -> ClientM ()
       go mbCursor = \case
         [] -> forM_ mbCursor $ \_ ->
           fail "removeDom: Expecting no cursor at the end of vdom, but got one!"
@@ -110,9 +111,9 @@ renderVirtualDom RenderOptions{..} doc = let
   addEvents ::
        (DOM.IsElement el)
     => el
-    -> ElementEvents el
+    -> V.ElementEvents el
     -> ClientM [(DOM.DOMString, DOM.EventListener)]
-  addEvents el evts = forM evts $ \(SomeEvent (DOM.EventName evtName) evt) -> do
+  addEvents el evts = forM evts $ \(V.SomeEvent (DOM.EventName evtName) evt) -> do
     safel <- DOM.eventListenerNew (evt el)
     raw <- DOM.EventListener <$> DOM.toJSVal safel
     DOM.addEventListener el evtName (Just raw) False
@@ -123,12 +124,12 @@ renderVirtualDom RenderOptions{..} doc = let
        (DOM.IsElement el)
     => el
     -> (DOM.JSVal -> el)
-    -> ElementProperties el
-    -> HMS.HashMap ElementPropertyName ResetProperty -- ^ previous reset properties
-    -> ClientM (HMS.HashMap ElementPropertyName ResetProperty)
+    -> V.ElementProperties el
+    -> HMS.HashMap V.ElementPropertyName ResetProperty -- ^ previous reset properties
+    -> ClientM (HMS.HashMap V.ElementPropertyName ResetProperty)
   addProperties el wrap props prevReset =
     fmap (HMS.union prevReset . HMS.fromList . catMaybes) $
-      forM (HMS.toList props) $ \(propName, ElementProperty{..}) -> do
+      forM (HMS.toList props) $ \(propName, V.ElementProperty{..}) -> do
         def <- eaGetProperty el
         eaSetProperty el eaValue
         return $ case HMS.lookup propName prevReset of
@@ -144,45 +145,45 @@ renderVirtualDom RenderOptions{..} doc = let
   renderDomChildren ::
        (DOM.IsElement el)
     => el -- ^ container
-    -> VirtualDomChildren
-    -> ClientM VirtualDomOverlay
+    -> V.Children
+    -> ClientM Overlay
   renderDomChildren container = \case
-    VDCRawHtml html -> do
+    V.CRawHtml html -> do
       DOM.setInnerHTML container html
       return mempty
-    VDCKeyed kvd -> renderDom container (DList.toList (unkeyedVirtualDom kvd))
-    VDCNormal vdom -> renderDom container (DList.toList vdom)
+    V.CKeyed kvd -> renderDom container (DList.toList (V.unkeyDom kvd))
+    V.CNormal vdom -> renderDom container (DList.toList vdom)
 
   {-# INLINE renderDomNode #-}
   renderDomNode ::
-       VirtualDomNode
-    -> (forall el. (DOM.IsNode el) => el -> VirtualDomNodeOverlay -> ClientM a)
+       V.Node
+    -> (forall el. (DOM.IsNode el) => el -> NodeOverlay -> ClientM a)
     -> ClientM a
-  renderDomNode VirtualDomNode{..} cont0 = do
+  renderDomNode V.Node{..} cont0 = do
     let cont el callbacks evts = do
-          vdncUnsafeWillMount callbacks el
+          V.callbacksUnsafeWillMount callbacks el
           x <- cont0 el evts
-          vdncUnsafeDidMount callbacks el
+          V.callbacksUnsafeDidMount callbacks el
           return x
-    case vdnBody of
-      VDNBText txt -> do
+    case nodeBody of
+      V.NBText txt -> do
         txtNode <- DOM.createTextNode doc txt
-        cont txtNode vdnCallbacks emptyOverlay
-      VDNBRawNode el -> cont el vdnCallbacks emptyOverlay
-      VDNBElement VirtualDomElement{..} -> do
-        el <- DOM.unsafeCastTo vdnWrap =<< DOM.createElement doc vdeTag
-        defProps <- addProperties el vdnWrap vdeProperties mempty
-        evts <- addEvents el vdeEvents
-        childrenEvents <- renderDomChildren el vdeChildren
-        cont el vdnCallbacks (VirtualDomNodeOverlay evts defProps childrenEvents)
+        cont txtNode nodeCallbacks emptyOverlay
+      V.NBRawNode el -> cont el nodeCallbacks emptyOverlay
+      V.NBElement V.Element{..} -> do
+        el <- DOM.unsafeCastTo nodeWrap =<< DOM.createElement doc elementTag
+        defProps <- addProperties el nodeWrap elementProperties mempty
+        evts <- addEvents el elementEvents
+        childrenEvents <- renderDomChildren el elementChildren
+        cont el nodeCallbacks (NodeOverlay evts defProps childrenEvents)
 
   {-# INLINE renderDom #-}
   renderDom ::
        (DOM.IsNode el)
     => el -- ^ the node that should contain the dom
-    -> [VirtualDomNode]
-    -> ClientM [VirtualDomNodeOverlay]
-  renderDom container = mapM $ \node@VirtualDomNode{..} -> do
+    -> [V.Node]
+    -> ClientM [NodeOverlay]
+  renderDom container = mapM $ \node@V.Node{..} -> do
     renderDomNode node $ \el evts -> do
       DOM.appendChild_ container el
       return evts
@@ -191,18 +192,18 @@ renderVirtualDom RenderOptions{..} doc = let
   patchDomChildren ::
        (DOM.IsElement el)
     => el -- ^ the containing node
-    -> VirtualDomChildren -- ^ previous children
-    -> VirtualDomOverlay -- ^ the overlay for previous children
-    -> VirtualDomChildren -- ^ current children
-    -> ClientM VirtualDomOverlay
+    -> V.Children -- ^ previous children
+    -> Overlay -- ^ the overlay for previous children
+    -> V.Children -- ^ current children
+    -> ClientM Overlay
   patchDomChildren container prevChildren0 prevChildrenEvts0 children0 =
     case (prevChildren0, prevChildrenEvts0, children0) of
       -- TODO consider ref equality for HTML
-      (VDCRawHtml{}, _:_, _) -> fail "patchDomChildren: got overlay for html node!"
-      (VDCRawHtml prevHtml, [], VDCRawHtml html) | prevHtml == html -> return []
-      (VDCKeyed prevKeyedChildren, evts, VDCKeyed keyedChildren) ->
+      (V.CRawHtml{}, _:_, _) -> fail "patchDomChildren: got overlay for html node!"
+      (V.CRawHtml prevHtml, [], V.CRawHtml html) | prevHtml == html -> return []
+      (V.CKeyed prevKeyedChildren, evts, V.CKeyed keyedChildren) ->
         patchKeyedDom container prevKeyedChildren evts keyedChildren
-      (VDCNormal prevNChildren, evts, VDCNormal nchildren) ->
+      (V.CNormal prevNChildren, evts, V.CNormal nchildren) ->
         patchDom container prevNChildren evts nchildren
       (prevChildren, _, children) -> do
         -- TODO remove this, it's just a check for now
@@ -216,58 +217,58 @@ renderVirtualDom RenderOptions{..} doc = let
        (DOM.IsElement el1, DOM.IsElement el2)
     => el2 -- ^ the node we're patching
     -> (DOM.JSVal -> el2)
-    -> VirtualDomElement el1
-    -> VirtualDomNodeOverlay
-    -> VirtualDomElement el2
-    -> ClientM VirtualDomNodeOverlay
+    -> V.Element el1
+    -> NodeOverlay
+    -> V.Element el2
+    -> ClientM NodeOverlay
   patchDomElement node wrap prevEl prevElOverlay el = do
     -- reset properties that are gone to their default
-    let removedProps = vdeProperties prevEl `HMS.difference` vdeProperties el
+    let removedProps = V.elementProperties prevEl `HMS.difference` V.elementProperties el
     -- TODO we could remove the default properties at this point, but i'm
     -- not sure it's even worth it
     forM_ (HMS.keys removedProps) $ \prop ->
-      resetProperty (vdnoResetProperties prevElOverlay HMS.! prop) node
+      resetProperty (noResetProperties prevElOverlay HMS.! prop) node
     -- insert new properties, and augment the property resetters
-    newResetProperties <- addProperties node wrap (vdeProperties el) (vdnoResetProperties prevElOverlay)
+    newResetProperties <- addProperties node wrap (V.elementProperties el) (noResetProperties prevElOverlay)
     -- remove all events
     -- TODO we should probably have an option to be able to have stable events, so
     -- that we do not have to delete everything each time
     -- TODO can it be that changing the attributes triggers some events? we should
     -- check
-    forM_ (vdnoEvents prevElOverlay) $ \(evtName, evt) -> do
+    forM_ (noEvents prevElOverlay) $ \(evtName, evt) -> do
       DOM.removeEventListener node evtName (Just evt) False
     -- add all events
-    evts <- addEvents node (vdeEvents el)
+    evts <- addEvents node (V.elementEvents el)
     -- patch children
     childrenEvts <-
-      patchDomChildren node (vdeChildren prevEl) (vdnoChildren prevElOverlay) (vdeChildren el)
-    return (VirtualDomNodeOverlay evts newResetProperties childrenEvts)
+      patchDomChildren node (V.elementChildren prevEl) (noChildren prevElOverlay) (V.elementChildren el)
+    return (NodeOverlay evts newResetProperties childrenEvts)
 
   {-# INLINE patchDomNode #-}
   patchDomNode ::
        (DOM.IsNode el1, DOM.IsNode el2)
     => el1 -- ^ the container
     -> el2 -- ^ the dom node we're patching
-    -> VirtualDomNode -- ^ the previous vdom
-    -> VirtualDomNodeOverlay -- ^ the previous vdom events
-    -> VirtualDomNode -- ^ the next vdom
-    -> ClientM VirtualDomNodeOverlay
-  patchDomNode container node prevVdom@(VirtualDomNode prevMark prevBody _ _) prevVdomEvents vdom@(VirtualDomNode mark body wrap callbacks) = do
+    -> V.Node -- ^ the previous vdom
+    -> NodeOverlay -- ^ the previous vdom events
+    -> V.Node -- ^ the next vdom
+    -> ClientM NodeOverlay
+  patchDomNode container node prevVdom@(V.Node prevMark prevBody _ _) prevVdomEvents vdom@(V.Node mark body wrap callbacks) = do
     -- check if they're both marked and without the rerender
     case (prevMark, mark) of
-      (Just (VirtualDomNodeMark prevFprint _), Just (VirtualDomNodeMark fprint render))
-        | prevFprint == fprint && render == DontRender -> return prevVdomEvents
+      (Just (V.Mark prevFprint _), Just (V.Mark fprint render))
+        | prevFprint == fprint && render == V.DontRerender -> return prevVdomEvents
       _ -> case (prevBody, body) of
         -- Text
         -- TODO consider ref. equality, also for rawnode
         -- TODO consider asserting no events when appropriate
-        (VDNBText prevTxt, VDNBText txt) | prevTxt == txt -> return emptyOverlay
+        (V.NBText prevTxt, V.NBText txt) | prevTxt == txt -> return emptyOverlay
         -- Element
-        (VDNBElement prevElement, VDNBElement element) | vdeTag prevElement == vdeTag element -> do
+        (V.NBElement prevElement, V.NBElement element) | V.elementTag prevElement == V.elementTag element -> do
           node' <- DOM.unsafeCastTo wrap node
-          vdncUnsafeWillPatch callbacks node'
+          V.callbacksUnsafeWillPatch callbacks node'
           x <- patchDomElement node' wrap prevElement prevVdomEvents element
-          vdncUnsafeDidPatch callbacks node'
+          V.callbacksUnsafeDidPatch callbacks node'
           return x
         -- In all other cases we erase and rerender
         _ -> do
@@ -280,11 +281,11 @@ renderVirtualDom RenderOptions{..} doc = let
   patchKeyedDom ::
        (DOM.IsNode el)
     => el -- ^ the container
-    -> KeyedVirtualDom
-    -> VirtualDomOverlay
-    -> KeyedVirtualDom
-    -> ClientM VirtualDomOverlay
-  patchKeyedDom container (KeyedVirtualDom prevKeyedVdom prevVdomOrder) prevVdomEvents (KeyedVirtualDom keyedVdom vdomOrder) = do
+    -> V.KeyedDom
+    -> Overlay
+    -> V.KeyedDom
+    -> ClientM Overlay
+  patchKeyedDom container (V.KeyedDom prevKeyedVdom prevVdomOrder) prevVdomEvents (V.KeyedDom keyedVdom vdomOrder) = do
     -- TODO implement this properly
     let prevVdom = fmap
           (\key -> prevKeyedVdom HMS.! key)
@@ -298,10 +299,10 @@ renderVirtualDom RenderOptions{..} doc = let
   patchDom ::
        (DOM.IsNode el)
     => el -- ^ the container
-    -> VirtualDom -- ^ the previous vdom
-    -> VirtualDomOverlay -- ^ the previous vdom events
-    -> VirtualDom -- ^ the current vdom
-    -> ClientM VirtualDomOverlay
+    -> V.Dom -- ^ the previous vdom
+    -> Overlay -- ^ the previous vdom events
+    -> V.Dom -- ^ the current vdom
+    -> ClientM Overlay
   patchDom container prevVnodes0 prevVnodesEvents0 vnodes0 = do
     let
       go mbCursor prevVnodes prevVdomEvents vnodes = case (prevVnodes, prevVdomEvents, vnodes) of

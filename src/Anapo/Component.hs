@@ -7,15 +7,11 @@
 -- for why affine traversals do not play well with lens.
 module Anapo.Component
   ( -- * Re-exports
-    VirtualDom
-  , VirtualDomNode
-  , ClientM
-  , runClientM
-  , DispatchM
-  , Dispatch
-  , Render(..)
+    V.Rerender(..)
 
     -- * ComponentM
+  , DispatchM
+  , Dispatch
   , ComponentM
   , Component
   , Component'
@@ -34,11 +30,13 @@ module Anapo.Component
   , n
   , key
   , text
+  , text_
   , marked
   , zoom
   , zoom_
   , zoom'
   , rawNode
+  , rawNode_
 
     -- * elements
   , div_
@@ -74,7 +72,7 @@ module Anapo.Component
   , onselect_
 
     -- * Type class machinery
-  , ConstructVirtualDomElement
+  , ConstructVDOMElement
   ) where
 
 import qualified Data.HashMap.Strict as HMS
@@ -93,7 +91,8 @@ import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
 import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
 import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtils
 
-import Anapo.Core
+import Anapo.ClientM
+import qualified Anapo.VDOM as V
 
 -- Monad
 -- --------------------------------------------------------------------
@@ -105,22 +104,22 @@ newtype ComponentM dom read write a = ComponentM
   { unComponentM :: forall out. Traversal' out write -> DispatchM out -> Maybe out -> read -> (dom, a) }
 
 type ComponentM' dom state = ComponentM dom state state
-type Component' state = ComponentM VirtualDom state state ()
-type Component read write = ComponentM VirtualDom read write ()
-type KeyedComponent' state = ComponentM KeyedVirtualDom state state ()
-type KeyedComponent read write = ComponentM KeyedVirtualDom read write ()
-type Node read write = ComponentM () read write VirtualDomNode
-type Node' state = ComponentM () state state VirtualDomNode
+type Component' state = ComponentM V.Dom state state ()
+type Component read write = ComponentM V.Dom read write ()
+type KeyedComponent' state = ComponentM V.KeyedDom state state ()
+type KeyedComponent read write = ComponentM V.KeyedDom read write ()
+type Node read write = ComponentM () read write V.Node
+type Node' state = ComponentM () state state V.Node
 
 instance IsString (Node read write) where
-  fromString = text . T.pack
+  fromString = text_ . T.pack
 
 {-# INLINE runComponentM #-}
 runComponentM :: ComponentM dom read write a -> DispatchM write -> Maybe write -> read -> (dom, a)
 runComponentM vdom = unComponentM vdom id
 
 {-# INLINE runComponent #-}
-runComponent :: Component read write -> DispatchM write -> Maybe write -> read -> VirtualDom
+runComponent :: Component read write -> DispatchM write -> Maybe write -> read -> V.Dom
 runComponent vdom d mbst st = fst (unComponentM vdom id d mbst st)
 
 instance Functor (ComponentM dom read write) where
@@ -175,7 +174,7 @@ askPreviousState cont = ComponentM $ \lst d mbst st ->
 key :: T.Text -> Node read write -> KeyedComponent read write
 key k getNode = ComponentM $ \l d mbst st -> let
   !(_, !nod) = unComponentM getNode l d mbst st
-  in (KeyedVirtualDom (HMS.singleton k nod) (DList.singleton k), ())
+  in (V.KeyedDom (HMS.singleton k nod) (DList.singleton k), ())
 
 {-# INLINE n #-}
 n :: Node read write -> Component read write
@@ -184,17 +183,21 @@ n getNode = ComponentM $ \l d mbst st -> let
   in (DList.singleton nod, ())
 
 {-# INLINE text #-}
-text :: T.Text -> Node read write
-text txt = return $ VirtualDomNode
-  { vdnMark = Nothing
-  , vdnWrap = DOM.Text
-  , vdnBody = VDNBText txt
-  , vdnCallbacks = noVirtualDomNodeCallbacks
+text :: T.Text -> V.Callbacks DOM.Text -> Node read write
+text txt cbacks = return $ V.Node
+  { V.nodeMark = Nothing
+  , V.nodeWrap = DOM.Text
+  , V.nodeBody = V.NBText txt
+  , V.nodeCallbacks = cbacks
   }
+
+{-# INLINE text_ #-}
+text_ :: T.Text -> Node read write
+text_ txt = text txt mempty
 
 {-# INLINE marked #-}
 marked ::
-     (forall out. Traversal' out write -> Maybe out -> read -> Render)
+     (forall out. Traversal' out write -> Maybe out -> read -> V.Rerender)
   -> StaticPtr (Node read write)
   -> Node read write
 marked rerender domPtr = ComponentM $ \l d mbst st -> let
@@ -204,7 +207,7 @@ marked rerender domPtr = ComponentM $ \l d mbst st -> let
   -- want it to be lazy to avoid computing the vdom if we don't
   -- have to
   (_, dom) = unComponentM (deRefStaticPtr domPtr) l d mbst st
-  in ((), dom{ vdnMark = Just (VirtualDomNodeMark fprint render) })
+  in ((), dom{ V.nodeMark = Just (V.Mark fprint render) })
 
 {-# INLINE zoom' #-}
 zoom' :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
@@ -230,138 +233,142 @@ zoom_ x l' dom = ComponentM $ \l d mbst _st ->
   unComponentM dom (l . l') d mbst x
 
 {-# INLINE rawNode #-}
-rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> VirtualDomNodeCallbacks el -> Node read write
-rawNode wrap x cbacks = return $ VirtualDomNode
-  { vdnMark = Nothing
-  , vdnBody = VDNBRawNode x
-  , vdnWrap = wrap
-  , vdnCallbacks = cbacks
+rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> V.Callbacks el -> Node read write
+rawNode wrap x cbacks = return $ V.Node
+  { V.nodeMark = Nothing
+  , V.nodeBody = V.NBRawNode x
+  , V.nodeWrap = wrap
+  , V.nodeCallbacks = cbacks
   }
 
-class (DOM.IsElement el) => ConstructVirtualDomElement el a where
-  constructVirtualDomElement :: ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> VirtualDomNodeCallbacks el -> a
+{-# INLINE rawNode_ #-}
+rawNode_ :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node read write
+rawNode_ wrap x = rawNode wrap x mempty
 
-{-# INLINE constructVirtualDomElement_ #-}
-constructVirtualDomElement_ ::
+class (DOM.IsElement el) => ConstructVDOMElement el a where
+  constructVDOMElement :: V.ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [V.SomeEvent el] -> V.Callbacks el -> a
+
+{-# INLINE constructVDOMElement_ #-}
+constructVDOMElement_ ::
      (DOM.IsElement el)
-  => ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> VirtualDomNodeCallbacks el -> VirtualDomChildren -> VirtualDomNode
-constructVirtualDomElement_ tag f props evts callbacks child = VirtualDomNode
-  { vdnMark = Nothing
-  , vdnWrap = f
-  , vdnBody = VDNBElement $ VirtualDomElement
-      { vdeTag = tag
-      , vdeProperties = HMS.fromList $ do
+  => V.ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [V.SomeEvent el] -> V.Callbacks el -> V.Children -> V.Node
+constructVDOMElement_ tag f props evts callbacks child = V.Node
+  { V.nodeMark = Nothing
+  , V.nodeWrap = f
+  , V.nodeBody = V.NBElement $ V.Element
+      { V.elementTag = tag
+      , V.elementProperties = HMS.fromList $ do
           NamedElementProperty name prop <- reverse props
           return (name, prop)
-      , vdeEvents = reverse evts
-      , vdeChildren = child
+      , V.elementEvents = reverse evts
+      , V.elementChildren = child
       }
-  , vdnCallbacks = callbacks
+  , V.nodeCallbacks = callbacks
   }
 
-instance (DOM.IsElement el) => ConstructVirtualDomElement el (ComponentM () read write VirtualDomNode) where
-  {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts cbacks =
-    return (constructVirtualDomElement_ tag f attrs evts cbacks (VDCNormal mempty))
+instance (DOM.IsElement el) => ConstructVDOMElement el (ComponentM () read write V.Node) where
+  {-# INLINE constructVDOMElement #-}
+  constructVDOMElement tag f attrs evts cbacks =
+    return (constructVDOMElement_ tag f attrs evts cbacks (V.CNormal mempty))
 
-instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVirtualDomElement el (ComponentM VirtualDom read1 write1 () -> ComponentM () read2 write2 VirtualDomNode) where
-  {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
+instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVDOMElement el (ComponentM V.Dom read1 write1 () -> ComponentM () read2 write2 V.Node) where
+  {-# INLINE constructVDOMElement #-}
+  constructVDOMElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructVirtualDomElement_ tag f attrs evts cbacks (VDCNormal vdom))
+    in ((), constructVDOMElement_ tag f attrs evts cbacks (V.CNormal vdom))
 
-instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVirtualDomElement el (ComponentM KeyedVirtualDom read1 write1 () -> ComponentM () read2 write2 VirtualDomNode) where
-  {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
+instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVDOMElement el (ComponentM V.KeyedDom read1 write1 () -> ComponentM () read2 write2 V.Node) where
+  {-# INLINE constructVDOMElement #-}
+  constructVDOMElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructVirtualDomElement_ tag f attrs evts cbacks (VDCKeyed vdom))
+    in ((), constructVDOMElement_ tag f attrs evts cbacks (V.CKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml T.Text
 
-instance (DOM.IsElement el) => ConstructVirtualDomElement el (UnsafeRawHtml -> ComponentM () read write VirtualDomNode) where
-  {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts cbacks (UnsafeRawHtml html) =
-    return (constructVirtualDomElement_ tag f attrs evts cbacks (VDCRawHtml html))
+instance (DOM.IsElement el) => ConstructVDOMElement el (UnsafeRawHtml -> ComponentM () read write V.Node) where
+  {-# INLINE constructVDOMElement #-}
+  constructVDOMElement tag f attrs evts cbacks (UnsafeRawHtml html) =
+    return (constructVDOMElement_ tag f attrs evts cbacks (V.CRawHtml html))
 
-data NamedElementProperty el = NamedElementProperty T.Text (ElementProperty el)
+data NamedElementProperty el = NamedElementProperty T.Text (V.ElementProperty el)
 
-instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (NamedElementProperty el2 -> a) where
-  {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts cbacks attr =
-    constructVirtualDomElement tag f (attr : attrs) evts cbacks
+instance (ConstructVDOMElement el1 a, el1 ~ el2) => ConstructVDOMElement el1 (NamedElementProperty el2 -> a) where
+  {-# INLINE constructVDOMElement #-}
+  constructVDOMElement tag f attrs evts cbacks attr =
+    constructVDOMElement tag f (attr : attrs) evts cbacks
 
-instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (SomeEvent el2 -> a) where
-  {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts cbacks evt = constructVirtualDomElement tag f attrs (evt : evts) cbacks
+instance (ConstructVDOMElement el1 a, el1 ~ el2) => ConstructVDOMElement el1 (V.SomeEvent el2 -> a) where
+  {-# INLINE constructVDOMElement #-}
+  constructVDOMElement tag f attrs evts cbacks evt = constructVDOMElement tag f attrs (evt : evts) cbacks
 
-instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (VirtualDomNodeCallbacks el2 -> a) where
-  {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts cbacks cback = constructVirtualDomElement tag f attrs evts (cbacks <> cback)
+instance (ConstructVDOMElement el1 a, el1 ~ el2) => ConstructVDOMElement el1 (V.Callbacks el2 -> a) where
+  {-# INLINE constructVDOMElement #-}
+  constructVDOMElement tag f attrs evts cbacks cback = constructVDOMElement tag f attrs evts (cbacks <> cback)
 
 
 {-# INLINE el #-}
-el :: (ConstructVirtualDomElement el a) => ElementTag -> (DOM.JSVal -> el) -> a
-el tag f = constructVirtualDomElement tag f [] [] mempty
+el :: (ConstructVDOMElement el a) => V.ElementTag -> (DOM.JSVal -> el) -> a
+el tag f = constructVDOMElement tag f [] [] mempty
 
 -- Elements
 -- --------------------------------------------------------------------
 
 {-# INLINE div_ #-}
-div_ :: (ConstructVirtualDomElement DOM.HTMLDivElement a) => a
+div_ :: (ConstructVDOMElement DOM.HTMLDivElement a) => a
 div_ = el "div" DOM.HTMLDivElement
 
 {-# INLINE span_ #-}
-span_ :: (ConstructVirtualDomElement DOM.HTMLSpanElement a) => a
+span_ :: (ConstructVDOMElement DOM.HTMLSpanElement a) => a
 span_ = el "span" DOM.HTMLSpanElement
 
 {-# INLINE a_ #-}
-a_ :: (ConstructVirtualDomElement DOM.HTMLAnchorElement a) => a
+a_ :: (ConstructVDOMElement DOM.HTMLAnchorElement a) => a
 a_ = el "a" DOM.HTMLAnchorElement
 
 {-# INLINE p_ #-}
-p_ :: (ConstructVirtualDomElement DOM.HTMLParagraphElement a) => a
+p_ :: (ConstructVDOMElement DOM.HTMLParagraphElement a) => a
 p_ = el "p" DOM.HTMLParagraphElement
 
 {-# INLINE input_ #-}
-input_ :: (ConstructVirtualDomElement DOM.HTMLInputElement a) => a
+input_ :: (ConstructVDOMElement DOM.HTMLInputElement a) => a
 input_ = el "input" DOM.HTMLInputElement
 
 {-# INLINE form_ #-}
-form_ :: (ConstructVirtualDomElement DOM.HTMLFormElement a) => a
+form_ :: (ConstructVDOMElement DOM.HTMLFormElement a) => a
 form_ = el "form" DOM.HTMLFormElement
 
 {-# INLINE button_ #-}
-button_ :: (ConstructVirtualDomElement DOM.HTMLButtonElement a) => a
+button_ :: (ConstructVDOMElement DOM.HTMLButtonElement a) => a
 button_ = el "button" DOM.HTMLButtonElement
 
 {-# INLINE ul_ #-}
-ul_ :: (ConstructVirtualDomElement DOM.HTMLUListElement a) => a
+ul_ :: (ConstructVDOMElement DOM.HTMLUListElement a) => a
 ul_ = el "ul" DOM.HTMLUListElement
 
 {-# INLINE li_ #-}
-li_ :: (ConstructVirtualDomElement DOM.HTMLLIElement a) => a
+li_ :: (ConstructVDOMElement DOM.HTMLLIElement a) => a
 li_ = el "li" DOM.HTMLLIElement
 
 {-# INLINE h2_ #-}
-h2_ :: (ConstructVirtualDomElement DOM.HTMLHeadingElement a) => a
+h2_ :: (ConstructVDOMElement DOM.HTMLHeadingElement a) => a
 h2_ = el "h2" DOM.HTMLHeadingElement
 
 {-# INLINE select_ #-}
-select_ :: (ConstructVirtualDomElement DOM.HTMLSelectElement a) => a
+select_ :: (ConstructVDOMElement DOM.HTMLSelectElement a) => a
 select_ = el "select" DOM.HTMLSelectElement
 
 {-# INLINE option_ #-}
-option_ :: (ConstructVirtualDomElement DOM.HTMLOptionElement a) => a
+option_ :: (ConstructVDOMElement DOM.HTMLOptionElement a) => a
 option_ = el "option" DOM.HTMLOptionElement
 
 -- Properties
 -- --------------------------------------------------------------------
 
 class_ :: (DOM.IsElement el) => T.Text -> NamedElementProperty el
-class_ txt = NamedElementProperty "className" $ ElementProperty
-  { eaGetProperty = DOM.getClassName
-  , eaSetProperty = DOM.setClassName
-  , eaValue = txt
+class_ txt = NamedElementProperty "className" $ V.ElementProperty
+  { V.eaGetProperty = DOM.getClassName
+  , V.eaSetProperty = DOM.setClassName
+  , V.eaValue = txt
   }
 
 class HasTypeProperty el where
@@ -373,10 +380,10 @@ instance HasTypeProperty DOM.HTMLInputElement where
   htpSetType = DOM.Input.setType
 
 type_ :: (HasTypeProperty el) => T.Text -> NamedElementProperty el
-type_ txt = NamedElementProperty "type" $ ElementProperty
-  { eaGetProperty = htpGetType
-  , eaSetProperty = htpSetType
-  , eaValue = txt
+type_ txt = NamedElementProperty "type" $ V.ElementProperty
+  { V.eaGetProperty = htpGetType
+  , V.eaSetProperty = htpSetType
+  , V.eaValue = txt
   }
 
 class HasHrefProperty el where
@@ -388,10 +395,10 @@ instance HasHrefProperty DOM.HTMLAnchorElement where
   htpSetHref = DOM.HyperlinkElementUtils.setHref
 
 href_ :: (HasHrefProperty el) => T.Text -> NamedElementProperty el
-href_ txt = NamedElementProperty "href" $ ElementProperty
-  { eaGetProperty = htpGetHref
-  , eaSetProperty = htpSetHref
-  , eaValue = txt
+href_ txt = NamedElementProperty "href" $ V.ElementProperty
+  { V.eaGetProperty = htpGetHref
+  , V.eaSetProperty = htpSetHref
+  , V.eaValue = txt
   }
 
 class HasValueProperty el where
@@ -407,10 +414,10 @@ instance HasValueProperty DOM.HTMLOptionElement where
   hvpSetValue = DOM.Option.setValue
 
 value_ :: (HasValueProperty el) => T.Text -> NamedElementProperty el
-value_ txt = NamedElementProperty "value" $ ElementProperty
-  { eaGetProperty = hvpGetValue
-  , eaSetProperty = hvpSetValue
-  , eaValue = txt
+value_ txt = NamedElementProperty "value" $ V.ElementProperty
+  { V.eaGetProperty = hvpGetValue
+  , V.eaSetProperty = hvpSetValue
+  , V.eaValue = txt
   }
 
 class HasCheckedProperty el where
@@ -422,17 +429,17 @@ instance HasCheckedProperty DOM.HTMLInputElement where
   hcpSetChecked = DOM.Input.setChecked
 
 checked_ :: (HasCheckedProperty el) => Bool -> NamedElementProperty el
-checked_ b = NamedElementProperty "checked" $ ElementProperty
-  { eaGetProperty = hcpGetChecked
-  , eaSetProperty = hcpSetChecked
-  , eaValue = b
+checked_ b = NamedElementProperty "checked" $ V.ElementProperty
+  { V.eaGetProperty = hcpGetChecked
+  , V.eaSetProperty = hcpSetChecked
+  , V.eaValue = b
   }
 
 selected_ :: Bool -> NamedElementProperty DOM.HTMLOptionElement
-selected_ b = NamedElementProperty "selected" $ ElementProperty
-  { eaGetProperty = DOM.Option.getSelected
-  , eaSetProperty = DOM.Option.setSelected
-  , eaValue = b
+selected_ b = NamedElementProperty "selected" $ V.ElementProperty
+  { V.eaGetProperty = DOM.Option.getSelected
+  , V.eaSetProperty = DOM.Option.setSelected
+  , V.eaValue = b
   }
 
 {-
@@ -445,25 +452,25 @@ name_ = Attr "name" . Just
 
 onclick_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.MouseEvent -> ClientM ()) -> SomeEvent el
-onclick_ = SomeEvent DOM.click
+  => (el -> DOM.MouseEvent -> ClientM ()) -> V.SomeEvent el
+onclick_ = V.SomeEvent DOM.click
 
 onchange_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> ClientM ()) -> SomeEvent el
-onchange_ = SomeEvent DOM.change
+  => (el -> DOM.Event -> ClientM ()) -> V.SomeEvent el
+onchange_ = V.SomeEvent DOM.change
 
 oninput_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> ClientM ()) -> SomeEvent el
-oninput_ = SomeEvent DOM.input
+  => (el -> DOM.Event -> ClientM ()) -> V.SomeEvent el
+oninput_ = V.SomeEvent DOM.input
 
 onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> ClientM ()) -> SomeEvent el
-onsubmit_ = SomeEvent DOM.submit
+  => (el -> DOM.Event -> ClientM ()) -> V.SomeEvent el
+onsubmit_ = V.SomeEvent DOM.submit
 
 onselect_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.UIEvent -> ClientM ()) -> SomeEvent el
-onselect_ = SomeEvent DOM.select
+  => (el -> DOM.UIEvent -> ClientM ()) -> V.SomeEvent el
+onselect_ = V.SomeEvent DOM.select

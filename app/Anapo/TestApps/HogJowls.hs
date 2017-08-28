@@ -5,7 +5,7 @@ import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM as DOM
 
-import Anapo.Component
+import Anapo
 
 newtype HogJowlsState = HogJowlsState DOM.HTMLIFrameElement
 
@@ -16,7 +16,7 @@ hogJowlsNode = do
 
 -- | Never rerender the node
 hogJowlsComponent :: Component' HogJowlsState
-hogJowlsComponent = n$ marked (\_ _ _ -> DontRender) (static hogJowlsNode)
+hogJowlsComponent = n$ marked (\_ _ _ -> DontRerender) (static hogJowlsNode)
 
 hogJowlsInit :: ClientM HogJowlsState
 hogJowlsInit = do

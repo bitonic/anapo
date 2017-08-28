@@ -11,13 +11,14 @@ import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Element as DOM
 import qualified GHCJS.DOM.Node as DOM
 
-import Anapo.Core
+import qualified Anapo.VDOM as V
 import Anapo.Component
 import Anapo.Render
+import Anapo.ClientM
 
 componentLoop :: forall state acc.
      state -> Component' state
-  -> acc -> (acc -> VirtualDom -> ClientM acc)
+  -> acc -> (acc -> V.Dom -> ClientM acc)
   -> ClientM acc
   -- ^ returns the final accumulator, when there is nothing left to do.
   -- might never terminate

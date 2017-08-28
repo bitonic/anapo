@@ -1,6 +1,6 @@
 module Main where
 
-import Anapo.Core
+import Anapo.ClientM
 import Anapo.Loop
 import Anapo.Render
 import Anapo.TestApps

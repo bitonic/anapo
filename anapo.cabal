@@ -16,7 +16,9 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:
-    Anapo.Core
+    Anapo
+    Anapo.ClientM
+    Anapo.VDOM
     Anapo.Component
     Anapo.Loop
     Anapo.Render
@@ -74,7 +76,8 @@ executable test-app
     containers,
     ghcjs-dom,
     lifted-async,
-    time
+    time,
+    uuid
   if impl(ghcjs)
     build-depends:
       ghcjs-base

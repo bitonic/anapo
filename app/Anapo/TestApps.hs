@@ -4,7 +4,7 @@ module Anapo.TestApps (TestAppsState, testAppsComponent, testAppsInit) where
 import Control.Lens (makeLenses, set, (^.), traverseOf)
 import Control.Monad (forM_)
 
-import Anapo.Component
+import Anapo
 import Anapo.TestApps.Prelude
 import Anapo.TestApps.TodoList
 import Anapo.TestApps.Timer
@@ -47,7 +47,7 @@ testAppsComponent = do
           n$ option_
             (value_ (tshow which))
             (selected_ (which == st ^. tasWhich))
-            (n$ text (tshow which)))
+            (n$ text_ (tshow which)))
     bootstrapCol $ do
       zoom' tasStopTimerOnAppChange (n$ booleanCheckbox)
       n$ "Stop timer app when changing app"

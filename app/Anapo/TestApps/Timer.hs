@@ -9,8 +9,8 @@ import Data.Void (Void)
 import Control.Monad (forever)
 import Control.Concurrent (threadDelay)
 
+import Anapo
 import Anapo.TestApps.Prelude
-import Anapo.Component
 
 data Running =
     Stopped
@@ -35,7 +35,7 @@ timerComponent = do
           Stopped -> 0
           Running t0 t1 _ -> diffUTCTime t1 t0)
   n$ h2_ $
-    n$ text (tshow timePassed)
+    n$ text_ (tshow timePassed)
   dispatch <- askDispatchM
   n$ button_
     (onclick_ (\_ _ -> timerReset dispatch))
