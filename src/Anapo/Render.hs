@@ -69,10 +69,10 @@ renderVirtualDom RenderOptions{..} doc = let
   removeDomNode ::
        (DOM.IsNode el)
     => el -- ^ the node
-    -> V.Node -- ^ the virtual dom nodes describing what's the node
+    -> V.SomeNode -- ^ the virtual dom nodes describing what's the node
     -> ClientM ()
-  removeDomNode domNode V.Node{..} = do
-    V.callbacksUnsafeWillRemove nodeCallbacks =<< DOM.unsafeCastTo nodeWrap domNode
+  removeDomNode domNode (V.SomeNode node@V.Node{..}) = do
+    V.callbacksUnsafeWillRemove nodeCallbacks =<< DOM.unsafeCastTo (V.nodeWrap node) domNode
     case nodeBody of
       V.NBText{} -> return ()
       V.NBRawNode{} -> return ()
@@ -86,11 +86,11 @@ renderVirtualDom RenderOptions{..} doc = let
     -> Maybe DOM.Node
     -- ^ the node to start removing from. if 'Nothing' will start from
     -- first child of container
-    -> [V.Node] -- ^ the virtual dom nodes describing what's in the node
+    -> [V.SomeNode] -- ^ the virtual dom nodes describing what's in the node
     -> ClientM ()
   removeDom container mbCursor0 nodes0 = do
     let
-      go :: Maybe DOM.Node -> [V.Node] -> ClientM ()
+      go :: Maybe DOM.Node -> [V.SomeNode] -> ClientM ()
       go mbCursor = \case
         [] -> forM_ mbCursor $ \_ ->
           fail "removeDom: Expecting no cursor at the end of vdom, but got one!"
@@ -156,10 +156,10 @@ renderVirtualDom RenderOptions{..} doc = let
 
   {-# INLINE renderDomNode #-}
   renderDomNode ::
-       V.Node
+       V.SomeNode
     -> (forall el. (DOM.IsNode el) => el -> NodeOverlay -> ClientM a)
     -> ClientM a
-  renderDomNode V.Node{..} cont0 = do
+  renderDomNode (V.SomeNode V.Node{..}) cont0 = do
     let cont el callbacks evts = do
           V.callbacksUnsafeWillMount callbacks el
           x <- cont0 el evts
@@ -171,8 +171,8 @@ renderVirtualDom RenderOptions{..} doc = let
         cont txtNode nodeCallbacks emptyOverlay
       V.NBRawNode el -> cont el nodeCallbacks emptyOverlay
       V.NBElement V.Element{..} -> do
-        el <- DOM.unsafeCastTo nodeWrap =<< DOM.createElement doc elementTag
-        defProps <- addProperties el nodeWrap elementProperties mempty
+        el <- DOM.unsafeCastTo elementWrap =<< DOM.createElement doc elementTag
+        defProps <- addProperties el elementWrap elementProperties mempty
         evts <- addEvents el elementEvents
         childrenEvents <- renderDomChildren el elementChildren
         cont el nodeCallbacks (NodeOverlay evts defProps childrenEvents)
@@ -181,9 +181,9 @@ renderVirtualDom RenderOptions{..} doc = let
   renderDom ::
        (DOM.IsNode el)
     => el -- ^ the node that should contain the dom
-    -> [V.Node]
+    -> [V.SomeNode]
     -> ClientM [NodeOverlay]
-  renderDom container = mapM $ \node@V.Node{..} -> do
+  renderDom container = mapM $ \node@(V.SomeNode V.Node{..}) -> do
     renderDomNode node $ \el evts -> do
       DOM.appendChild_ container el
       return evts
@@ -249,25 +249,24 @@ renderVirtualDom RenderOptions{..} doc = let
        (DOM.IsNode el1, DOM.IsNode el2)
     => el1 -- ^ the container
     -> el2 -- ^ the dom node we're patching
-    -> V.Node -- ^ the previous vdom
+    -> V.SomeNode -- ^ the previous vdom
     -> NodeOverlay -- ^ the previous vdom events
-    -> V.Node -- ^ the next vdom
+    -> V.SomeNode -- ^ the next vdom
     -> ClientM NodeOverlay
-  patchDomNode container node prevVdom@(V.Node prevMark prevBody _ _) prevVdomEvents vdom@(V.Node mark body wrap callbacks) = do
+  patchDomNode container node prevVdom@(V.SomeNode (V.Node _ prevBody _)) prevVdomEvents vdom@(V.SomeNode (V.Node mark body callbacks)) = do
     -- check if they're both marked and without the rerender
-    case (prevMark, mark) of
-      (Just (V.Mark prevFprint _), Just (V.Mark fprint render))
-        | prevFprint == fprint && render == V.DontRerender -> return prevVdomEvents
-      _ -> case (prevBody, body) of
+    case mark of
+      V.UnsafeDontRerender -> return prevVdomEvents
+      V.Rerender -> case (prevBody, body) of
         -- Text
         -- TODO consider ref. equality, also for rawnode
         -- TODO consider asserting no events when appropriate
         (V.NBText prevTxt, V.NBText txt) | prevTxt == txt -> return emptyOverlay
         -- Element
         (V.NBElement prevElement, V.NBElement element) | V.elementTag prevElement == V.elementTag element -> do
-          node' <- DOM.unsafeCastTo wrap node
+          node' <- DOM.unsafeCastTo (V.elementWrap element) node
           V.callbacksUnsafeWillPatch callbacks node'
-          x <- patchDomElement node' wrap prevElement prevVdomEvents element
+          x <- patchDomElement node' (V.elementWrap element) prevElement prevVdomEvents element
           V.callbacksUnsafeDidPatch callbacks node'
           return x
         -- In all other cases we erase and rerender

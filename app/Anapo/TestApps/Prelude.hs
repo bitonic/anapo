@@ -40,7 +40,7 @@ bootstrapRow = n . div_ (class_ "row")
 bootstrapCol :: Component read write -> Component read write
 bootstrapCol = n . div_ (class_ "col")
 
-booleanCheckbox :: Node' Bool
+booleanCheckbox :: Node' DOM.HTMLInputElement Bool
 booleanCheckbox = do
   st <- askState
   dispatch <- askDispatch

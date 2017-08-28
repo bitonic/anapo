@@ -3,7 +3,6 @@ module Anapo.VDOM where
 import qualified Data.HashMap.Strict as HMS
 import qualified Data.Text as T
 import Data.DList (DList)
-import Data.Typeable.Internal (Fingerprint)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM
@@ -13,18 +12,19 @@ import Anapo.ClientM
 -- Core types
 -- --------------------------------------------------------------------
 
-type Dom = DList Node
+type Dom = DList SomeNode
 
-data Rerender = Rerender | DontRerender
+data Rerender = Rerender | UnsafeDontRerender
   deriving (Eq, Show)
 
+data SomeNode = forall el. (DOM.IsNode el) => SomeNode (Node el)
+
 -- Something that will turn in a single DOM node.
-data Node = forall el. (DOM.IsNode el) => Node
-  { nodeMark :: Maybe Mark
+data Node el = Node
+  { nodeRerender :: Rerender
   , nodeBody :: ~(NodeBody el)
   -- ^ the dom node is lazy here to avoid recomputing it if we don't
   -- end up rerendering
-  , nodeWrap :: DOM.JSVal -> el
   , nodeCallbacks :: Callbacks el
   }
 
@@ -54,15 +54,17 @@ instance Monoid (Callbacks el) where
     , callbacksUnsafeWillRemove = callbacksUnsafeWillRemove callbacks1 >> callbacksUnsafeWillRemove callbacks2
     }
 
-data Mark = Mark
-  { markFingerprint :: Fingerprint
-  , markRerender :: Rerender
-  }
-
 data NodeBody el where
   NBElement :: (DOM.IsElement el) => Element el -> NodeBody el
   NBText :: T.Text -> NodeBody DOM.Text
-  NBRawNode :: el -> NodeBody el
+  NBRawNode :: DOM.Node -> NodeBody DOM.Node
+
+{-# INLINE nodeWrap #-}
+nodeWrap :: Node el -> (DOM.JSVal -> el)
+nodeWrap Node{..} = case nodeBody of
+  NBElement e -> elementWrap e
+  NBText{} -> DOM.Text
+  NBRawNode{} -> DOM.Node
 
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
   SomeEvent (DOM.EventName el e) (el -> e -> ClientM ())
@@ -83,10 +85,11 @@ data Element el = Element
   , elementProperties :: ElementProperties el
   , elementEvents :: ElementEvents el
   , elementChildren :: Children
+  , elementWrap :: (DOM.JSVal -> el)
   }
 
 data KeyedDom = KeyedDom
-  { keyedDomNodes :: HMS.HashMap T.Text Node
+  { keyedDomNodes :: HMS.HashMap T.Text SomeNode
   , keyedDomOrder :: DList T.Text
   }
 

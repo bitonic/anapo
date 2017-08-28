@@ -47,7 +47,7 @@ testAppsComponent = do
           n$ option_
             (value_ (tshow which))
             (selected_ (which == st ^. tasWhich))
-            (n$ text_ (tshow which)))
+            (n$ text (tshow which)))
     bootstrapCol $ do
       zoom' tasStopTimerOnAppChange (n$ booleanCheckbox)
       n$ "Stop timer app when changing app"

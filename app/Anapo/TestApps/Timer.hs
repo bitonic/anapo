@@ -35,7 +35,7 @@ timerComponent = do
           Stopped -> 0
           Running t0 t1 _ -> diffUTCTime t1 t0)
   n$ h2_ $
-    n$ text_ (tshow timePassed)
+    n$ text (tshow timePassed)
   dispatch <- askDispatchM
   n$ button_
     (onclick_ (\_ _ -> timerReset dispatch))

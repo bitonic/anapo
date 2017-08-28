@@ -29,7 +29,7 @@ todoItemComponent :: Component' TodoItemState
 todoItemComponent = do
   st <- askState
   zoom' tisCompleted (n$ booleanCheckbox)
-  n$ text_ (st ^. tisBody)
+  n$ text (st ^. tisBody)
 
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
@@ -70,11 +70,11 @@ todoComponent = do
         n$ input_
           (value_ (st ^. tsCurrentText))
           (oninput_ $ \inp _ -> do
-            liftIO (putStrLn "Setting new text_!")
+            liftIO (putStrLn "Setting new text!")
             txt <- DOM.getValue inp
             dispatch (set tsCurrentText txt))
         n$ button_ $
-          n$ text_ ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)))
+          n$ text ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)))
   -- active / completed todos
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =

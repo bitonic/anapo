@@ -25,18 +25,28 @@ module Anapo.Component
   , askDispatchM
   , askState
   , askPreviousState
+  , zoom
+  , zoom'
+  , zoom_
 
     -- * basic combinators
   , n
   , key
   , text
-  , text_
-  , marked
-  , zoom
-  , zoom_
-  , zoom'
   , rawNode
-  , rawNode_
+
+    -- * node manipulation
+  , unsafeWillMount
+  , unsafeDidMount
+  , unsafeWillPatch
+  , unsafeDidPatch
+  , unsafeWillRemove
+  , rerender
+
+    -- * type classes to construct elements
+  , ConstructElement(..)
+  -- , el
+  , UnsafeRawHtml(..)
 
     -- * elements
   , div_
@@ -70,9 +80,6 @@ module Anapo.Component
   , onsubmit_
   , oninput_
   , onselect_
-
-    -- * Type class machinery
-  , ConstructVDOMElement
   ) where
 
 import qualified Data.HashMap.Strict as HMS
@@ -80,7 +87,6 @@ import Control.Lens (Traversal', Lens', view)
 import Control.Monad (ap)
 import qualified Data.Text as T
 import Data.Monoid ((<>))
-import GHC.StaticPtr
 import qualified Data.DList as DList
 import Data.String (IsString(..))
 
@@ -108,11 +114,11 @@ type Component' state = ComponentM V.Dom state state ()
 type Component read write = ComponentM V.Dom read write ()
 type KeyedComponent' state = ComponentM V.KeyedDom state state ()
 type KeyedComponent read write = ComponentM V.KeyedDom read write ()
-type Node read write = ComponentM () read write V.Node
-type Node' state = ComponentM () state state V.Node
+type Node el read write = ComponentM () read write (V.Node el)
+type Node' el state = ComponentM () state state (V.Node el)
 
-instance IsString (Node read write) where
-  fromString = text_ . T.pack
+instance (el ~ DOM.Text) => IsString (Node el read write) where
+  fromString = text . T.pack
 
 {-# INLINE runComponentM #-}
 runComponentM :: ComponentM dom read write a -> DispatchM write -> Maybe write -> read -> (dom, a)
@@ -170,45 +176,6 @@ askPreviousState ::
 askPreviousState cont = ComponentM $ \lst d mbst st ->
   unComponentM (cont lst mbst) lst d mbst st
 
-{-# INLINE key #-}
-key :: T.Text -> Node read write -> KeyedComponent read write
-key k getNode = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM getNode l d mbst st
-  in (V.KeyedDom (HMS.singleton k nod) (DList.singleton k), ())
-
-{-# INLINE n #-}
-n :: Node read write -> Component read write
-n getNode = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM getNode l d mbst st
-  in (DList.singleton nod, ())
-
-{-# INLINE text #-}
-text :: T.Text -> V.Callbacks DOM.Text -> Node read write
-text txt cbacks = return $ V.Node
-  { V.nodeMark = Nothing
-  , V.nodeWrap = DOM.Text
-  , V.nodeBody = V.NBText txt
-  , V.nodeCallbacks = cbacks
-  }
-
-{-# INLINE text_ #-}
-text_ :: T.Text -> Node read write
-text_ txt = text txt mempty
-
-{-# INLINE marked #-}
-marked ::
-     (forall out. Traversal' out write -> Maybe out -> read -> V.Rerender)
-  -> StaticPtr (Node read write)
-  -> Node read write
-marked rerender domPtr = ComponentM $ \l d mbst st -> let
-  !render = rerender l mbst st
-  !fprint = staticKey domPtr
-  -- do not force evaluation for this one since we actually
-  -- want it to be lazy to avoid computing the vdom if we don't
-  -- have to
-  (_, dom) = unComponentM (deRefStaticPtr domPtr) l d mbst st
-  in ((), dom{ V.nodeMark = Just (V.Mark fprint render) })
-
 {-# INLINE zoom' #-}
 zoom' :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
 zoom' l' dom = ComponentM $ \l d mbst st ->
@@ -232,133 +199,209 @@ zoom_ ::
 zoom_ x l' dom = ComponentM $ \l d mbst _st ->
   unComponentM dom (l . l') d mbst x
 
-{-# INLINE rawNode #-}
-rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> V.Callbacks el -> Node read write
-rawNode wrap x cbacks = return $ V.Node
-  { V.nodeMark = Nothing
-  , V.nodeBody = V.NBRawNode x
-  , V.nodeWrap = wrap
-  , V.nodeCallbacks = cbacks
-  }
+-- Type class machinery
+-- --------------------------------------------------------------------
 
-{-# INLINE rawNode_ #-}
-rawNode_ :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node read write
-rawNode_ wrap x = rawNode wrap x mempty
+data NamedElementProperty el = NamedElementProperty T.Text (V.ElementProperty el)
 
-class (DOM.IsElement el) => ConstructVDOMElement el a where
-  constructVDOMElement :: V.ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [V.SomeEvent el] -> V.Callbacks el -> a
+class (DOM.IsElement el) => ConstructElement el a | a -> el where
+  constructElement :: (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [V.SomeEvent el] -> a
 
-{-# INLINE constructVDOMElement_ #-}
-constructVDOMElement_ ::
+{-# INLINE constructElement_ #-}
+constructElement_ ::
      (DOM.IsElement el)
-  => V.ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [V.SomeEvent el] -> V.Callbacks el -> V.Children -> V.Node
-constructVDOMElement_ tag f props evts callbacks child = V.Node
-  { V.nodeMark = Nothing
-  , V.nodeWrap = f
-  , V.nodeBody = V.NBElement $ V.Element
+  => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [V.SomeEvent el] -> V.Children -> V.Node el
+constructElement_ wrap tag props evts child = V.Node
+  { V.nodeRerender = V.Rerender
+  , V.nodeCallbacks = mempty
+  , V.nodeBody = V.NBElement V.Element
       { V.elementTag = tag
       , V.elementProperties = HMS.fromList $ do
           NamedElementProperty name prop <- reverse props
           return (name, prop)
       , V.elementEvents = reverse evts
       , V.elementChildren = child
+      , V.elementWrap = wrap
       }
-  , V.nodeCallbacks = callbacks
   }
 
-instance (DOM.IsElement el) => ConstructVDOMElement el (ComponentM () read write V.Node) where
-  {-# INLINE constructVDOMElement #-}
-  constructVDOMElement tag f attrs evts cbacks =
-    return (constructVDOMElement_ tag f attrs evts cbacks (V.CNormal mempty))
+instance (DOM.IsElement el) => ConstructElement el (Node el read write) where
+  {-# INLINE constructElement #-}
+  constructElement wrap tag attrs evts =
+    return (constructElement_ wrap tag attrs evts (V.CNormal mempty))
 
-instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVDOMElement el (ComponentM V.Dom read1 write1 () -> ComponentM () read2 write2 V.Node) where
-  {-# INLINE constructVDOMElement #-}
-  constructVDOMElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
+instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
+  {-# INLINE constructElement #-}
+  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructVDOMElement_ tag f attrs evts cbacks (V.CNormal vdom))
+    in ((), constructElement_ wrap tag attrs evts (V.CNormal vdom))
 
-instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVDOMElement el (ComponentM V.KeyedDom read1 write1 () -> ComponentM () read2 write2 V.Node) where
-  {-# INLINE constructVDOMElement #-}
-  constructVDOMElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
+instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
+  {-# INLINE constructElement #-}
+  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructVDOMElement_ tag f attrs evts cbacks (V.CKeyed vdom))
+    in ((), constructElement_ wrap tag attrs evts (V.CKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml T.Text
 
-instance (DOM.IsElement el) => ConstructVDOMElement el (UnsafeRawHtml -> ComponentM () read write V.Node) where
-  {-# INLINE constructVDOMElement #-}
-  constructVDOMElement tag f attrs evts cbacks (UnsafeRawHtml html) =
-    return (constructVDOMElement_ tag f attrs evts cbacks (V.CRawHtml html))
+instance (DOM.IsElement el) => ConstructElement el (UnsafeRawHtml -> Node el read write) where
+  {-# INLINE constructElement #-}
+  constructElement wrap tag attrs evts  (UnsafeRawHtml html) =
+    return (constructElement_ wrap tag  attrs evts  (V.CRawHtml html))
 
-data NamedElementProperty el = NamedElementProperty T.Text (V.ElementProperty el)
+instance (ConstructElement el a) => ConstructElement el (NamedElementProperty el -> a) where
+  {-# INLINE constructElement #-}
+  constructElement f tag attrs evts  attr =
+    constructElement f tag (attr : attrs) evts
 
-instance (ConstructVDOMElement el1 a, el1 ~ el2) => ConstructVDOMElement el1 (NamedElementProperty el2 -> a) where
-  {-# INLINE constructVDOMElement #-}
-  constructVDOMElement tag f attrs evts cbacks attr =
-    constructVDOMElement tag f (attr : attrs) evts cbacks
-
-instance (ConstructVDOMElement el1 a, el1 ~ el2) => ConstructVDOMElement el1 (V.SomeEvent el2 -> a) where
-  {-# INLINE constructVDOMElement #-}
-  constructVDOMElement tag f attrs evts cbacks evt = constructVDOMElement tag f attrs (evt : evts) cbacks
-
-instance (ConstructVDOMElement el1 a, el1 ~ el2) => ConstructVDOMElement el1 (V.Callbacks el2 -> a) where
-  {-# INLINE constructVDOMElement #-}
-  constructVDOMElement tag f attrs evts cbacks cback = constructVDOMElement tag f attrs evts (cbacks <> cback)
-
+instance (ConstructElement el a) => ConstructElement el (V.SomeEvent el -> a) where
+  {-# INLINE constructElement #-}
+  constructElement f tag attrs evts evt = constructElement f tag attrs (evt : evts)
 
 {-# INLINE el #-}
-el :: (ConstructVDOMElement el a) => V.ElementTag -> (DOM.JSVal -> el) -> a
-el tag f = constructVDOMElement tag f [] [] mempty
+el :: (ConstructElement el a) => V.ElementTag -> (DOM.JSVal -> el) -> a
+el tag f = constructElement f tag [] []
+
+-- to manipulate nodes
+-- --------------------------------------------------------------------
+
+{-# INLINE unsafeWillMount #-}
+unsafeWillMount :: (el -> ClientM ()) -> Node el read write -> Node el read write
+unsafeWillMount f n_ = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM n_ l d mbst st
+  !nod' = nod
+    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+        { V.callbacksUnsafeWillMount = f }
+    }
+  in ((), nod')
+
+{-# INLINE unsafeDidMount #-}
+unsafeDidMount :: (el -> ClientM ()) -> Node el read write -> Node el read write
+unsafeDidMount f n_ = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM n_ l d mbst st
+  !nod' = nod
+    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+        { V.callbacksUnsafeDidMount = f }
+    }
+  in ((), nod')
+
+{-# INLINE unsafeWillPatch #-}
+unsafeWillPatch :: (el -> ClientM ()) -> Node el read write -> Node el read write
+unsafeWillPatch f n_ = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM n_ l d mbst st
+  !nod' = nod
+    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+        { V.callbacksUnsafeWillPatch = f }
+    }
+  in ((), nod')
+
+{-# INLINE unsafeDidPatch #-}
+unsafeDidPatch :: (el -> ClientM ()) -> Node el read write -> Node el read write
+unsafeDidPatch f n_ = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM n_ l d mbst st
+  !nod' = nod
+    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+        { V.callbacksUnsafeDidPatch = f }
+    }
+  in ((), nod')
+
+{-# INLINE unsafeWillRemove #-}
+unsafeWillRemove :: (el -> ClientM ()) -> Node el read write -> Node el read write
+unsafeWillRemove f n_ = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM n_ l d mbst st
+  !nod' = nod
+    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+        { V.callbacksUnsafeWillRemove = f }
+    }
+  in ((), nod')
+
+{-# INLINE rerender #-}
+rerender :: V.Rerender -> Node el read write -> Node el read write
+rerender r n_ = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM n_ l d mbst st
+  !nod' = nod{ V.nodeRerender = r }
+  in ((), nod')
+
+-- useful shorthands
+-- --------------------------------------------------------------------
+
+{-# INLINE n #-}
+n :: (DOM.IsNode el) => Node el read write -> Component read write
+n getNode = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM getNode l d mbst st
+  in (DList.singleton (V.SomeNode nod), ())
+
+{-# INLINE key #-}
+key :: (DOM.IsNode el) => T.Text -> Node el read write -> KeyedComponent read write
+key k getNode = ComponentM $ \l d mbst st -> let
+  !(_, !nod) = unComponentM getNode l d mbst st
+  in (V.KeyedDom (HMS.singleton k (V.SomeNode nod)) (DList.singleton k), ())
+
+{-# INLINE text #-}
+text :: T.Text -> Node DOM.Text read write
+text txt = return $ V.Node
+  { V.nodeRerender = V.Rerender
+  , V.nodeBody = V.NBText txt
+  , V.nodeCallbacks = mempty
+  }
+
+{-# INLINE rawNode #-}
+rawNode :: DOM.Node -> Node DOM.Node read write
+rawNode x = return $ V.Node
+  { V.nodeRerender = V.Rerender
+  , V.nodeBody = V.NBRawNode x
+  , V.nodeCallbacks = mempty
+  }
 
 -- Elements
 -- --------------------------------------------------------------------
 
 {-# INLINE div_ #-}
-div_ :: (ConstructVDOMElement DOM.HTMLDivElement a) => a
+div_ :: (ConstructElement DOM.HTMLDivElement a) => a
 div_ = el "div" DOM.HTMLDivElement
 
 {-# INLINE span_ #-}
-span_ :: (ConstructVDOMElement DOM.HTMLSpanElement a) => a
+span_ :: (ConstructElement DOM.HTMLSpanElement a) => a
 span_ = el "span" DOM.HTMLSpanElement
 
 {-# INLINE a_ #-}
-a_ :: (ConstructVDOMElement DOM.HTMLAnchorElement a) => a
+a_ :: (ConstructElement DOM.HTMLAnchorElement a) => a
 a_ = el "a" DOM.HTMLAnchorElement
 
 {-# INLINE p_ #-}
-p_ :: (ConstructVDOMElement DOM.HTMLParagraphElement a) => a
+p_ :: (ConstructElement DOM.HTMLParagraphElement a) => a
 p_ = el "p" DOM.HTMLParagraphElement
 
 {-# INLINE input_ #-}
-input_ :: (ConstructVDOMElement DOM.HTMLInputElement a) => a
+input_ :: (ConstructElement DOM.HTMLInputElement a) => a
 input_ = el "input" DOM.HTMLInputElement
 
 {-# INLINE form_ #-}
-form_ :: (ConstructVDOMElement DOM.HTMLFormElement a) => a
+form_ :: (ConstructElement DOM.HTMLFormElement a) => a
 form_ = el "form" DOM.HTMLFormElement
 
 {-# INLINE button_ #-}
-button_ :: (ConstructVDOMElement DOM.HTMLButtonElement a) => a
+button_ :: (ConstructElement DOM.HTMLButtonElement a) => a
 button_ = el "button" DOM.HTMLButtonElement
 
 {-# INLINE ul_ #-}
-ul_ :: (ConstructVDOMElement DOM.HTMLUListElement a) => a
+ul_ :: (ConstructElement DOM.HTMLUListElement a) => a
 ul_ = el "ul" DOM.HTMLUListElement
 
 {-# INLINE li_ #-}
-li_ :: (ConstructVDOMElement DOM.HTMLLIElement a) => a
+li_ :: (ConstructElement DOM.HTMLLIElement a) => a
 li_ = el "li" DOM.HTMLLIElement
 
 {-# INLINE h2_ #-}
-h2_ :: (ConstructVDOMElement DOM.HTMLHeadingElement a) => a
+h2_ :: (ConstructElement DOM.HTMLHeadingElement a) => a
 h2_ = el "h2" DOM.HTMLHeadingElement
 
 {-# INLINE select_ #-}
-select_ :: (ConstructVDOMElement DOM.HTMLSelectElement a) => a
+select_ :: (ConstructElement DOM.HTMLSelectElement a) => a
 select_ = el "select" DOM.HTMLSelectElement
 
 {-# INLINE option_ #-}
-option_ :: (ConstructVDOMElement DOM.HTMLOptionElement a) => a
+option_ :: (ConstructElement DOM.HTMLOptionElement a) => a
 option_ = el "option" DOM.HTMLOptionElement
 
 -- Properties
@@ -441,11 +484,6 @@ selected_ b = NamedElementProperty "selected" $ V.ElementProperty
   , V.eaSetProperty = DOM.Option.setSelected
   , V.eaValue = b
   }
-
-{-
-name_ :: T.Text -> Attr
-name_ = Attr "name" . Just
--}
 
 -- Events
 -- --------------------------------------------------------------------
