@@ -50,6 +50,16 @@ data VirtualDomNodeCallbacks el = VirtualDomNodeCallbacks
   , vdncUnsafeWillRemove :: el -> ClientM ()
   }
 
+instance Monoid (VirtualDomNodeCallbacks el) where
+  mempty = noVirtualDomNodeCallbacks
+  callbacks1 `mappend` callbacks2 = VirtualDomNodeCallbacks
+    { vdncUnsafeWillMount = vdncUnsafeWillMount callbacks1 >> vdncUnsafeWillMount callbacks2
+    , vdncUnsafeDidMount = vdncUnsafeDidMount callbacks1 >> vdncUnsafeDidMount callbacks2
+    , vdncUnsafeWillPatch = vdncUnsafeWillPatch callbacks1 >> vdncUnsafeWillPatch callbacks2
+    , vdncUnsafeDidPatch = vdncUnsafeDidPatch callbacks1 >> vdncUnsafeDidPatch callbacks2
+    , vdncUnsafeWillRemove = vdncUnsafeWillRemove callbacks1 >> vdncUnsafeWillRemove callbacks2
+    }
+
 {-# NOINLINE noVirtualDomNodeCallbacks #-}
 noVirtualDomNodeCallbacks :: VirtualDomNodeCallbacks el
 noVirtualDomNodeCallbacks = VirtualDomNodeCallbacks

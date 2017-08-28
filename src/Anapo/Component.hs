@@ -13,6 +13,7 @@ module Anapo.Component
   , runClientM
   , DispatchM
   , Dispatch
+  , Render(..)
 
     -- * ComponentM
   , ComponentM
@@ -70,6 +71,7 @@ module Anapo.Component
   , onchange_
   , onsubmit_
   , oninput_
+  , onselect_
 
     -- * Type class machinery
   , ConstructVirtualDomElement
@@ -228,22 +230,22 @@ zoom_ x l' dom = ComponentM $ \l d mbst _st ->
   unComponentM dom (l . l') d mbst x
 
 {-# INLINE rawNode #-}
-rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node read write
-rawNode wrap x = return $ VirtualDomNode
+rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> VirtualDomNodeCallbacks el -> Node read write
+rawNode wrap x cbacks = return $ VirtualDomNode
   { vdnMark = Nothing
   , vdnBody = VDNBRawNode x
   , vdnWrap = wrap
-  , vdnCallbacks = noVirtualDomNodeCallbacks
+  , vdnCallbacks = cbacks
   }
 
 class (DOM.IsElement el) => ConstructVirtualDomElement el a where
-  constructVirtualDomElement :: ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> a
+  constructVirtualDomElement :: ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> VirtualDomNodeCallbacks el -> a
 
 {-# INLINE constructVirtualDomElement_ #-}
 constructVirtualDomElement_ ::
      (DOM.IsElement el)
-  => ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> VirtualDomChildren -> VirtualDomNode
-constructVirtualDomElement_ tag f props evts child = VirtualDomNode
+  => ElementTag -> (DOM.JSVal -> el) -> [NamedElementProperty el] -> [SomeEvent el] -> VirtualDomNodeCallbacks el -> VirtualDomChildren -> VirtualDomNode
+constructVirtualDomElement_ tag f props evts callbacks child = VirtualDomNode
   { vdnMark = Nothing
   , vdnWrap = f
   , vdnBody = VDNBElement $ VirtualDomElement
@@ -254,46 +256,52 @@ constructVirtualDomElement_ tag f props evts child = VirtualDomNode
       , vdeEvents = reverse evts
       , vdeChildren = child
       }
-  , vdnCallbacks = noVirtualDomNodeCallbacks
+  , vdnCallbacks = callbacks
   }
 
 instance (DOM.IsElement el) => ConstructVirtualDomElement el (ComponentM () read write VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts =
-    return (constructVirtualDomElement_ tag f attrs evts (VDCNormal mempty))
+  constructVirtualDomElement tag f attrs evts cbacks =
+    return (constructVirtualDomElement_ tag f attrs evts cbacks (VDCNormal mempty))
 
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVirtualDomElement el (ComponentM VirtualDom read1 write1 () -> ComponentM () read2 write2 VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts dom = ComponentM $ \l d mbst st -> let
+  constructVirtualDomElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructVirtualDomElement_ tag f attrs evts (VDCNormal vdom))
+    in ((), constructVirtualDomElement_ tag f attrs evts cbacks (VDCNormal vdom))
 
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructVirtualDomElement el (ComponentM KeyedVirtualDom read1 write1 () -> ComponentM () read2 write2 VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts dom = ComponentM $ \l d mbst st -> let
+  constructVirtualDomElement tag f attrs evts cbacks dom = ComponentM $ \l d mbst st -> let
     !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructVirtualDomElement_ tag f attrs evts (VDCKeyed vdom))
+    in ((), constructVirtualDomElement_ tag f attrs evts cbacks (VDCKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml T.Text
 
 instance (DOM.IsElement el) => ConstructVirtualDomElement el (UnsafeRawHtml -> ComponentM () read write VirtualDomNode) where
   {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts (UnsafeRawHtml html) = return (constructVirtualDomElement_ tag f attrs evts (VDCRawHtml html))
+  constructVirtualDomElement tag f attrs evts cbacks (UnsafeRawHtml html) =
+    return (constructVirtualDomElement_ tag f attrs evts cbacks (VDCRawHtml html))
 
 data NamedElementProperty el = NamedElementProperty T.Text (ElementProperty el)
 
 instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (NamedElementProperty el2 -> a) where
   {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts attr =
-    constructVirtualDomElement tag f (attr : attrs) evts
+  constructVirtualDomElement tag f attrs evts cbacks attr =
+    constructVirtualDomElement tag f (attr : attrs) evts cbacks
 
 instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (SomeEvent el2 -> a) where
   {-# INLINE constructVirtualDomElement #-}
-  constructVirtualDomElement tag f attrs evts evt = constructVirtualDomElement tag f attrs (evt : evts)
+  constructVirtualDomElement tag f attrs evts cbacks evt = constructVirtualDomElement tag f attrs (evt : evts) cbacks
+
+instance (ConstructVirtualDomElement el1 a, el1 ~ el2) => ConstructVirtualDomElement el1 (VirtualDomNodeCallbacks el2 -> a) where
+  {-# INLINE constructVirtualDomElement #-}
+  constructVirtualDomElement tag f attrs evts cbacks cback = constructVirtualDomElement tag f attrs evts (cbacks <> cback)
+
 
 {-# INLINE el #-}
 el :: (ConstructVirtualDomElement el a) => ElementTag -> (DOM.JSVal -> el) -> a
-el tag f = constructVirtualDomElement tag f [] []
+el tag f = constructVirtualDomElement tag f [] [] mempty
 
 -- Elements
 -- --------------------------------------------------------------------
@@ -454,3 +462,8 @@ onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
   => (el -> DOM.Event -> ClientM ()) -> SomeEvent el
 onsubmit_ = SomeEvent DOM.submit
+
+onselect_ ::
+     (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
+  => (el -> DOM.UIEvent -> ClientM ()) -> SomeEvent el
+onselect_ = SomeEvent DOM.select

@@ -89,6 +89,7 @@ executable test-app
     Anapo.TestApps.Prelude
     Anapo.TestApps.TodoList
     Anapo.TestApps.Timer
+    Anapo.TestApps.HogJowls
   default-language: Haskell2010
   default-extensions:
     BangPatterns

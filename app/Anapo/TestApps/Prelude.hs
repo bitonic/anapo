@@ -51,3 +51,9 @@ booleanCheckbox = do
       DOM.preventDefault ev
       checked <- DOM.getChecked el
       dispatch (const checked))
+
+{-
+data ReadOptionState = ReadOptionState
+  {
+readOption :: (Show a, Read a) => Node' a
+-}
