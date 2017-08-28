@@ -11,7 +11,7 @@ import qualified Data.Text as T
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
 
-import Anapo.Component
+import Anapo
 
 #if !defined(ghcjs_HOST_OS)
 import Language.Javascript.JSaddle.Monad (JSM(..))
@@ -51,6 +51,27 @@ booleanCheckbox = do
       DOM.preventDefault ev
       checked <- DOM.getChecked el
       dispatch (const checked))
+
+simpleTextInput ::
+     ClientM ()
+  -- ^ what to do when the new text is submitted
+  -> T.Text
+  -- ^ what to show in the button
+  -> Component' T.Text
+simpleTextInput cback buttonTxt = do
+  currentTxt <- askState
+  dispatch <- askDispatch
+  n$ form_
+    (onsubmit_ $ \_ ev -> do
+      DOM.preventDefault ev
+      cback)
+    (do
+      n$ input_
+        (value_ currentTxt)
+        (oninput_ $ \inp _ -> do
+          txt <- DOM.getValue inp
+          dispatch (const txt))
+      n$ button_ (n$ text buttonTxt))
 
 {-
 data ReadOptionState = ReadOptionState

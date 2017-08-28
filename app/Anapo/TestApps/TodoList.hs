@@ -11,10 +11,8 @@ import qualified Data.Map.Strict as Map
 import Control.Monad (forM_, when)
 import Data.List (partition)
 import Data.Monoid ((<>))
-import Control.Monad.IO.Class (liftIO)
 
 import qualified GHCJS.DOM.Event as DOM
-import qualified GHCJS.DOM.HTMLInputElement as DOM
 
 import Anapo
 import Anapo.TestApps.Prelude
@@ -53,28 +51,16 @@ todoComponent = do
         then "Hide completed tasks"
         else "Show completed tasks")
   -- submit new item
-  bootstrapRow $ bootstrapCol $ do
-    n$ form_
-      (onsubmit_ $ \_ ev -> do
-        DOM.preventDefault ev
-        liftIO (putStrLn "Submitting new item")
-        dispatch $ \st' -> if st' ^. tsCurrentText /= ""
-          then let
-            newTodoItem = TodoItemState False (st' ^. tsCurrentText)
-            itemKey = if Map.null (st' ^. tsTodoElements)
-              then 0
-              else fst (Map.findMax (st' ^. tsTodoElements)) + 1
-            in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
-          else st')
-      (do
-        n$ input_
-          (value_ (st ^. tsCurrentText))
-          (oninput_ $ \inp _ -> do
-            liftIO (putStrLn "Setting new text!")
-            txt <- DOM.getValue inp
-            dispatch (set tsCurrentText txt))
-        n$ button_ $
-          n$ text ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)))
+  bootstrapRow $ bootstrapCol $ zoom' tsCurrentText $ simpleTextInput
+    (dispatch $ \st' -> if st' ^. tsCurrentText /= ""
+        then let
+          newTodoItem = TodoItemState False (st' ^. tsCurrentText)
+          itemKey = if Map.null (st' ^. tsTodoElements)
+            then 0
+            else fst (Map.findMax (st' ^. tsTodoElements)) + 1
+          in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
+        else st')
+    ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1))
   -- active / completed todos
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =

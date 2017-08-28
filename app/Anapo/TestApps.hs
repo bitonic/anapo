@@ -8,7 +8,7 @@ import Anapo
 import Anapo.TestApps.Prelude
 import Anapo.TestApps.TodoList
 import Anapo.TestApps.Timer
-import Anapo.TestApps.HogJowls
+import Anapo.TestApps.YouTube
 
 import qualified GHCJS.DOM.HTMLSelectElement as DOM
 
@@ -16,7 +16,7 @@ data WhichTestApp =
     Blank
   | Todo
   | Timer
-  | HogJowls
+  | YouTube
   deriving (Eq, Show, Read)
 
 data TestAppsState = TestAppsState
@@ -24,7 +24,7 @@ data TestAppsState = TestAppsState
   , _tasTodo :: TodoState
   , _tasTimer :: TimerState
   , _tasStopTimerOnAppChange :: Bool
-  , _tasHogJowls :: HogJowlsState
+  , _tasYouTube :: YouTubeState
   }
 makeLenses ''TestAppsState
 
@@ -43,7 +43,7 @@ testAppsComponent = do
               then traverseOf tasTimer timerStop st'
               else return st'
             return (set tasWhich newApp st''))
-        (forM_ [Blank, Todo, Timer, HogJowls] $ \which -> do
+        (forM_ [Blank, Todo, Timer, YouTube] $ \which -> do
           n$ option_
             (value_ (tshow which))
             (selected_ (which == st ^. tasWhich))
@@ -55,7 +55,7 @@ testAppsComponent = do
     Blank -> return ()
     Todo -> zoom' tasTodo todoComponent
     Timer -> zoom' tasTimer timerComponent
-    HogJowls -> zoom' tasHogJowls hogJowlsComponent
+    YouTube -> zoom' tasYouTube youTubeComponent
 
 testAppsInit :: ClientM TestAppsState
 testAppsInit = TestAppsState
@@ -63,4 +63,4 @@ testAppsInit = TestAppsState
   <*> todoInit
   <*> timerInit
   <*> pure False
-  <*> hogJowlsInit
+  <*> youTubeInit "Hah4iGqh7GY"
