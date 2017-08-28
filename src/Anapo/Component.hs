@@ -41,7 +41,7 @@ module Anapo.Component
   , unsafeWillPatch
   , unsafeDidPatch
   , unsafeWillRemove
-  , rerender
+  , marked
 
     -- * type classes to construct elements
   , ConstructElement(..)
@@ -89,6 +89,7 @@ import qualified Data.Text as T
 import Data.Monoid ((<>))
 import qualified Data.DList as DList
 import Data.String (IsString(..))
+import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
@@ -212,7 +213,7 @@ constructElement_ ::
      (DOM.IsElement el)
   => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [V.SomeEvent el] -> V.Children -> V.Node el
 constructElement_ wrap tag props evts child = V.Node
-  { V.nodeRerender = V.Rerender
+  { V.nodeMark = Nothing
   , V.nodeCallbacks = mempty
   , V.nodeBody = V.NBElement V.Element
       { V.elementTag = tag
@@ -315,11 +316,15 @@ unsafeWillRemove f n_ = ComponentM $ \l d mbst st -> let
     }
   in ((), nod')
 
-{-# INLINE rerender #-}
-rerender :: V.Rerender -> Node el read write -> Node el read write
-rerender r n_ = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM n_ l d mbst st
-  !nod' = nod{ V.nodeRerender = r }
+{-# INLINE marked #-}
+marked ::
+     (forall out. Traversal' out write -> Maybe out -> read -> V.Rerender)
+  -> StaticPtr (Node el read write) -> Node el read write
+marked shouldRerender ptr = ComponentM $ \l d mbst st -> let
+  !fprint = staticKey ptr
+  !rer = shouldRerender l mbst st
+  !(_, !nod) = unComponentM (deRefStaticPtr ptr) l d mbst st
+  !nod' = nod{ V.nodeMark = Just (V.Mark fprint rer) }
   in ((), nod')
 
 -- useful shorthands
@@ -340,7 +345,7 @@ key k getNode = ComponentM $ \l d mbst st -> let
 {-# INLINE text #-}
 text :: T.Text -> Node DOM.Text read write
 text txt = return $ V.Node
-  { V.nodeRerender = V.Rerender
+  { V.nodeMark = Nothing
   , V.nodeBody = V.NBText txt
   , V.nodeCallbacks = mempty
   }
@@ -348,7 +353,7 @@ text txt = return $ V.Node
 {-# INLINE rawNode #-}
 rawNode :: DOM.Node -> Node DOM.Node read write
 rawNode x = return $ V.Node
-  { V.nodeRerender = V.Rerender
+  { V.nodeMark = Nothing
   , V.nodeBody = V.NBRawNode x
   , V.nodeCallbacks = mempty
   }

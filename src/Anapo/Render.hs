@@ -253,11 +253,11 @@ renderVirtualDom RenderOptions{..} doc = let
     -> NodeOverlay -- ^ the previous vdom events
     -> V.SomeNode -- ^ the next vdom
     -> ClientM NodeOverlay
-  patchDomNode container node prevVdom@(V.SomeNode (V.Node _ prevBody _)) prevVdomEvents vdom@(V.SomeNode (V.Node mark body callbacks)) = do
+  patchDomNode container node prevVdom@(V.SomeNode (V.Node prevMark prevBody _)) prevVdomEvents vdom@(V.SomeNode (V.Node mark body callbacks)) = do
     -- check if they're both marked and without the rerender
-    case mark of
-      V.UnsafeDontRerender -> return prevVdomEvents
-      V.Rerender -> case (prevBody, body) of
+    case (prevMark, mark) of
+      (Just (V.Mark prevFprint _), Just (V.Mark fprint V.UnsafeDontRerender)) | prevFprint == fprint -> return prevVdomEvents
+      _ -> case (prevBody, body) of
         -- Text
         -- TODO consider ref. equality, also for rawnode
         -- TODO consider asserting no events when appropriate

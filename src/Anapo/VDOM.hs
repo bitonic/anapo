@@ -3,6 +3,7 @@ module Anapo.VDOM where
 import qualified Data.HashMap.Strict as HMS
 import qualified Data.Text as T
 import Data.DList (DList)
+import Data.Typeable.Internal (Fingerprint)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM
@@ -21,11 +22,16 @@ data SomeNode = forall el. (DOM.IsNode el) => SomeNode (Node el)
 
 -- Something that will turn in a single DOM node.
 data Node el = Node
-  { nodeRerender :: Rerender
+  { nodeMark :: Maybe Mark
   , nodeBody :: ~(NodeBody el)
   -- ^ the dom node is lazy here to avoid recomputing it if we don't
   -- end up rerendering
   , nodeCallbacks :: Callbacks el
+  }
+
+data Mark = Mark
+  { markFingerprint :: Fingerprint
+  , markRerender :: Rerender
   }
 
 data Callbacks el = Callbacks

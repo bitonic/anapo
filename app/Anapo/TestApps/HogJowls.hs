@@ -1,32 +1,40 @@
 module Anapo.TestApps.HogJowls (HogJowlsState, hogJowlsComponent, hogJowlsInit) where
 
 import Control.Lens (toListOf, _Just, makeLenses, (^.))
-import Data.UUID (UUID)
-import qualified Data.UUID.V4 as V4
 
 import qualified GHCJS.DOM.HTMLIFrameElement as DOM
 import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM as DOM
+import Data.IORef
+import System.IO.Unsafe (unsafePerformIO)
 
 import Anapo
 import Anapo.TestApps.Prelude
 
 data HogJowlsState = HogJowlsState
   { _hjsNode :: DOM.Node
-  , _hjsToken :: UUID
+  , _hjsToken :: Int
   }
 makeLenses ''HogJowlsState
 
+hogJowlsNode :: Node' DOM.Node HogJowlsState
+hogJowlsNode = do
+  st <- askState
+  rawNode (st^.hjsNode)
+
 -- | Never rerender the node
 hogJowlsComponent :: Component' HogJowlsState
-hogJowlsComponent = do
-  st <- askState
-  rer <- askPreviousState $ \trav prevSt -> return$
-    if toListOf (_Just . trav . hjsToken) prevSt == [st^.hjsToken]
-      then UnsafeDontRerender
-      else Rerender
-  n$ rerender rer (rawNode (st^.hjsNode))
+hogJowlsComponent =
+  n$ marked
+    (\trav prevSt st -> if toListOf (_Just . trav . hjsToken) prevSt == [st^.hjsToken]
+        then UnsafeDontRerender
+        else Rerender)
+    (static hogJowlsNode)
+
+{-# NOINLINE hogJowsCounter #-}
+hogJowsCounter :: IORef Int
+hogJowsCounter = unsafePerformIO (newIORef 0)
 
 hogJowlsInit :: ClientM HogJowlsState
 hogJowlsInit = do
@@ -38,4 +46,5 @@ hogJowlsInit = do
   DOM.setFrameBorder iframe "0"
   DOM.setAllowFullscreen iframe True
   iframeNode <- DOM.unsafeCastTo DOM.Node iframe
-  HogJowlsState iframeNode <$> liftIO V4.nextRandom
+  counter <- liftIO (atomicModifyIORef' hogJowsCounter (\c -> (c, c+1)))
+  return (HogJowlsState iframeNode counter)
