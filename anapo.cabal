@@ -76,16 +76,9 @@ executable test-app
     ghcjs-dom,
     lifted-async,
     time,
-    mtl
-  if impl(ghcjs)
-    build-depends:
-      ghcjs-base
-  else
-    build-depends:
-      jsaddle,
-      jsaddle-warp,
-      monad-control,
-      transformers-base
+    mtl,
+    ghcjs-base,
+    aeson
   other-modules:
     Anapo.TestApps
     Anapo.TestApps.Prelude

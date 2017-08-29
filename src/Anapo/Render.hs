@@ -76,7 +76,8 @@ renderVirtualDom RenderOptions{..} doc = let
     case nodeBody of
       V.NBText{} -> return ()
       V.NBRawNode{} -> return ()
-      V.NBElement V.Element{V.elementChildren} -> removeDomNodeChildren domNode elementChildren
+      V.NBElement V.Element{V.elementChildren} -> do
+        removeDomNodeChildren domNode elementChildren
 
   {-# INLINE removeDom #-}
   removeDom ::
