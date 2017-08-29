@@ -64,6 +64,7 @@ module Anapo.Component
 
     -- * attributes
   , class_
+  , id_
   , HasTypeProperty(..)
   , type_
   , HasHrefProperty(..)
@@ -83,7 +84,7 @@ module Anapo.Component
   ) where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Lens (Traversal', Lens', view)
+import Control.Lens (Traversal', Lens', view, _Just)
 import Control.Monad (ap)
 import qualified Data.Text as T
 import Data.Monoid ((<>))
@@ -172,10 +173,10 @@ askState = ComponentM (\_lst _d _mbst st -> (mempty, st))
 {-# INLINE askPreviousState #-}
 askPreviousState ::
      (Monoid dom)
-  => (forall out. Traversal' out write -> Maybe out -> ComponentM dom read write a)
+  => (forall out. Traversal' out write -> out -> ComponentM dom read write a)
   -> ComponentM dom read write a
 askPreviousState cont = ComponentM $ \lst d mbst st ->
-  unComponentM (cont lst mbst) lst d mbst st
+  unComponentM (cont (_Just . lst) mbst) lst d mbst st
 
 {-# INLINE zoom' #-}
 zoom' :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
@@ -318,11 +319,11 @@ unsafeWillRemove f n_ = ComponentM $ \l d mbst st -> let
 
 {-# INLINE marked #-}
 marked ::
-     (forall out. Traversal' out write -> Maybe out -> read -> V.Rerender)
+     (forall out. Traversal' out write -> out -> read -> V.Rerender)
   -> StaticPtr (Node el read write) -> Node el read write
 marked shouldRerender ptr = ComponentM $ \l d mbst st -> let
   !fprint = staticKey ptr
-  !rer = shouldRerender l mbst st
+  !rer = shouldRerender (_Just . l) mbst st
   !(_, !nod) = unComponentM (deRefStaticPtr ptr) l d mbst st
   !nod' = nod{ V.nodeMark = Just (V.Mark fprint rer) }
   in ((), nod')
@@ -413,9 +414,16 @@ option_ = el "option" DOM.HTMLOptionElement
 -- --------------------------------------------------------------------
 
 class_ :: (DOM.IsElement el) => T.Text -> NamedElementProperty el
-class_ txt = NamedElementProperty "className" $ V.ElementProperty
+class_ txt = NamedElementProperty "id" $ V.ElementProperty
   { V.eaGetProperty = DOM.getClassName
   , V.eaSetProperty = DOM.setClassName
+  , V.eaValue = txt
+  }
+
+id_ :: (DOM.IsElement el) => T.Text -> NamedElementProperty el
+id_ txt = NamedElementProperty "id" $ V.ElementProperty
+  { V.eaGetProperty = DOM.getId
+  , V.eaSetProperty = DOM.setId
   , V.eaValue = txt
   }
 

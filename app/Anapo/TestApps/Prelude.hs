@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Anapo.TestApps.Prelude
@@ -7,6 +8,8 @@ module Anapo.TestApps.Prelude
 
 import Control.Monad.IO.Class as X (liftIO)
 import qualified Data.Text as T
+import Control.Monad as X (void)
+import Control.Concurrent as X (forkIO)
 
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM

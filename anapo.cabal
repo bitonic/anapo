@@ -45,7 +45,6 @@ library
   default-extensions:
     BangPatterns
     ConstraintKinds
-    CPP
     ExistentialQuantification
     FlexibleContexts
     FlexibleInstances
@@ -97,7 +96,6 @@ executable test-app
   default-extensions:
     BangPatterns
     ConstraintKinds
-    CPP
     ExistentialQuantification
     FlexibleContexts
     FlexibleInstances

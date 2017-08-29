@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module Anapo.ClientM where
 
 import qualified GHCJS.DOM.Types as DOM
