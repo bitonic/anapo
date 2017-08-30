@@ -232,9 +232,11 @@ youTubeComponent = do
   dispatchM <- askDispatchM
   bootstrapRow $ bootstrapCol $ do
     n$ marked
-      (\trav prevSt st -> if toListOf (trav . ytsToken) prevSt == [st^.ytsToken]
+      (\trav prevSt st -> case toMaybeOf (trav . ytsToken) prevSt of
+        Just tok -> if tok == st^.ytsToken
           then UnsafeDontRerender
-          else Rerender)
+          else Rerender
+        Nothing -> Rerender)
       (static youTubeNode)
   bootstrapRow $ bootstrapCol $ zoom' ytsVideoId $ simpleTextInput
     (dispatchM (\st' -> youTubeInit (st'^.ytsVideoId)))

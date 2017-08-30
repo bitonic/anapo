@@ -9,6 +9,11 @@ module Anapo.Component
   ( -- * Re-exports
     V.Rerender(..)
 
+    -- * affine traversals
+  , AffineTraversal
+  , AffineTraversal'
+  , toMaybeOf
+
     -- * ComponentM
   , DispatchM
   , Dispatch
@@ -84,13 +89,15 @@ module Anapo.Component
   ) where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Lens (Traversal', Lens', view, _Just)
+import Control.Lens (Lens', view, _Just)
+import qualified Control.Lens as Lens
 import Control.Monad (ap)
 import qualified Data.Text as T
-import Data.Monoid ((<>))
+import Data.Monoid ((<>), Endo)
 import qualified Data.DList as DList
 import Data.String (IsString(..))
 import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
+import GHC.Stack (HasCallStack)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
@@ -102,6 +109,24 @@ import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtil
 import Anapo.ClientM
 import qualified Anapo.VDOM as V
 
+-- affine traversals
+-- --------------------------------------------------------------------
+
+-- | for the components we want affine traversals -- traversals which
+-- point either to one or to zero elements. however lens currently
+-- does not provide them, see
+-- <https://www.reddit.com/r/haskell/comments/60fha5/affine_traversal/>.
+-- therefore we provide a type synonym for clarity.
+type AffineTraversal a b c d = Lens.Traversal a b c d
+type AffineTraversal' a b = Lens.Traversal' a b
+
+-- | to be used with 'AffineTraversal'
+toMaybeOf :: (HasCallStack) => Lens.Getting (Endo [a]) s a -> s -> Maybe a
+toMaybeOf l x = case Lens.toListOf l x of
+  [] -> Nothing
+  [y] -> Just y
+  _:_ -> error "toMaybeOf: multiple elements returned!"
+
 -- Monad
 -- --------------------------------------------------------------------
 
@@ -109,7 +134,7 @@ type DispatchM state = (state -> ClientM state) -> ClientM ()
 type Dispatch state = (state -> state) -> ClientM ()
 
 newtype ComponentM dom read write a = ComponentM
-  { unComponentM :: forall out. Traversal' out write -> DispatchM out -> Maybe out -> read -> (dom, a) }
+  { unComponentM :: forall out. AffineTraversal' out write -> DispatchM out -> Maybe out -> read -> (dom, a) }
 
 type ComponentM' dom state = ComponentM dom state state
 type Component' state = ComponentM V.Dom state state ()
@@ -173,7 +198,7 @@ askState = ComponentM (\_lst _d _mbst st -> (mempty, st))
 {-# INLINE askPreviousState #-}
 askPreviousState ::
      (Monoid dom)
-  => (forall out. Traversal' out write -> out -> ComponentM dom read write a)
+  => (forall out. AffineTraversal' out write -> out -> ComponentM dom read write a)
   -> ComponentM dom read write a
 askPreviousState cont = ComponentM $ \lst d mbst st ->
   unComponentM (cont (_Just . lst) mbst) lst d mbst st
@@ -186,7 +211,7 @@ zoom' l' dom = ComponentM $ \l d mbst st ->
 {-# INLINE zoom #-}
 zoom ::
      (readOut -> readIn)
-  -> Traversal' writeOut writeIn
+  -> AffineTraversal' writeOut writeIn
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
 zoom f l' dom = ComponentM $ \l d mbst st ->
@@ -195,7 +220,7 @@ zoom f l' dom = ComponentM $ \l d mbst st ->
 {-# INLINE zoom_ #-}
 zoom_ ::
      readIn
-  -> Traversal' writeOut writeIn
+  -> AffineTraversal' writeOut writeIn
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
 zoom_ x l' dom = ComponentM $ \l d mbst _st ->
@@ -319,7 +344,7 @@ unsafeWillRemove f n_ = ComponentM $ \l d mbst st -> let
 
 {-# INLINE marked #-}
 marked ::
-     (forall out. Traversal' out write -> out -> read -> V.Rerender)
+     (forall out. AffineTraversal' out write -> out -> read -> V.Rerender)
   -> StaticPtr (Node el read write) -> Node el read write
 marked shouldRerender ptr = ComponentM $ \l d mbst st -> let
   !fprint = staticKey ptr
