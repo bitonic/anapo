@@ -53,11 +53,11 @@ instance Monoid (Callbacks el) where
     }
   {-# INLINE mappend #-}
   callbacks1 `mappend` callbacks2 = Callbacks
-    { callbacksUnsafeWillMount = callbacksUnsafeWillMount callbacks1 >> callbacksUnsafeWillMount callbacks2
-    , callbacksUnsafeDidMount = callbacksUnsafeDidMount callbacks1 >> callbacksUnsafeDidMount callbacks2
-    , callbacksUnsafeWillPatch = callbacksUnsafeWillPatch callbacks1 >> callbacksUnsafeWillPatch callbacks2
-    , callbacksUnsafeDidPatch = callbacksUnsafeDidPatch callbacks1 >> callbacksUnsafeDidPatch callbacks2
-    , callbacksUnsafeWillRemove = callbacksUnsafeWillRemove callbacks1 >> callbacksUnsafeWillRemove callbacks2
+    { callbacksUnsafeWillMount = \el -> callbacksUnsafeWillMount callbacks1 el >> callbacksUnsafeWillMount callbacks2 el
+    , callbacksUnsafeDidMount = \el -> callbacksUnsafeDidMount callbacks1 el >> callbacksUnsafeDidMount callbacks2 el
+    , callbacksUnsafeWillPatch = \el -> callbacksUnsafeWillPatch callbacks1 el >> callbacksUnsafeWillPatch callbacks2 el
+    , callbacksUnsafeDidPatch = \el -> callbacksUnsafeDidPatch callbacks1 el >> callbacksUnsafeDidPatch callbacks2 el
+    , callbacksUnsafeWillRemove = \el -> callbacksUnsafeWillRemove callbacks1 el >> callbacksUnsafeWillRemove callbacks2 el
     }
 
 data NodeBody el where
