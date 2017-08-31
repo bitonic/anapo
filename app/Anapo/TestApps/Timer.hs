@@ -3,8 +3,8 @@ module Anapo.TestApps.Timer (TimerState, timerComponent, timerInit, timerStop) w
 
 import Control.Lens (makeLenses, makePrisms, (^.), set)
 import Data.Time.Clock (UTCTime, NominalDiffTime, diffUTCTime, getCurrentTime)
-import Control.Concurrent.Async.Lifted.Safe (Async)
-import qualified Control.Concurrent.Async.Lifted.Safe as Async
+import Control.Concurrent.Async (Async)
+import qualified Control.Concurrent.Async as Async
 import Data.Void (Void)
 import Control.Monad (forever)
 import Control.Concurrent (threadDelay)

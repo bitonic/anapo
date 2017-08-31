@@ -1,10 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE JavaScriptFFI #-}
 {-# LANGUAGE MultiWayIf #-}
-module Anapo.TestApps.YouTube where -- (YouTubeState, youTubeComponent, youTubeInit, youTubeSetup) where
+module Anapo.TestApps.YouTube (YouTubeState, youTubeComponent, youTubeInit, youTubeSetup) where
 
-import Control.Lens (toListOf, makeLenses, (^.))
-
+import Control.Lens (makeLenses, (^.), set)
 import Data.IORef
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Text as T
@@ -12,25 +11,19 @@ import Control.Concurrent.MVar
 import GHCJS.Foreign.Callback
 import GHCJS.Types
 import GHCJS.Marshal
-import GHCJS.Nullable
 import qualified Data.Aeson.TH as Aeson
 import Data.Char (toLower)
-import Control.Monad (forM_)
+import Control.Exception (bracket)
+import Data.Foldable (for_)
 
-import qualified GHCJS.DOM.HTMLIFrameElement as DOM
+import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
+import qualified GHCJS.DOM.Document as DOM
 
 import Anapo
 import Anapo.TestApps.Prelude
 
-import qualified GHCJS.DOM as DOM
-import qualified GHCJS.DOM.Document as DOM
-import qualified GHCJS.DOM.Types as DOM
-import qualified GHCJS.DOM.Element as DOM
-import qualified GHCJS.DOM.Node as DOM
-import qualified Anapo.VDOM as V
-
--- YT api initialization
+-- YT api bindings
 -- --------------------------------------------------------------------
 
 {-# NOINLINE youTubePlayerReady #-}
@@ -41,15 +34,19 @@ foreign import javascript unsafe
   "window.onYouTubeIframeAPIReady = $1"
   js_setupOnYouTubeIframeAPIReady :: Callback (IO ()) -> IO ()
 
+youTubeEnsureReady :: ClientM ()
+youTubeEnsureReady = readMVar youTubePlayerReady
+
+-- blocks until yt api is ready
 youTubeSetup :: ClientM ()
 youTubeSetup = do
-  cback <- asyncCallback $ do
-    void (tryPutMVar youTubePlayerReady ())
-  -- wait for thing to be ready and release callback
-  void $ forkIO $ do
-    readMVar youTubePlayerReady
-    releaseCallback cback
-  js_setupOnYouTubeIframeAPIReady cback
+  bracket
+    (asyncCallback $ do
+      void (tryPutMVar youTubePlayerReady ()))
+    releaseCallback
+    (\cback -> do
+      js_setupOnYouTubeIframeAPIReady cback
+      youTubeEnsureReady)
 
 type YouTubePlayer = JSVal
 
@@ -72,182 +69,120 @@ foreign import javascript unsafe
 
 foreign import javascript unsafe
   " $1.events = {};\
-  \ $1.events.onReady = function(event) {\
-  \   console.log(\"player ready\");\
-  \   if ($2) {\
-  \     event.target.seekTo($2, true);\
-  \   }\
-  \   if ($3) {\
-  \     event.target.playVideo();\
-  \   }\
-  \ };"
-  js_youTubePlayAndSeekOnReady :: JSVal -> Nullable Int -> Bool -> IO ()
+  \ $1.events.onReady = $2;"
+  js_youTubeSetOnReady :: JSVal -> Callback (IO ()) -> IO ()
 
--- | this will block waiting for youtube api to be ready
+-- | blocks until the player is ready
 youTubeNew ::
      (ToJSVal el)
   => el
   -> YouTubeNew
-  -> Maybe Int -- ^ seek when ready
-  -> Bool -- ^ play when ready
   -> IO YouTubePlayer
-youTubeNew container ytn mbSeek playOnReady = do
-  readMVar youTubePlayerReady
+youTubeNew container ytn = do
+  -- make sure we have the api
+  youTubeEnsureReady
+  -- set up things
   containerJS <- toJSVal container
   ytnJS <- toJSVal_aeson ytn
-  js_youTubePlayAndSeekOnReady ytnJS (maybeToNullable mbSeek) playOnReady
-  ytp <- js_youTubeNew containerJS ytnJS
-  return ytp
+  isPlayerReady <- newEmptyMVar
+  bracket
+    (asyncCallback (void (tryPutMVar isPlayerReady ())))
+    releaseCallback
+    (\cback -> do
+      js_youTubeSetOnReady ytnJS cback
+      ytp <- js_youTubeNew containerJS ytnJS
+      readMVar isPlayerReady
+      return ytp)
 
 foreign import javascript unsafe
   "$1.getCurrentTime()"
-  js_youTubeGetCurrentTime :: JSVal -> IO Int
-
-youTubeGetCurrentTime :: YouTubePlayer -> IO Int
-youTubeGetCurrentTime = js_youTubeGetCurrentTime
+  youTubeGetCurrentTime :: YouTubePlayer -> IO Int
 
 foreign import javascript unsafe
-  "$1.getPlayerState()"
-  js_youTubeGetPlayerState :: JSVal -> IO Int
-
-data YouTubePlayerState =
-    YTPSUnstarted
-  | YTPSEnded
-  | YTPSPlaying
-  | YTPSPaused
-  | YTPSBuffering
-  | YTPSVideoCued
-
-youTubeGetPlayerState :: YouTubePlayer -> IO YouTubePlayerState
-youTubeGetPlayerState ytp = do
-  i <- js_youTubeGetPlayerState ytp
-  if
-    | i == -1 -> return YTPSUnstarted
-    | i == 0 -> return YTPSEnded
-    | i == 1 -> return YTPSPlaying
-    | i == 2 -> return YTPSPaused
-    | i == 3 -> return YTPSBuffering
-    | i == 5 -> return YTPSVideoCued
-    | True -> fail ("Invalid player state " ++ show i)
+  "$1.seekTo($2)"
+  youTubeSeekTo :: YouTubePlayer -> Int -> IO ()
 
 foreign import javascript unsafe
-  "$1.destroy()"
-  js_youTubeDestroy :: JSVal -> IO ()
-
-youTubeDestroy :: YouTubePlayer -> IO ()
-youTubeDestroy = js_youTubeDestroy
+  "$1.pauseVideo()"
+  youTubePauseVideo :: YouTubePlayer -> IO ()
 
 -- YT api
 -- --------------------------------------------------------------------
 
-data YouTubeStatus =
-    YTSMounted YouTubePlayer
-  | YTSUnmounted
-      -- nothing if it has never been mounted
-      (Maybe
-        ( Int -- ^ number of seconds passed
-        , YouTubePlayerState -- ^ player state
-        ))
+type YouTubeLastPosition = Maybe Int -- ^ seconds elapsed
+
+type VideoId = T.Text
 
 data YouTubeState = YouTubeState
-  { _ytsToken :: Int
-  , _ytsVideoId :: T.Text
-  , _ytsStatus :: IORef YouTubeStatus
+  { _ytsVideoId :: VideoId
+  , _ytsToken :: Int
+  , _ytsLastPosition :: YouTubeLastPosition
   }
 makeLenses ''YouTubeState
-
-youTubeNode :: Node' DOM.HTMLDivElement YouTubeState
-youTubeNode = do
-  st <- askState
-  {-
-  unsafeDidMount (didMount st) $
-    unsafeWillRemove (\_el -> willRemove st) $
-      div_
-  -}
-  nod <- div_
-  return nod
-    { V.nodeCallbacks = mempty
-        { V.callbacksUnsafeDidMount = didMount st
-        , V.callbacksUnsafeWillRemove = willRemove st
-        }
-    }
-  where
-    didMount yts el = do
-      -- get current state
-      st <- readIORef (yts^.ytsStatus)
-      let (mbSeek, playOnReady) = case st of
-            YTSUnmounted (Just (secs, ps)) ->
-              ( Just secs
-              , case ps of
-                  YTPSUnstarted -> False
-                  YTPSEnded -> False
-                  YTPSPlaying -> True
-                  YTPSPaused -> False
-                  YTPSBuffering -> True
-                  YTPSVideoCued -> False
-              )
-            YTSUnmounted Nothing -> (Nothing, False)
-            YTSMounted{} -> (Nothing, False)
-      -- Just cancel any eventual dangling stuff...
-      willRemove yts el
-      -- insert container div and replace it with player
-      doc <- DOM.currentDocumentUnchecked
-      toReplace <- DOM.createElement doc ("div" :: T.Text)
-      DOM.appendChild_ el toReplace
-      ytp <- youTubeNew
-        toReplace
-        YouTubeNew
-          { ytnWidth = 640
-          , ytnHeight = 390
-          , ytnVideoId = (yts^.ytsVideoId)
-          }
-        mbSeek playOnReady
-      writeIORef (yts^.ytsStatus) (YTSMounted ytp)
-
-    removeAllChildren :: (DOM.IsNode el) => el -> ClientM ()
-    removeAllChildren el = let
-      go = do
-        mbChild <- DOM.getFirstChild el
-        forM_ mbChild $ \child -> do
-          DOM.removeChild_ el child
-          go
-      in go
-
-    willRemove yts el = do
-      st <- readIORef (yts^.ytsStatus)
-      case st of
-        YTSMounted ytp -> do
-          t <- youTubeGetCurrentTime ytp
-          st <- youTubeGetPlayerState ytp
-          youTubeDestroy ytp
-          writeIORef (yts^.ytsStatus) (YTSUnmounted (Just (t, st)))
-        YTSUnmounted{} -> return ()
-      -- destroy seems to swap the old element back,
-      -- wipe it
-      removeAllChildren el
-
--- | Never rerender the node
-youTubeComponent :: Component' YouTubeState
-youTubeComponent = do
-  dispatchM <- askDispatchM
-  bootstrapRow $ bootstrapCol $ do
-    n$ marked
-      (\trav prevSt st -> case toMaybeOf (trav . ytsToken) prevSt of
-        Just tok -> if tok == st^.ytsToken
-          then UnsafeDontRerender
-          else Rerender
-        Nothing -> Rerender)
-      (static youTubeNode)
-  bootstrapRow $ bootstrapCol $ zoom' ytsVideoId $ simpleTextInput
-    (dispatchM (\st' -> youTubeInit (st'^.ytsVideoId)))
-    "Choose video"
 
 {-# NOINLINE youTubeCounter #-}
 youTubeCounter :: IORef Int
 youTubeCounter = unsafePerformIO (newIORef 0)
 
-youTubeInit :: T.Text -> ClientM YouTubeState
-youTubeInit txt = do
-  counter <- liftIO (atomicModifyIORef' youTubeCounter (\c -> (c+1, c)))
-  ref <- newIORef (YTSUnmounted Nothing)
-  return (YouTubeState counter txt ref)
+newYouTubeToken :: ClientM Int
+newYouTubeToken = liftIO (atomicModifyIORef' youTubeCounter (\c -> (c+1, c)))
+
+youTubeInit :: VideoId -> ClientM YouTubeState
+youTubeInit videoId = do
+  tok <- newYouTubeToken
+  return YouTubeState
+    { _ytsVideoId = videoId
+    , _ytsToken = tok
+    , _ytsLastPosition = Nothing
+    }
+
+-- it's important to have this as a generic element since we'll replace it
+-- with a iframe
+youTubeNode :: Node' DOM.Element YouTubeState
+youTubeNode = do
+  st <- askState
+  dispatch <- askDispatch
+  mbYtpRef :: IORef (Maybe YouTubePlayer) <- unsafeLiftClientM (newIORef Nothing)
+  let
+    didMount el = void $ forkIO $ do
+      ytp <- youTubeNew el YouTubeNew
+        { ytnHeight = 390
+        , ytnWidth = 640
+        , ytnVideoId = st^.ytsVideoId
+        }
+      for_ (st^.ytsLastPosition) $ \t -> do
+        youTubeSeekTo ytp t
+        youTubePauseVideo ytp
+      writeIORef mbYtpRef (Just ytp)
+  let
+    willRemove _el = do
+      mbYtp <- readIORef mbYtpRef
+      case mbYtp of
+        Nothing -> return ()
+        Just ytp -> do
+          t <- youTubeGetCurrentTime ytp
+          dispatch (set ytsLastPosition (Just t))
+  container <- unsafeLiftClientM $ do
+    doc <- DOM.currentDocumentUnchecked
+    container <- DOM.unsafeCastTo DOM.Element =<< DOM.createElement doc ("div" :: T.Text)
+    simpleRenderComponent container () $
+      bootstrapRow $ bootstrapCol $
+        n$ text "YouTube player not ready"
+    return container
+  unsafeDidMount didMount . unsafeWillRemove willRemove <$> rawNode DOM.Element container
+
+-- | Never rerender the node
+youTubeComponent :: Component' YouTubeState
+youTubeComponent = do
+  n$ marked
+    (\trav prevSt st -> case toMaybeOf (trav . ytsToken) prevSt of
+      Just tok -> if tok == st^.ytsToken
+        then UnsafeDontRerender
+        else Rerender
+      Nothing -> Rerender)
+    (static youTubeNode)
+  dispatchM <- askDispatchM
+  bootstrapRow $ bootstrapCol $ zoom' ytsVideoId $ simpleTextInput
+    (dispatchM (\st' -> youTubeInit (st'^.ytsVideoId)))
+    "Choose video"
+

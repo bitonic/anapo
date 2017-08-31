@@ -27,6 +27,7 @@ data Node el = Node
   -- ^ the dom node is lazy here to avoid recomputing it if we don't
   -- end up rerendering
   , nodeCallbacks :: Callbacks el
+  , nodeWrap :: DOM.JSVal -> el
   }
 
 data Mark = Mark
@@ -63,14 +64,7 @@ instance Monoid (Callbacks el) where
 data NodeBody el where
   NBElement :: (DOM.IsElement el) => Element el -> NodeBody el
   NBText :: T.Text -> NodeBody DOM.Text
-  NBRawNode :: DOM.Node -> NodeBody DOM.Node
-
-{-# INLINE nodeWrap #-}
-nodeWrap :: Node el -> (DOM.JSVal -> el)
-nodeWrap Node{..} = case nodeBody of
-  NBElement e -> elementWrap e
-  NBText{} -> DOM.Text
-  NBRawNode{} -> DOM.Node
+  NBRawNode :: (DOM.IsNode el) => el -> NodeBody el
 
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
   SomeEvent (DOM.EventName el e) (el -> e -> ClientM ())
@@ -91,7 +85,6 @@ data Element el = Element
   , elementProperties :: ElementProperties el
   , elementEvents :: ElementEvents el
   , elementChildren :: Children
-  , elementWrap :: (DOM.JSVal -> el)
   }
 
 data KeyedDom = KeyedDom

@@ -172,8 +172,8 @@ renderVirtualDom RenderOptions{..} doc = let
         cont txtNode nodeCallbacks emptyOverlay
       V.NBRawNode el -> cont el nodeCallbacks emptyOverlay
       V.NBElement V.Element{..} -> do
-        el <- DOM.unsafeCastTo elementWrap =<< DOM.createElement doc elementTag
-        defProps <- addProperties el elementWrap elementProperties mempty
+        el <- DOM.unsafeCastTo nodeWrap =<< DOM.createElement doc elementTag
+        defProps <- addProperties el nodeWrap elementProperties mempty
         evts <- addEvents el elementEvents
         childrenEvents <- renderDomChildren el elementChildren
         cont el nodeCallbacks (NodeOverlay evts defProps childrenEvents)
@@ -254,7 +254,7 @@ renderVirtualDom RenderOptions{..} doc = let
     -> NodeOverlay -- ^ the previous vdom events
     -> V.SomeNode -- ^ the next vdom
     -> ClientM NodeOverlay
-  patchDomNode container node prevVdom@(V.SomeNode (V.Node prevMark prevBody _)) prevVdomEvents vdom@(V.SomeNode (V.Node mark body callbacks)) = do
+  patchDomNode container node prevVdom@(V.SomeNode (V.Node prevMark prevBody _ _)) prevVdomEvents vdom@(V.SomeNode (V.Node mark body callbacks wrap)) = do
     -- check if they're both marked and without the rerender
     case (prevMark, mark) of
       (Just (V.Mark prevFprint _), Just (V.Mark fprint V.UnsafeDontRerender)) | prevFprint == fprint -> return prevVdomEvents
@@ -265,9 +265,9 @@ renderVirtualDom RenderOptions{..} doc = let
         (V.NBText prevTxt, V.NBText txt) | prevTxt == txt -> return emptyOverlay
         -- Element
         (V.NBElement prevElement, V.NBElement element) | V.elementTag prevElement == V.elementTag element -> do
-          node' <- DOM.unsafeCastTo (V.elementWrap element) node
+          node' <- DOM.unsafeCastTo wrap node
           V.callbacksUnsafeWillPatch callbacks node'
-          x <- patchDomElement node' (V.elementWrap element) prevElement prevVdomEvents element
+          x <- patchDomElement node' wrap prevElement prevVdomEvents element
           V.callbacksUnsafeDidPatch callbacks node'
           return x
         -- In all other cases we erase and rerender

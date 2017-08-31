@@ -26,6 +26,7 @@ module Anapo.Component
   , Node'
   , runComponentM
   , runComponent
+  , unsafeLiftClientM
   , askDispatch
   , askDispatchM
   , askState
@@ -86,12 +87,15 @@ module Anapo.Component
   , onsubmit_
   , oninput_
   , onselect_
+
+    -- * simple rendering
+  , simpleRenderComponent
   ) where
 
 import qualified Data.HashMap.Strict as HMS
 import Control.Lens (Lens', view, _Just)
 import qualified Control.Lens as Lens
-import Control.Monad (ap)
+import Control.Monad (ap, void)
 import qualified Data.Text as T
 import Data.Monoid ((<>), Endo)
 import qualified Data.DList as DList
@@ -105,9 +109,11 @@ import qualified GHCJS.DOM.Element as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
 import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
 import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtils
+import qualified GHCJS.DOM as DOM
 
 import Anapo.ClientM
 import qualified Anapo.VDOM as V
+import Anapo.Render
 
 -- affine traversals
 -- --------------------------------------------------------------------
@@ -134,7 +140,7 @@ type DispatchM state = (state -> ClientM state) -> ClientM ()
 type Dispatch state = (state -> state) -> ClientM ()
 
 newtype ComponentM dom read write a = ComponentM
-  { unComponentM :: forall out. AffineTraversal' out write -> DispatchM out -> Maybe out -> read -> (dom, a) }
+  { unComponentM :: forall out. AffineTraversal' out write -> DispatchM out -> Maybe out -> read -> ClientM (dom, a) }
 
 type ComponentM' dom state = ComponentM dom state state
 type Component' state = ComponentM V.Dom state state ()
@@ -148,18 +154,18 @@ instance (el ~ DOM.Text) => IsString (Node el read write) where
   fromString = text . T.pack
 
 {-# INLINE runComponentM #-}
-runComponentM :: ComponentM dom read write a -> DispatchM write -> Maybe write -> read -> (dom, a)
+runComponentM :: ComponentM dom read write a -> DispatchM write -> Maybe write -> read -> ClientM (dom, a)
 runComponentM vdom = unComponentM vdom id
 
 {-# INLINE runComponent #-}
-runComponent :: Component read write -> DispatchM write -> Maybe write -> read -> V.Dom
-runComponent vdom d mbst st = fst (unComponentM vdom id d mbst st)
+runComponent :: Component read write -> DispatchM write -> Maybe write -> read -> ClientM V.Dom
+runComponent vdom d mbst st = fst <$> unComponentM vdom id d mbst st
 
 instance Functor (ComponentM dom read write) where
   {-# INLINE fmap #-}
-  fmap f (ComponentM g) = ComponentM $ \l d mbst st -> let
-    (dom, x) = g l d mbst st
-    in (dom, f x)
+  fmap f (ComponentM g) = ComponentM $ \l d mbst st -> do
+    (dom, x) <- g l d mbst st
+    return (dom, f x)
 
 instance (Monoid dom) => Applicative (ComponentM dom read write) where
   {-# INLINE pure #-}
@@ -169,31 +175,37 @@ instance (Monoid dom) => Applicative (ComponentM dom read write) where
 
 instance (Monoid dom) => Monad (ComponentM dom read write) where
   {-# INLINE return #-}
-  return x = ComponentM (\_l _d _mbst _st -> (mempty, x))
+  return x = ComponentM (\_l _d _mbst _st -> return (mempty, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = ComponentM $ \l d mbst st -> let
-    (!vdom1, x) = unComponentM ma l d mbst st
-    (!vdom2, y) = unComponentM (mf x) l d mbst st
-    !vdom = vdom1 <> vdom2
-    in (vdom, y)
+  ma >>= mf = ComponentM $ \l d mbst st -> do
+    !(!vdom1, x) <- unComponentM ma l d mbst st
+    !(!vdom2, y) <- unComponentM (mf x) l d mbst st
+    let !vdom = vdom1 <> vdom2
+    return (vdom, y)
+
+{-# INLINE unsafeLiftClientM #-}
+unsafeLiftClientM :: Monoid dom => ClientM a -> ComponentM dom read write a
+unsafeLiftClientM m = ComponentM $ \_l _d _mbst _st -> do
+  x <- m
+  return (mempty, x)
 
 {-# INLINE askDispatchM #-}
 askDispatchM :: (Monoid dom) => ComponentM dom read write (DispatchM write)
-askDispatchM = ComponentM $ \lst d _mbst _st ->
+askDispatchM = ComponentM $ \lst d _mbst _st -> return
   ( mempty
   , \modifySt -> d (lst modifySt)
   )
 
 {-# INLINE askDispatch #-}
 askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch write)
-askDispatch = ComponentM $ \lst d _mbst _st ->
+askDispatch = ComponentM $ \lst d _mbst _st -> return
   ( mempty
   , \modifySt -> d (lst (return . modifySt))
   )
 
 {-# INLINE askState #-}
 askState :: (Monoid dom) => ComponentM dom read write read
-askState = ComponentM (\_lst _d _mbst st -> (mempty, st))
+askState = ComponentM (\_lst _d _mbst st -> return (mempty, st))
 
 {-# INLINE askPreviousState #-}
 askPreviousState ::
@@ -248,8 +260,8 @@ constructElement_ wrap tag props evts child = V.Node
           return (name, prop)
       , V.elementEvents = reverse evts
       , V.elementChildren = child
-      , V.elementWrap = wrap
       }
+  , V.nodeWrap = wrap
   }
 
 instance (DOM.IsElement el) => ConstructElement el (Node el read write) where
@@ -259,15 +271,15 @@ instance (DOM.IsElement el) => ConstructElement el (Node el read write) where
 
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> let
-    !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructElement_ wrap tag attrs evts (V.CNormal vdom))
+  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> do
+    !(!vdom, _) <- unComponentM dom l d mbst st
+    return ((), constructElement_ wrap tag attrs evts (V.CNormal vdom))
 
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> let
-    !(!vdom, _) = unComponentM dom l d mbst st
-    in ((), constructElement_ wrap tag attrs evts (V.CKeyed vdom))
+  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> do
+    !(!vdom, _) <- unComponentM dom l d mbst st
+    return ((), constructElement_ wrap tag attrs evts (V.CKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml T.Text
 
@@ -293,80 +305,64 @@ el tag f = constructElement f tag [] []
 -- --------------------------------------------------------------------
 
 {-# INLINE unsafeWillMount #-}
-unsafeWillMount :: (el -> ClientM ()) -> Node el read write -> Node el read write
-unsafeWillMount f n_ = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM n_ l d mbst st
-  !nod' = nod
-    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
-        { V.callbacksUnsafeWillMount = f }
-    }
-  in ((), nod')
+unsafeWillMount :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeWillMount f nod = nod
+  { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+      { V.callbacksUnsafeWillMount = f }
+  }
 
 {-# INLINE unsafeDidMount #-}
-unsafeDidMount :: (el -> ClientM ()) -> Node el read write -> Node el read write
-unsafeDidMount f n_ = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM n_ l d mbst st
-  !nod' = nod
-    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
-        { V.callbacksUnsafeDidMount = f }
-    }
-  in ((), nod')
+unsafeDidMount :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeDidMount f nod = nod
+  { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+      { V.callbacksUnsafeDidMount = f }
+  }
 
 {-# INLINE unsafeWillPatch #-}
-unsafeWillPatch :: (el -> ClientM ()) -> Node el read write -> Node el read write
-unsafeWillPatch f n_ = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM n_ l d mbst st
-  !nod' = nod
-    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
-        { V.callbacksUnsafeWillPatch = f }
-    }
-  in ((), nod')
+unsafeWillPatch :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeWillPatch f nod = nod
+  { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+      { V.callbacksUnsafeWillPatch = f }
+  }
 
 {-# INLINE unsafeDidPatch #-}
-unsafeDidPatch :: (el -> ClientM ()) -> Node el read write -> Node el read write
-unsafeDidPatch f n_ = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM n_ l d mbst st
-  !nod' = nod
-    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
-        { V.callbacksUnsafeDidPatch = f }
-    }
-  in ((), nod')
+unsafeDidPatch :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeDidPatch f nod = nod
+  { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+      { V.callbacksUnsafeDidPatch = f }
+  }
 
 {-# INLINE unsafeWillRemove #-}
-unsafeWillRemove :: (el -> ClientM ()) -> Node el read write -> Node el read write
-unsafeWillRemove f n_ = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM n_ l d mbst st
-  !nod' = nod
-    { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
-        { V.callbacksUnsafeWillRemove = f }
-    }
-  in ((), nod')
+unsafeWillRemove :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeWillRemove f nod = nod
+  { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
+      { V.callbacksUnsafeWillRemove = f }
+  }
 
 {-# INLINE marked #-}
 marked ::
      (forall out. AffineTraversal' out write -> out -> read -> V.Rerender)
   -> StaticPtr (Node el read write) -> Node el read write
-marked shouldRerender ptr = ComponentM $ \l d mbst st -> let
-  !fprint = staticKey ptr
-  !rer = shouldRerender (_Just . l) mbst st
-  !(_, !nod) = unComponentM (deRefStaticPtr ptr) l d mbst st
-  !nod' = nod{ V.nodeMark = Just (V.Mark fprint rer) }
-  in ((), nod')
+marked shouldRerender ptr = ComponentM $ \l d mbst st -> do
+  let !fprint = staticKey ptr
+  let !rer = shouldRerender (_Just . l) mbst st
+  !(_, !nod) <- unComponentM (deRefStaticPtr ptr) l d mbst st
+  return ((), nod{ V.nodeMark = Just (V.Mark fprint rer) })
 
 -- useful shorthands
 -- --------------------------------------------------------------------
 
 {-# INLINE n #-}
 n :: (DOM.IsNode el) => Node el read write -> Component read write
-n getNode = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM getNode l d mbst st
-  in (DList.singleton (V.SomeNode nod), ())
+n getNode = ComponentM $ \l d mbst st -> do
+  !(_, !nod) <- unComponentM getNode l d mbst st
+  return (DList.singleton (V.SomeNode nod), ())
 
 {-# INLINE key #-}
 key :: (DOM.IsNode el) => T.Text -> Node el read write -> KeyedComponent read write
-key k getNode = ComponentM $ \l d mbst st -> let
-  !(_, !nod) = unComponentM getNode l d mbst st
-  in (V.KeyedDom (HMS.singleton k (V.SomeNode nod)) (DList.singleton k), ())
+key k getNode = ComponentM $ \l d mbst st -> do
+  !(_, !nod) <- unComponentM getNode l d mbst st
+  return (V.KeyedDom (HMS.singleton k (V.SomeNode nod)) (DList.singleton k), ())
 
 {-# INLINE text #-}
 text :: T.Text -> Node DOM.Text read write
@@ -374,14 +370,16 @@ text txt = return $ V.Node
   { V.nodeMark = Nothing
   , V.nodeBody = V.NBText txt
   , V.nodeCallbacks = mempty
+  , V.nodeWrap = DOM.Text
   }
 
 {-# INLINE rawNode #-}
-rawNode :: DOM.Node -> Node DOM.Node read write
-rawNode x = return $ V.Node
+rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node el read write
+rawNode wrap x = return $ V.Node
   { V.nodeMark = Nothing
   , V.nodeBody = V.NBRawNode x
   , V.nodeCallbacks = mempty
+  , V.nodeWrap = wrap
   }
 
 -- Elements
@@ -550,3 +548,16 @@ onselect_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
   => (el -> DOM.UIEvent -> ClientM ()) -> V.SomeEvent el
 onselect_ = V.SomeEvent DOM.select
+
+-- simple rendering
+-- --------------------------------------------------------------------
+
+-- when we want a quick render of a component, e.g. inside a raw node.
+-- will error out if dispatch is used.
+simpleRenderComponent ::
+     (DOM.IsElement el)
+  => el -> read -> Component read write -> ClientM ()
+simpleRenderComponent container st comp = do
+  doc <- DOM.currentDocumentUnchecked
+  vdom <- runComponent comp (error "simpleRenderComponent: somebody called dispatch!") Nothing st
+  void (renderVirtualDom RenderOptions{roAlwaysRerender = True, roDebugOutput = False} doc container Nothing vdom)
