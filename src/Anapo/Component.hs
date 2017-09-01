@@ -553,11 +553,12 @@ onselect_ = V.SomeEvent DOM.select
 -- --------------------------------------------------------------------
 
 -- when we want a quick render of a component, e.g. inside a raw node.
--- will error out if dispatch is used.
+-- any dispatch will be dropped, e.g. this will never redraw anything,
+-- it's just to place some elements in the provided element
 simpleRenderComponent ::
      (DOM.IsElement el)
-  => el -> read -> Component read write -> ClientM ()
+  => el -> read -> Component read () -> ClientM ()
 simpleRenderComponent container st comp = do
   doc <- DOM.currentDocumentUnchecked
-  vdom <- runComponent comp (error "simpleRenderComponent: somebody called dispatch!") Nothing st
+  vdom <- runComponent comp (\_ -> return ()) Nothing st
   void (renderVirtualDom RenderOptions{roAlwaysRerender = True, roDebugOutput = False} doc container Nothing vdom)
