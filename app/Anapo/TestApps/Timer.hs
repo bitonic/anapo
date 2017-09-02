@@ -8,6 +8,8 @@ import qualified Control.Concurrent.Async as Async
 import Data.Void (Void)
 import Control.Monad (forever)
 import Control.Concurrent (threadDelay)
+import qualified Data.Text as T
+import Text.Printf (printf)
 
 import Anapo
 import Anapo.TestApps.Prelude
@@ -34,13 +36,19 @@ timerComponent = do
         (case st ^. tsRunning of
           Stopped -> 0
           Running t0 t1 _ -> diffUTCTime t1 t0)
-  n$ h2_ $
-    n$ text (tshow timePassed)
+  n$ h2_ (class_ "mx-1") $
+    n$ text (T.pack (printf "%0.2fs" (realToFrac timePassed :: Double)))
   dispatch <- askDispatchM
   n$ button_
+    (type_ "button")
+    (class_ "mx-1 btn btn-primary")
     (onclick_ (\_ _ -> timerReset dispatch))
     (n$ "Reset")
   n$ button_
+    (type_ "button")
+    (class_ $ case st ^. tsRunning of
+      Running{} -> "mx-1 btn btn-danger"
+      Stopped{} -> "mx-1 btn btn-success")
     (onclick_ (\_ _ -> timerToggle dispatch))
     (n$ case st ^. tsRunning of
       Running{} -> "Stop"

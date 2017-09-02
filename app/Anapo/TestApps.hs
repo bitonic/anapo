@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Anapo.TestApps (TestAppsState, testAppsComponent, testAppsInit) where
 
-import Control.Lens (makeLenses, set, (^.), traverseOf)
+import Control.Lens (makeLenses, set, (^.))
 import Control.Monad (forM_)
 
 import Anapo
@@ -10,14 +10,17 @@ import Anapo.TestApps.TodoList
 import Anapo.TestApps.Timer
 import Anapo.TestApps.YouTube
 
-import qualified GHCJS.DOM.HTMLSelectElement as DOM
+import qualified GHCJS.DOM.Event as DOM
 
 data WhichTestApp =
     Blank
   | Todo
   | Timer
   | YouTube
-  deriving (Eq, Show, Read)
+  deriving (Eq, Show, Read, Enum, Bounded)
+
+allTestApps :: [WhichTestApp]
+allTestApps = [minBound..maxBound]
 
 data TestAppsState = TestAppsState
   { _tasWhich :: WhichTestApp
@@ -32,26 +35,29 @@ testAppsComponent :: Component' TestAppsState
 testAppsComponent = do
   dispatchM <- askDispatchM
   st <- askState
-  bootstrapRow $ do
-    bootstrapCol $ do
-      n$ "Choose an app:"
-      n$ select_
-        (onchange_ $ \el _ -> do
-          newApp <- read <$> DOM.getValue el
-          dispatchM $ \st' -> do
-            st'' <- if st^.tasStopTimerOnAppChange && newApp /= Timer
-              then traverseOf tasTimer timerStop st'
-              else return st'
-            return (set tasWhich newApp st''))
-        (forM_ [Blank, Todo, Timer, YouTube] $ \which -> do
-          n$ option_
-            (value_ (tshow which))
-            (selected_ (which == st ^. tasWhich))
-            (n$ text (tshow which)))
-    bootstrapCol $ do
-      zoom' tasStopTimerOnAppChange (n$ booleanCheckbox)
-      n$ "Stop timer app when changing app"
-  bootstrapRow $ bootstrapCol $ case st^.tasWhich of
+  n$ div_ (class_ "row m-2 align-items-center") $ do
+    n$ div_ (class_ "col col-md-auto") $ do
+      n$ ul_ (class_ "nav nav-pills") $ forM_ allTestApps $ \app -> do
+        let aClass = if app == st^.tasWhich
+              then "nav-link active"
+              else "nav-link"
+        n$ li_ (class_ "nav-item") $ n$ a_
+          (class_ aClass)
+          (href_ "#")
+          (onclick_ $ \_ ev -> do
+            DOM.preventDefault ev
+            dispatchM $ \st' -> do
+              st'' <- if st^.tasStopTimerOnAppChange && app /= Timer
+                then tasTimer timerStop st'
+                else return st'
+              return (set tasWhich app st''))
+          (n$ text (tshow app))
+    bootstrapCol $ zoom' tasStopTimerOnAppChange $
+      n$ div_ (class_ "form-check") $
+        n$ label_ (class_ "form-check-label") $ do
+          n$ booleanCheckbox
+          n$ "Stop timer app when changing app"
+  n$ div_ (class_ "row m-2") $ bootstrapCol $ case st^.tasWhich of
     Blank -> return ()
     Todo -> zoom' tasTodo todoComponent
     Timer -> zoom' tasTimer timerComponent

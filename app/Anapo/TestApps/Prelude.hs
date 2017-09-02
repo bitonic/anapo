@@ -10,6 +10,9 @@ import Control.Monad.IO.Class as X (liftIO)
 import qualified Data.Text as T
 import Control.Monad as X (void)
 import Control.Concurrent as X (forkIO)
+import qualified Data.Aeson.TH as Aeson
+import Data.List (isPrefixOf)
+import Data.Char (toLower)
 
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
@@ -48,6 +51,7 @@ booleanCheckbox = do
   st <- askState
   dispatch <- askDispatch
   input_
+    (class_ "form-check-input mr-1")
     (type_ "checkbox")
     (checked_ st)
     (onchange_ $ \el ev -> do
@@ -65,19 +69,29 @@ simpleTextInput cback buttonTxt = do
   currentTxt <- askState
   dispatch <- askDispatch
   n$ form_
+    (class_ "form-inline mx-1 my-2")
     (onsubmit_ $ \_ ev -> do
       DOM.preventDefault ev
       cback)
     (do
+      -- TODO should put label
       n$ input_
+        (type_ "text")
+        (class_ "form-control mb-2 mr-sm-2 mb-sm-0")
         (value_ currentTxt)
         (oninput_ $ \inp _ -> do
           txt <- DOM.getValue inp
           dispatch (const txt))
-      n$ button_ (n$ text buttonTxt))
+      n$ button_
+        (type_ "submit")
+        (class_ "btn btn-primary")
+        (n$ text buttonTxt))
 
-{-
-data ReadOptionState = ReadOptionState
-  {
-readOption :: (Show a, Read a) => Node' a
--}
+aesonRecord :: String -> Aeson.Options
+aesonRecord prefix = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = \s -> if prefix `isPrefixOf` s && length s > length prefix
+      then let
+        ~(c : rest) = drop (length prefix) s
+        in toLower c : rest
+      else error ("record label " ++ s ++ " does not have prefix " ++ prefix)
+  }

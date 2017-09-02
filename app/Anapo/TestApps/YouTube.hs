@@ -12,7 +12,6 @@ import GHCJS.Foreign.Callback
 import GHCJS.Types
 import GHCJS.Marshal
 import qualified Data.Aeson.TH as Aeson
-import Data.Char (toLower)
 import Control.Exception (bracket)
 import Data.Foldable (for_)
 
@@ -55,13 +54,7 @@ data YouTubeNew = YouTubeNew
   , ytnWidth :: Int
   , ytnVideoId :: T.Text
   }
-Aeson.deriveJSON
-  Aeson.defaultOptions
-    { Aeson.fieldLabelModifier = \s -> case s of
-        'y':'t':'n':c:rest -> toLower c : rest
-        _ -> error "Bad YouTubeNew prefix!"
-    }
-  ''YouTubeNew
+Aeson.deriveJSON (aesonRecord "ytn") ''YouTubeNew
 
 foreign import javascript unsafe
   "new YT.Player($1, $2)"

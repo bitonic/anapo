@@ -23,11 +23,18 @@ data TodoItemState = TodoItemState
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
-todoItemComponent :: Component' TodoItemState
-todoItemComponent = do
+todoItemNode :: Node' HTMLAnchorElement TodoItemState
+todoItemNode = do
   st <- askState
-  zoom' tisCompleted (n$ booleanCheckbox)
-  n$ text (st ^. tisBody)
+  dispatch <- askDispatch
+  let aClass = if st^.tisCompleted
+        then "list-group-item active"
+        else "list-group-item"
+  a_
+    (href_ "#")
+    (class_ aClass)
+    (onclick_ $ \_ ev -> DOM.preventDefault ev >> dispatch (over tisCompleted not))
+    (n$ text (st^.tisBody))
 
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
@@ -40,39 +47,42 @@ todoComponent :: Component' TodoState
 todoComponent = do
   st <- askState
   dispatch <- askDispatch
-  -- toggle completed tasks
-  bootstrapRow $ bootstrapCol $ do
-    n$ a_
-      (href_ "#")
-      (onclick_ $ \_ ev -> do
-        DOM.preventDefault ev
-        dispatch (over tsShowCompleted not))
-      (n$ if st ^. tsShowCompleted
-        then "Hide completed tasks"
-        else "Show completed tasks")
-  -- submit new item
-  bootstrapRow $ bootstrapCol $ zoom' tsCurrentText $ simpleTextInput
-    (dispatch $ \st' -> if st' ^. tsCurrentText /= ""
-        then let
-          newTodoItem = TodoItemState False (st' ^. tsCurrentText)
-          itemKey = if Map.null (st' ^. tsTodoElements)
-            then 0
-            else fst (Map.findMax (st' ^. tsTodoElements)) + 1
-          in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
-        else st')
-    ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1))
+  n$ div_ (class_ "row align-items-center") $ do
+    n$ div_ (class_ "col-md-auto") $ do
+      -- submit new item
+      zoom' tsCurrentText $ simpleTextInput
+        (dispatch $ \st' -> if st' ^. tsCurrentText /= ""
+            then let
+              newTodoItem = TodoItemState False (st' ^. tsCurrentText)
+              itemKey = if Map.null (st' ^. tsTodoElements)
+                then 0
+                else fst (Map.findMax (st' ^. tsTodoElements)) + 1
+              in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
+            else st')
+        ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1))
+    -- toggle completed tasks
+    n$ div_ (class_ "col") $ do
+      n$ a_
+        (href_ "#")
+        (class_ "btn btn-primary")
+        (onclick_ $ \_ ev -> do
+          DOM.preventDefault ev
+          dispatch (over tsShowCompleted not))
+        (n$ if st^.tsShowCompleted
+          then "Hide completed tasks"
+          else "Show completed tasks")
   -- active / completed todos
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =
-        n$ ul_ $ forM_ items $ \(itemKey, itemState) ->
+        n$ div_ (class_ "list-group mx-1 my-2") $ forM_ items $ \(itemKey, itemState) ->
           zoom_ itemState (tsTodoElements . ix itemKey) $
-            key (tshow itemKey) (li_ todoItemComponent)
-  bootstrapRow $ bootstrapCol $ do
-    n$ h2_ (n$ "Things to do")
-    renderItems active
-  when (st ^. tsShowCompleted) $ do
-    bootstrapRow $ bootstrapCol $ do
-      n$ h2_ (n$ "Things already done")
+            key (tshow itemKey) todoItemNode
+  bootstrapRow $ do
+    bootstrapCol $ do
+      n$ h2_ (class_ "mx-1 my-2") (n$ "Things to do")
+      renderItems active
+    when (st ^. tsShowCompleted) $ bootstrapCol $ do
+      n$ h2_ (class_ "mx-1 my-2") (n$ "Things already done")
       renderItems done
 
 todoInit :: ClientM TodoState

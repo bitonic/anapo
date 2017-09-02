@@ -67,6 +67,7 @@ module Anapo.Component
   , button_
   , ul_
   , li_
+  , label_
 
     -- * attributes
   , class_
@@ -88,6 +89,10 @@ module Anapo.Component
   , oninput_
   , onselect_
 
+    -- * dom re-exports
+  , DOM.preventDefault
+  , DOM.HTMLAnchorElement
+
     -- * simple rendering
   , simpleRenderComponent
   ) where
@@ -104,9 +109,11 @@ import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 import GHC.Stack (HasCallStack)
 
 import qualified GHCJS.DOM.Types as DOM
+import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
 import qualified GHCJS.DOM.Element as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
+import qualified GHCJS.DOM.HTMLButtonElement as DOM.Button
 import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
 import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtils
 import qualified GHCJS.DOM as DOM
@@ -178,8 +185,8 @@ instance (Monoid dom) => Monad (ComponentM dom read write) where
   return x = ComponentM (\_l _d _mbst _st -> return (mempty, x))
   {-# INLINE (>>=) #-}
   ma >>= mf = ComponentM $ \l d mbst st -> do
-    !(!vdom1, x) <- unComponentM ma l d mbst st
-    !(!vdom2, y) <- unComponentM (mf x) l d mbst st
+    (vdom1, x) <- unComponentM ma l d mbst st
+    (vdom2, y) <- unComponentM (mf x) l d mbst st
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
@@ -272,13 +279,13 @@ instance (DOM.IsElement el) => ConstructElement el (Node el read write) where
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> do
-    !(!vdom, _) <- unComponentM dom l d mbst st
+    (vdom, _) <- unComponentM dom l d mbst st
     return ((), constructElement_ wrap tag attrs evts (V.CNormal vdom))
 
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> do
-    !(!vdom, _) <- unComponentM dom l d mbst st
+    (vdom, _) <- unComponentM dom l d mbst st
     return ((), constructElement_ wrap tag attrs evts (V.CKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml T.Text
@@ -346,7 +353,7 @@ marked ::
 marked shouldRerender ptr = ComponentM $ \l d mbst st -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender (_Just . l) mbst st
-  !(_, !nod) <- unComponentM (deRefStaticPtr ptr) l d mbst st
+  (_, nod) <- unComponentM (deRefStaticPtr ptr) l d mbst st
   return ((), nod{ V.nodeMark = Just (V.Mark fprint rer) })
 
 -- useful shorthands
@@ -355,13 +362,13 @@ marked shouldRerender ptr = ComponentM $ \l d mbst st -> do
 {-# INLINE n #-}
 n :: (DOM.IsNode el) => Node el read write -> Component read write
 n getNode = ComponentM $ \l d mbst st -> do
-  !(_, !nod) <- unComponentM getNode l d mbst st
+  (_, nod) <- unComponentM getNode l d mbst st
   return (DList.singleton (V.SomeNode nod), ())
 
 {-# INLINE key #-}
 key :: (DOM.IsNode el) => T.Text -> Node el read write -> KeyedComponent read write
 key k getNode = ComponentM $ \l d mbst st -> do
-  !(_, !nod) <- unComponentM getNode l d mbst st
+  (_, nod) <- unComponentM getNode l d mbst st
   return (V.KeyedDom (HMS.singleton k (V.SomeNode nod)) (DList.singleton k), ())
 
 {-# INLINE text #-}
@@ -433,6 +440,10 @@ select_ = el "select" DOM.HTMLSelectElement
 option_ :: (ConstructElement DOM.HTMLOptionElement a) => a
 option_ = el "option" DOM.HTMLOptionElement
 
+{-# INLINE label_ #-}
+label_ :: (ConstructElement DOM.HTMLLabelElement a) => a
+label_ = el "label" DOM.HTMLLabelElement
+
 -- Properties
 -- --------------------------------------------------------------------
 
@@ -457,6 +468,10 @@ class HasTypeProperty el where
 instance HasTypeProperty DOM.HTMLInputElement where
   htpGetType = DOM.Input.getType
   htpSetType = DOM.Input.setType
+
+instance HasTypeProperty DOM.HTMLButtonElement where
+  htpGetType = DOM.Button.getType
+  htpSetType = DOM.Button.setType
 
 type_ :: (HasTypeProperty el) => T.Text -> NamedElementProperty el
 type_ txt = NamedElementProperty "type" $ V.ElementProperty
