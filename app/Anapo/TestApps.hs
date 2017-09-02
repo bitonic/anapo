@@ -9,6 +9,7 @@ import Anapo.TestApps.Prelude
 import Anapo.TestApps.TodoList
 import Anapo.TestApps.Timer
 import Anapo.TestApps.YouTube
+import Anapo.TestApps.SlowRequest
 
 import qualified GHCJS.DOM.Event as DOM
 
@@ -17,6 +18,7 @@ data WhichTestApp =
   | Todo
   | Timer
   | YouTube
+  | SlowRequest
   deriving (Eq, Show, Read, Enum, Bounded)
 
 allTestApps :: [WhichTestApp]
@@ -28,6 +30,7 @@ data TestAppsState = TestAppsState
   , _tasTimer :: TimerState
   , _tasStopTimerOnAppChange :: Bool
   , _tasYouTube :: YouTubeState
+  , _tasSlowRequest :: SlowRequestState
   }
 makeLenses ''TestAppsState
 
@@ -62,6 +65,7 @@ testAppsComponent = do
     Todo -> zoom' tasTodo todoComponent
     Timer -> zoom' tasTimer timerComponent
     YouTube -> zoom' tasYouTube youTubeComponent
+    SlowRequest -> zoom' tasSlowRequest slowRequestComponent
 
 testAppsInit :: ClientM TestAppsState
 testAppsInit = TestAppsState
@@ -70,3 +74,4 @@ testAppsInit = TestAppsState
   <*> timerInit
   <*> pure False
   <*> youTubeInit "Hah4iGqh7GY"
+  <*> slowRequestInit

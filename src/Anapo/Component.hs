@@ -62,6 +62,7 @@ module Anapo.Component
   , input_
   , form_
   , h2_
+  , h5_
   , select_
   , option_
   , button_
@@ -81,6 +82,8 @@ module Anapo.Component
   , selected_
   , HasCheckedProperty(..)
   , checked_
+  , HasDisabledProperty(..)
+  , disabled_
 
     -- * events
   , onclick_
@@ -92,6 +95,7 @@ module Anapo.Component
     -- * dom re-exports
   , DOM.preventDefault
   , DOM.HTMLAnchorElement
+  , DOM.HTMLButtonElement
 
     -- * simple rendering
   , simpleRenderComponent
@@ -432,6 +436,10 @@ li_ = el "li" DOM.HTMLLIElement
 h2_ :: (ConstructElement DOM.HTMLHeadingElement a) => a
 h2_ = el "h2" DOM.HTMLHeadingElement
 
+{-# INLINE h5_ #-}
+h5_ :: (ConstructElement DOM.HTMLHeadingElement a) => a
+h5_ = el "h5" DOM.HTMLHeadingElement
+
 {-# INLINE select_ #-}
 select_ :: (ConstructElement DOM.HTMLSelectElement a) => a
 select_ = el "select" DOM.HTMLSelectElement
@@ -533,6 +541,21 @@ selected_ :: Bool -> NamedElementProperty DOM.HTMLOptionElement
 selected_ b = NamedElementProperty "selected" $ V.ElementProperty
   { V.eaGetProperty = DOM.Option.getSelected
   , V.eaSetProperty = DOM.Option.setSelected
+  , V.eaValue = b
+  }
+
+class HasDisabledProperty el where
+  hdpGetDisabled :: el -> ClientM Bool
+  hdpSetDisabled :: el -> Bool -> ClientM ()
+
+instance HasDisabledProperty DOM.HTMLButtonElement where
+  hdpGetDisabled = DOM.Button.getDisabled
+  hdpSetDisabled = DOM.Button.setDisabled
+
+disabled_ :: HasDisabledProperty el => Bool -> NamedElementProperty el
+disabled_ b = NamedElementProperty "disabled" $ V.ElementProperty
+  { V.eaGetProperty = hdpGetDisabled
+  , V.eaSetProperty = hdpSetDisabled
   , V.eaValue = b
   }
 
