@@ -6,6 +6,9 @@ import qualified Data.DList as DList
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.Maybe (catMaybes)
+import Data.Foldable (traverse_)
+import GHCJS.Foreign.Callback.Internal
+import GHCJS.Foreign.Callback
 
 import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -44,6 +47,11 @@ renderVirtualDom :: forall el0.
   => RenderOptions -> DOM.Document -> el0 -> Maybe (V.Dom, Overlay) -> V.Dom
   -> ClientM Overlay
 renderVirtualDom RenderOptions{..} doc = let
+  {-# INLINE releaseEventListener #-}
+  releaseEventListener :: DOM.EventListener -> ClientM ()
+  releaseEventListener (DOM.EventListener jsval) =
+    releaseCallback (Callback jsval :: Callback ())
+
   {-# INLINE removeAllChildren #-}
   removeAllChildren :: (DOM.IsNode el) => el -> ClientM ()
   removeAllChildren el = let
@@ -58,26 +66,31 @@ renderVirtualDom RenderOptions{..} doc = let
   removeDomNodeChildren ::
        (DOM.IsNode el)
     => el -- ^ the node
+    -> Overlay
     -> V.Children
     -> ClientM ()
-  removeDomNodeChildren domNode = \case
-    V.CRawHtml{} -> return ()
-    V.CKeyed kvd -> removeDom domNode Nothing (DList.toList (V.unkeyDom kvd))
-    V.CNormal vdom -> removeDom domNode Nothing (DList.toList vdom)
+  removeDomNodeChildren domNode overlay children = case children of
+    V.CRawHtml{} -> if null overlay
+      then return ()
+      else fail "removeDomNodeChildren: expecting no overlay nodes with rawhtml, but got some"
+    V.CKeyed kvd -> removeDom domNode Nothing overlay (DList.toList (V.unkeyDom kvd))
+    V.CNormal vdom -> removeDom domNode Nothing overlay (DList.toList vdom)
 
   {-# INLINE removeDomNode #-}
   removeDomNode ::
        (DOM.IsNode el)
     => el -- ^ the node
+    -> NodeOverlay
     -> V.SomeNode -- ^ the virtual dom nodes describing what's the node
     -> ClientM ()
-  removeDomNode domNode (V.SomeNode node@V.Node{..}) = do
+  removeDomNode domNode NodeOverlay{..} (V.SomeNode node@V.Node{..}) = do
     V.callbacksUnsafeWillRemove nodeCallbacks =<< DOM.unsafeCastTo (V.nodeWrap node) domNode
     case nodeBody of
       V.NBText{} -> return ()
       V.NBRawNode{} -> return ()
       V.NBElement V.Element{V.elementChildren} -> do
-        removeDomNodeChildren domNode elementChildren
+        removeDomNodeChildren domNode noChildren elementChildren
+        traverse_ (releaseEventListener . snd) noEvents
 
   {-# INLINE removeDom #-}
   removeDom ::
@@ -87,26 +100,31 @@ renderVirtualDom RenderOptions{..} doc = let
     -> Maybe DOM.Node
     -- ^ the node to start removing from. if 'Nothing' will start from
     -- first child of container
+    -> Overlay
     -> [V.SomeNode] -- ^ the virtual dom nodes describing what's in the node
     -> ClientM ()
-  removeDom container mbCursor0 nodes0 = do
+  removeDom container mbCursor00 overlay00 nodes00 = do
     let
-      go :: Maybe DOM.Node -> [V.SomeNode] -> ClientM ()
-      go mbCursor = \case
-        [] -> forM_ mbCursor $ \_ ->
-          fail "removeDom: Expecting no cursor at the end of vdom, but got one!"
-        node : nodes -> case mbCursor of
-          Nothing ->
-            fail "removeDom: Expecting cursor since I've still got vdom nodes, but got none!"
-          Just cursor -> do
-            nextCursor <- DOM.getNextSibling cursor
-            removeDomNode cursor node
-            DOM.removeChild_ container cursor
-            go nextCursor nodes
-    mbCursor <- case mbCursor0 of
+      go :: Maybe DOM.Node -> Overlay -> [V.SomeNode] -> ClientM ()
+      go mbCursor overlay0 nodes0 = case (mbCursor, overlay0, nodes0) of
+        (Just{}, _, []) ->
+          fail  "removeDom: Expecting no cursor at the end of vdom, but got one!"
+        (Nothing, _:_, []) ->
+          fail  "removeDom: Expecting no overlay at the end of vdom, but got one!"
+        (Nothing, [], []) -> return ()
+        (Nothing, _, _:_) ->
+          fail "removeDom: Expecting cursor since I've still got vdom nodes, but got none!"
+        (Just{}, [], _:_) ->
+          fail "removeDom: Expeting overlay since i've still got vdom nodes, but got none"
+        (Just cursor, overlayNode : overlay, node : nodes) -> do
+          nextCursor <- DOM.getNextSibling cursor
+          removeDomNode cursor overlayNode node
+          DOM.removeChild_ container cursor
+          go nextCursor overlay nodes
+    mbCursor <- case mbCursor00 of
       Nothing -> DOM.getFirstChild container
       Just cursor -> return (Just cursor)
-    go mbCursor nodes0
+    go mbCursor overlay00 nodes00
 
   {-# INLINE addEvents #-}
   addEvents ::
@@ -206,9 +224,8 @@ renderVirtualDom RenderOptions{..} doc = let
         patchKeyedDom container prevKeyedChildren evts keyedChildren
       (V.CNormal prevNChildren, evts, V.CNormal nchildren) ->
         patchDom container prevNChildren evts nchildren
-      (prevChildren, _, children) -> do
-        -- TODO remove this, it's just a check for now
-        removeDomNodeChildren container prevChildren
+      (prevChildren, evts, children) -> do
+        removeDomNodeChildren container evts prevChildren
         renderDomChildren container children
 
   -- | Note that the elements are already assumed to be of the same
@@ -238,6 +255,7 @@ renderVirtualDom RenderOptions{..} doc = let
     -- check
     forM_ (noEvents prevElOverlay) $ \(evtName, evt) -> do
       DOM.removeEventListener node evtName (Just evt) False
+      DOM.eventListenerRelease evt
     -- add all events
     evts <- addEvents node (V.elementEvents el)
     -- patch children
@@ -272,7 +290,7 @@ renderVirtualDom RenderOptions{..} doc = let
           return x
         -- In all other cases we erase and rerender
         _ -> do
-          removeDomNode node prevVdom
+          removeDomNode node prevVdomEvents prevVdom
           renderDomNode vdom $ \el evts -> do
             DOM.replaceChild_ container el node
             return evts
@@ -312,8 +330,8 @@ renderVirtualDom RenderOptions{..} doc = let
           forM_ mbCursor $ \_ ->
             fail "patchDom: expecting no cursor at the end of previous nodes, but got one"
           renderDom container vnodes'
-        (prevVnodes', _, []) -> do
-          removeDom container mbCursor prevVnodes'
+        (prevVnodes', prevVnodesEvents', []) -> do
+          removeDom container mbCursor prevVnodesEvents'  prevVnodes'
           return mempty
         (prevVnode : prevVnodes', prevVnodeEvents : prevVnodesEvents', node : nodes') -> do
           case mbCursor of
@@ -337,7 +355,7 @@ renderVirtualDom RenderOptions{..} doc = let
         renderDom container (DList.toList vdom)
       Just (prevVdom, prevVdomEvents) -> if roAlwaysRerender
         then do
-          removeDom container Nothing (DList.toList prevVdom)
+          removeDom container Nothing prevVdomEvents (DList.toList prevVdom)
           renderDom container (DList.toList vdom)
         else do
           patchDom container prevVdom prevVdomEvents vdom

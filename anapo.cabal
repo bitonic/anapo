@@ -32,14 +32,8 @@ library
     mtl,
     dlist,
     time,
-    stm
-  if impl(ghcjs)
-    build-depends:
-      ghcjs-base
-  else
-    build-depends:
-      jsaddle,
-      jsaddle-warp
+    stm,
+    ghcjs-base
   default-language: Haskell2010
   ghc-options: -Wall
   default-extensions:
