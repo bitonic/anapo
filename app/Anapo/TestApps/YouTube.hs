@@ -6,7 +6,6 @@ module Anapo.TestApps.YouTube (YouTubeState, youTubeComponent, youTubeInit, youT
 import Control.Lens (makeLenses, (^.), set)
 import Data.IORef
 import System.IO.Unsafe (unsafePerformIO)
-import qualified Data.Text as T
 import Control.Concurrent.MVar
 import GHCJS.Foreign.Callback
 import GHCJS.Types
@@ -14,6 +13,9 @@ import GHCJS.Marshal
 import qualified Data.Aeson.TH as Aeson
 import Control.Exception (bracket)
 import Data.Foldable (for_)
+import Data.JSString (JSString)
+import Data.JSString.Text (textFromJSString)
+import Data.Text (Text)
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -52,7 +54,7 @@ type YouTubePlayer = JSVal
 data YouTubeNew = YouTubeNew
   { ytnHeight :: Int
   , ytnWidth :: Int
-  , ytnVideoId :: T.Text
+  , ytnVideoId :: Text
   }
 Aeson.deriveJSON (aesonRecord "ytn") ''YouTubeNew
 
@@ -104,7 +106,7 @@ foreign import javascript unsafe
 
 type YouTubeLastPosition = Maybe Int -- ^ seconds elapsed
 
-type VideoId = T.Text
+type VideoId = JSString
 
 data YouTubeState = YouTubeState
   { _ytsVideoId :: VideoId
@@ -141,7 +143,7 @@ youTubeNode = do
       ytp <- youTubeNew el YouTubeNew
         { ytnHeight = 390
         , ytnWidth = 640
-        , ytnVideoId = st^.ytsVideoId
+        , ytnVideoId = textFromJSString (st^.ytsVideoId)
         }
       for_ (st^.ytsLastPosition) $ \t -> do
         youTubeSeekTo ytp t
@@ -157,7 +159,7 @@ youTubeNode = do
           dispatch (set ytsLastPosition (Just t))
   container <- unsafeLiftClientM $ do
     doc <- DOM.currentDocumentUnchecked
-    container <- DOM.unsafeCastTo DOM.Element =<< DOM.createElement doc ("div" :: T.Text)
+    container <- DOM.unsafeCastTo DOM.Element =<< DOM.createElement doc ("div" :: JSString)
     simpleRenderComponent container () $
       bootstrapRow $ bootstrapCol $
         n$ text "YouTube player not ready"

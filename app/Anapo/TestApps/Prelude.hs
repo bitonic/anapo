@@ -7,12 +7,13 @@ module Anapo.TestApps.Prelude
   ) where
 
 import Control.Monad.IO.Class as X (liftIO)
-import qualified Data.Text as T
 import Control.Monad as X (void)
 import Control.Concurrent as X (forkIO)
 import qualified Data.Aeson.TH as Aeson
 import Data.List (isPrefixOf)
 import Data.Char (toLower)
+import qualified Data.JSString as JSS
+import Data.JSString (JSString)
 
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
@@ -37,8 +38,8 @@ instance MonadBaseControl IO JSM where
   restoreM = return
 #endif
 
-tshow :: (Show a) => a -> T.Text
-tshow = T.pack . show
+jsshow :: (Show a) => a -> JSString
+jsshow = JSS.pack . show
 
 bootstrapRow :: Component read write -> Component read write
 bootstrapRow = n . div_ (class_ "row")
@@ -62,9 +63,9 @@ booleanCheckbox = do
 simpleTextInput ::
      ClientM ()
   -- ^ what to do when the new text is submitted
-  -> T.Text
+  -> JSString
   -- ^ what to show in the button
-  -> Component' T.Text
+  -> Component' JSString
 simpleTextInput cback buttonTxt = do
   currentTxt <- askState
   dispatch <- askDispatch

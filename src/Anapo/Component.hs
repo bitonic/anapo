@@ -105,12 +105,13 @@ import qualified Data.HashMap.Strict as HMS
 import Control.Lens (Lens', view, _Just)
 import qualified Control.Lens as Lens
 import Control.Monad (ap, void)
-import qualified Data.Text as T
 import Data.Monoid ((<>), Endo)
 import qualified Data.DList as DList
 import Data.String (IsString(..))
 import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 import GHC.Stack (HasCallStack)
+import Data.JSString (JSString)
+import qualified Data.JSString as JSS
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -162,7 +163,7 @@ type Node el read write = ComponentM () read write (V.Node el)
 type Node' el state = ComponentM () state state (V.Node el)
 
 instance (el ~ DOM.Text) => IsString (Node el read write) where
-  fromString = text . T.pack
+  fromString = text . JSS.pack
 
 {-# INLINE runComponentM #-}
 runComponentM :: ComponentM dom read write a -> DispatchM write -> Maybe write -> read -> ClientM (dom, a)
@@ -252,7 +253,7 @@ zoom_ x l' dom = ComponentM $ \l d mbst _st ->
 -- Type class machinery
 -- --------------------------------------------------------------------
 
-data NamedElementProperty el = NamedElementProperty T.Text (V.ElementProperty el)
+data NamedElementProperty el = NamedElementProperty JSString (V.ElementProperty el)
 
 class (DOM.IsElement el) => ConstructElement el a | a -> el where
   constructElement :: (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [V.SomeEvent el] -> a
@@ -292,11 +293,11 @@ instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement 
     (vdom, _) <- unComponentM dom l d mbst st
     return ((), constructElement_ wrap tag attrs evts (V.CKeyed vdom))
 
-newtype UnsafeRawHtml = UnsafeRawHtml T.Text
+newtype UnsafeRawHtml = UnsafeRawHtml JSString
 
 instance (DOM.IsElement el) => ConstructElement el (UnsafeRawHtml -> Node el read write) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts  (UnsafeRawHtml html) =
+  constructElement wrap tag attrs evts (UnsafeRawHtml html) =
     return (constructElement_ wrap tag  attrs evts  (V.CRawHtml html))
 
 instance (ConstructElement el a) => ConstructElement el (NamedElementProperty el -> a) where
@@ -370,13 +371,13 @@ n getNode = ComponentM $ \l d mbst st -> do
   return (DList.singleton (V.SomeNode nod), ())
 
 {-# INLINE key #-}
-key :: (DOM.IsNode el) => T.Text -> Node el read write -> KeyedComponent read write
+key :: (DOM.IsNode el) => JSString -> Node el read write -> KeyedComponent read write
 key k getNode = ComponentM $ \l d mbst st -> do
   (_, nod) <- unComponentM getNode l d mbst st
   return (V.KeyedDom (HMS.singleton k (V.SomeNode nod)) (DList.singleton k), ())
 
 {-# INLINE text #-}
-text :: T.Text -> Node DOM.Text read write
+text :: JSString -> Node DOM.Text read write
 text txt = return $ V.Node
   { V.nodeMark = Nothing
   , V.nodeBody = V.NBText txt
@@ -455,14 +456,14 @@ label_ = el "label" DOM.HTMLLabelElement
 -- Properties
 -- --------------------------------------------------------------------
 
-class_ :: (DOM.IsElement el) => T.Text -> NamedElementProperty el
+class_ :: (DOM.IsElement el) => JSString -> NamedElementProperty el
 class_ txt = NamedElementProperty "id" $ V.ElementProperty
   { V.eaGetProperty = DOM.getClassName
   , V.eaSetProperty = DOM.setClassName
   , V.eaValue = txt
   }
 
-id_ :: (DOM.IsElement el) => T.Text -> NamedElementProperty el
+id_ :: (DOM.IsElement el) => JSString -> NamedElementProperty el
 id_ txt = NamedElementProperty "id" $ V.ElementProperty
   { V.eaGetProperty = DOM.getId
   , V.eaSetProperty = DOM.setId
@@ -470,8 +471,8 @@ id_ txt = NamedElementProperty "id" $ V.ElementProperty
   }
 
 class HasTypeProperty el where
-  htpGetType :: el -> ClientM T.Text
-  htpSetType :: el -> T.Text -> ClientM ()
+  htpGetType :: el -> ClientM JSString
+  htpSetType :: el -> JSString -> ClientM ()
 
 instance HasTypeProperty DOM.HTMLInputElement where
   htpGetType = DOM.Input.getType
@@ -481,7 +482,7 @@ instance HasTypeProperty DOM.HTMLButtonElement where
   htpGetType = DOM.Button.getType
   htpSetType = DOM.Button.setType
 
-type_ :: (HasTypeProperty el) => T.Text -> NamedElementProperty el
+type_ :: (HasTypeProperty el) => JSString -> NamedElementProperty el
 type_ txt = NamedElementProperty "type" $ V.ElementProperty
   { V.eaGetProperty = htpGetType
   , V.eaSetProperty = htpSetType
@@ -489,14 +490,14 @@ type_ txt = NamedElementProperty "type" $ V.ElementProperty
   }
 
 class HasHrefProperty el where
-  htpGetHref :: el -> ClientM T.Text
-  htpSetHref :: el -> T.Text -> ClientM ()
+  htpGetHref :: el -> ClientM JSString
+  htpSetHref :: el -> JSString -> ClientM ()
 
 instance HasHrefProperty DOM.HTMLAnchorElement where
   htpGetHref = DOM.HyperlinkElementUtils.getHref
   htpSetHref = DOM.HyperlinkElementUtils.setHref
 
-href_ :: (HasHrefProperty el) => T.Text -> NamedElementProperty el
+href_ :: (HasHrefProperty el) => JSString -> NamedElementProperty el
 href_ txt = NamedElementProperty "href" $ V.ElementProperty
   { V.eaGetProperty = htpGetHref
   , V.eaSetProperty = htpSetHref
@@ -504,8 +505,8 @@ href_ txt = NamedElementProperty "href" $ V.ElementProperty
   }
 
 class HasValueProperty el where
-  hvpGetValue :: el -> ClientM T.Text
-  hvpSetValue :: el -> T.Text -> ClientM ()
+  hvpGetValue :: el -> ClientM JSString
+  hvpSetValue :: el -> JSString -> ClientM ()
 
 instance HasValueProperty DOM.HTMLInputElement where
   hvpGetValue = DOM.Input.getValue
@@ -515,7 +516,7 @@ instance HasValueProperty DOM.HTMLOptionElement where
   hvpGetValue = DOM.Option.getValue
   hvpSetValue = DOM.Option.setValue
 
-value_ :: (HasValueProperty el) => T.Text -> NamedElementProperty el
+value_ :: (HasValueProperty el) => JSString -> NamedElementProperty el
 value_ txt = NamedElementProperty "value" $ V.ElementProperty
   { V.eaGetProperty = hvpGetValue
   , V.eaSetProperty = hvpSetValue

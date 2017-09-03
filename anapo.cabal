@@ -22,18 +22,17 @@ library
     Anapo.Component
     Anapo.Loop
     Anapo.Render
+    Anapo.Orphans
   build-depends:
     base >= 4.7 && < 5,
-    unordered-containers,
-    text,
-    lens,
-    ghcjs-dom,
-    containers,
-    mtl,
     dlist,
+    ghcjs-base,
+    ghcjs-dom,
+    hashable,
+    lens,
+    mtl,
     time,
-    stm,
-    ghcjs-base
+    unordered-containers
   default-language: Haskell2010
   ghc-options: -Wall
   default-extensions:

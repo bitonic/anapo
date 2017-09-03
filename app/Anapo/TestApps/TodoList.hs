@@ -6,11 +6,11 @@ module Anapo.TestApps.TodoList
   ) where
 
 import Control.Lens (makeLenses, over, (^.), set, ix)
-import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import Control.Monad (forM_, when)
 import Data.List (partition)
 import Data.Monoid ((<>))
+import Data.JSString (JSString)
 
 import qualified GHCJS.DOM.Event as DOM
 
@@ -19,7 +19,7 @@ import Anapo.TestApps.Prelude
 
 data TodoItemState = TodoItemState
   { _tisCompleted :: Bool
-  , _tisBody :: T.Text
+  , _tisBody :: JSString
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
@@ -39,7 +39,7 @@ todoItemNode = do
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
   , _tsTodoElements :: Map.Map Int TodoItemState
-  , _tsCurrentText :: T.Text
+  , _tsCurrentText :: JSString
   } deriving (Eq, Show)
 makeLenses ''TodoState
 
@@ -59,7 +59,7 @@ todoComponent = do
                 else fst (Map.findMax (st' ^. tsTodoElements)) + 1
               in set tsCurrentText "" (over tsTodoElements (Map.insert itemKey newTodoItem) st')
             else st')
-        ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1))
+        ("Add #" <> jsshow (Map.size (st ^. tsTodoElements) + 1))
     -- toggle completed tasks
     n$ div_ (class_ "col") $ do
       n$ a_
@@ -76,7 +76,7 @@ todoComponent = do
   let renderItems items =
         n$ div_ (class_ "list-group mx-1 my-2") $ forM_ items $ \(itemKey, itemState) ->
           zoom_ itemState (tsTodoElements . ix itemKey) $
-            key (tshow itemKey) todoItemNode
+            key (jsshow itemKey) todoItemNode
   bootstrapRow $ do
     bootstrapCol $ do
       n$ h2_ (class_ "mx-1 my-2") (n$ "Things to do")

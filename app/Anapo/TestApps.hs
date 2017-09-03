@@ -54,7 +54,7 @@ testAppsComponent = do
                 then tasTimer timerStop st'
                 else return st'
               return (set tasWhich app st''))
-          (n$ text (tshow app))
+          (n$ text (jsshow app))
     bootstrapCol $ zoom' tasStopTimerOnAppChange $
       n$ div_ (class_ "form-check") $
         n$ label_ (class_ "form-check-label") $ do

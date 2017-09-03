@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Anapo.TestApps.SlowRequest where
 
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
@@ -13,6 +12,9 @@ import Control.Concurrent.Async (Async, async)
 import Control.Exception.Safe (try)
 import Data.Monoid ((<>))
 import Data.Foldable (for_)
+import Data.JSString (JSString)
+import Data.JSString.Text (textToJSString)
+import Data.Text (Text)
 
 import Anapo
 import Anapo.TestApps.Prelude
@@ -30,7 +32,7 @@ Aeson.deriveJSON (aesonRecord "post") ''Post
 data SlowRequestState =
     SRSNotLoaded
   | SRSLoading (Async ())
-  | SRSError Text
+  | SRSError JSString
   | SRSLoaded Posts
 
 slowRequestInit :: ClientM SlowRequestState
@@ -53,14 +55,14 @@ slowRequestComponent = do
           , XHR.reqData = XHR.NoData
           }
         dispatch $ \_ -> case mbResp of
-          Left err -> SRSError (tshow err)
+          Left err -> SRSError (jsshow err)
           Right resp -> do
             if XHR.status resp /= 200
-              then SRSError ("Bad status " <> tshow (XHR.status resp))
+              then SRSError ("Bad status " <> jsshow (XHR.status resp))
               else case XHR.contents resp of
                 Nothing -> SRSError "No contents"
                 Just bytes -> case Aeson.eitherDecode (BSL.fromStrict bytes) of
-                  Left err -> SRSError ("Could not decode: " <> T.pack err)
+                  Left err -> SRSError ("Could not decode: " <> jsshow err)
                   Right posts -> SRSLoaded posts
       return (SRSLoading reqAsync)
   n$ button_
@@ -89,8 +91,8 @@ slowRequestComponent = do
     SRSError err -> n$ div_ (class_ "alert alert-danger") (n$ text err)
     SRSLoaded posts ->
       n$ ul_ (class_ "list-group mt-2") $ for_ posts $ \Post{..} ->
-        key (tshow postId) $ li_
+        key (jsshow postId) $ li_
           (class_ "list-group-item list-group-item-action flex-column align-items-start")
           (do
-            n$ h5_ (class_ "mb-1") (n$ text postTitle)
-            n$ p_ (class_ "mb-1") (n$ text postBody))
+            n$ h5_ (class_ "mb-1") (n$ text (textToJSString postTitle))
+            n$ p_ (class_ "mb-1") (n$ text (textToJSString postBody)))
