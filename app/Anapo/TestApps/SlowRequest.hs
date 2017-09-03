@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Anapo.TestApps.SlowRequest where
 
-import qualified Data.Text as T
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Vector as V

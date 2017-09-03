@@ -84,6 +84,7 @@ module Anapo.Component
   , checked_
   , HasDisabledProperty(..)
   , disabled_
+  , rawProperty_
 
     -- * events
   , onclick_
@@ -112,6 +113,8 @@ import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 import GHC.Stack (HasCallStack)
 import Data.JSString (JSString)
 import qualified Data.JSString as JSS
+import GHCJS.Types (JSVal)
+import Data.Coerce
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -558,6 +561,23 @@ disabled_ b = NamedElementProperty "disabled" $ V.ElementProperty
   { V.eaGetProperty = hdpGetDisabled
   , V.eaSetProperty = hdpSetDisabled
   , V.eaValue = b
+  }
+
+foreign import javascript unsafe
+  "$2[$1]"
+  js_getProperty :: JSString -> JSVal -> IO JSVal
+
+foreign import javascript unsafe
+  "$2[$1] = $3"
+  js_setProperty :: JSString -> JSVal -> JSVal -> IO ()
+
+rawProperty_ :: (DOM.ToJSVal el, Coercible a JSVal) => JSString -> a -> NamedElementProperty el
+rawProperty_ k x = NamedElementProperty k $ V.ElementProperty
+  { V.eaGetProperty = \el_ -> js_getProperty k =<< DOM.toJSVal el_
+  , V.eaSetProperty = \el_ y -> do
+      el' <- DOM.toJSVal el_
+      js_setProperty (coerce k) el' y
+  , V.eaValue = coerce x
   }
 
 -- Events

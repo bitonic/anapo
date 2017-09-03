@@ -23,6 +23,7 @@ library
     Anapo.Loop
     Anapo.Render
     Anapo.Orphans
+    Anapo.Utils
   build-depends:
     base >= 4.7 && < 5,
     dlist,
@@ -74,7 +75,8 @@ executable test-app
     aeson,
     vector,
     bytestring,
-    safe-exceptions
+    safe-exceptions,
+    hashable
   other-modules:
     Anapo.TestApps
     Anapo.TestApps.Prelude

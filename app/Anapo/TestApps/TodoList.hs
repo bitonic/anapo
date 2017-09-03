@@ -50,7 +50,7 @@ todoComponent = do
   n$ div_ (class_ "row align-items-center") $ do
     n$ div_ (class_ "col-md-auto") $ do
       -- submit new item
-      zoom' tsCurrentText $ simpleTextInput
+      zoom' tsCurrentText $ simpleTextInput "todo item"
         (dispatch $ \st' -> if st' ^. tsCurrentText /= ""
             then let
               newTodoItem = TodoItemState False (st' ^. tsCurrentText)

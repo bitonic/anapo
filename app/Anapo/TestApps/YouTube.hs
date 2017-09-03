@@ -177,7 +177,7 @@ youTubeComponent = do
       Nothing -> Rerender)
     (static youTubeNode)
   dispatchM <- askDispatchM
-  bootstrapRow $ bootstrapCol $ zoom' ytsVideoId $ simpleTextInput
+  bootstrapRow $ bootstrapCol $ zoom' ytsVideoId $ simpleTextInput "video id"
     (dispatchM (\st' -> youTubeInit (st'^.ytsVideoId)))
     "Choose video"
 

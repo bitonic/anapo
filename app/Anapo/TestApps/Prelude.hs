@@ -19,6 +19,7 @@ import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
 
 import Anapo
+import Anapo.Utils
 
 #if !defined(ghcjs_HOST_OS)
 import Language.Javascript.JSaddle.Monad (JSM(..))
@@ -61,12 +62,14 @@ booleanCheckbox = do
       dispatch (const checked))
 
 simpleTextInput ::
-     ClientM ()
+     JSString
+  -- ^ the label for the input
+  -> ClientM ()
   -- ^ what to do when the new text is submitted
   -> JSString
   -- ^ what to show in the button
   -> Component' JSString
-simpleTextInput cback buttonTxt = do
+simpleTextInput lbl cback buttonTxt = do
   currentTxt <- askState
   dispatch <- askDispatch
   n$ form_
@@ -75,11 +78,11 @@ simpleTextInput cback buttonTxt = do
       DOM.preventDefault ev
       cback)
     (do
-      -- TODO should put label
       n$ input_
         (type_ "text")
         (class_ "form-control mb-2 mr-sm-2 mb-sm-0")
         (value_ currentTxt)
+        (rawProperty_ "aria-label" (jsStringToJSVal lbl))
         (oninput_ $ \inp _ -> do
           txt <- DOM.getValue inp
           dispatch (const txt))
