@@ -4,5 +4,4 @@ set -eux -o pipefail
 stack --stack-yaml stack-ghcjs.yaml build anapo:test-app
 dist_dir=$(stack --stack-yaml stack-ghcjs.yaml path --dist-dir)
 bin_dir="$dist_dir/build/test-app/test-app.jsexe"
-cp "test-app.html" "$bin_dir/index.html"
-(cd "$bin_dir" && python -c 'import BaseHTTPServer as bhs, SimpleHTTPServer as shs; bhs.HTTPServer(("127.0.0.1", 8000), shs.SimpleHTTPRequestHandler).serve_forever()')
+./serve-test-app.hs "$bin_dir" "test-app.html"
