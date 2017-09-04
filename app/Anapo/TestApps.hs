@@ -56,7 +56,7 @@ allTestApps :: [WhichTestApp]
 allTestApps = [minBound..maxBound]
 
 data TestAppsState = TestAppsState
-  { _tasWhich :: WhichTestApp
+  { _tasApp :: WhichTestApp
   , _tasFirstApp :: WhichTestApp
   , _tasTodo :: TodoState
   , _tasTimer :: TimerState
@@ -81,7 +81,7 @@ changeToApp pushHistory dispatchM mbApp =
     st'' <- if st'^.tasStopTimerOnAppChange && app /= Timer
       then tasTimer timerStop st'
       else return st'
-    return (set tasWhich app st'')
+    return (set tasApp app st'')
 
 testAppsComponent :: Component' TestAppsStateOrError
 testAppsComponent = do
@@ -93,7 +93,7 @@ testAppsComponent = do
       n$ div_ (class_ "row m-2 align-items-center") $ do
         n$ div_ (class_ "col col-md-auto") $ do
           n$ ul_ (class_ "nav nav-pills") $ forM_ allTestApps $ \app -> do
-            let aClass = if app == st^.tasWhich
+            let aClass = if app == st^.tasApp
                   then "nav-link active"
                   else "nav-link"
             n$ li_ (class_ "nav-item") $ n$ a_
@@ -108,7 +108,7 @@ testAppsComponent = do
             n$ label_ (class_ "form-check-label") $ do
               n$ booleanCheckbox
               n$ "Stop timer app when changing app"
-      n$ div_ (class_ "row m-2") $ bootstrapCol $ case st^.tasWhich of
+      n$ div_ (class_ "row m-2") $ bootstrapCol $ case st^.tasApp of
         Blank -> return ()
         Todo -> zoom' tasTodo todoComponent
         Timer -> zoom' tasTimer timerComponent
