@@ -14,30 +14,12 @@ import Data.List (isPrefixOf)
 import Data.Char (toLower)
 import qualified Data.JSString as JSS
 import Data.JSString (JSString)
+import GHCJS.Types (jsval)
 
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
 
 import Anapo
-import Anapo.Utils
-
-#if !defined(ghcjs_HOST_OS)
-import Language.Javascript.JSaddle.Monad (JSM(..))
-import Control.Monad.Base (MonadBase(..))
-import Control.Monad.Trans.Control (MonadBaseControl(..))
-import Control.Monad.Reader (ask, runReaderT)
-
-deriving instance MonadBase IO JSM
-
-instance MonadBaseControl IO JSM where
-  type StM JSM a = a
-  {-# INLINE liftBaseWith #-}
-  liftBaseWith cont = do
-    x <- JSM ask
-    liftIO (cont (\(JSM m) -> runReaderT m x))
-  {-# INLINE restoreM #-}
-  restoreM = return
-#endif
 
 jsshow :: (Show a) => a -> JSString
 jsshow = JSS.pack . show
@@ -82,7 +64,7 @@ simpleTextInput lbl cback buttonTxt = do
         (type_ "text")
         (class_ "form-control mb-2 mr-sm-2 mb-sm-0")
         (value_ currentTxt)
-        (rawProperty_ "aria-label" (jsStringToJSVal lbl))
+        (rawProperty_ "aria-label" (jsval lbl))
         (oninput_ $ \inp _ -> do
           txt <- DOM.getValue inp
           dispatch (const txt))

@@ -10,8 +10,8 @@ main :: IO ()
 main = runClientM $ do
   youTubeSetup
   (dispatch, getStateUpdate) <- withDispatch
-  st <- testAppsInit
-  installComponentBootstrap
-    RenderOptions{roAlwaysRerender = False, roDebugOutput = True}
-    dispatch getStateUpdate
-    st testAppsComponent
+  testAppsWith dispatch $ \st -> do
+    installComponentBootstrap
+      RenderOptions{roAlwaysRerender = False, roDebugOutput = True}
+      dispatch getStateUpdate
+      st testAppsComponent
