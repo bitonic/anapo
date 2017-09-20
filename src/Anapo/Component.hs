@@ -55,6 +55,7 @@ module Anapo.Component
   , UnsafeRawHtml(..)
 
     -- * elements
+  , el
   , div_
   , span_
   , a_
