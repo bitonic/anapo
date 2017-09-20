@@ -72,6 +72,7 @@ module Anapo.Component
   , label_
 
     -- * attributes
+  , NamedElementProperty(..)
   , class_
   , id_
   , HasTypeProperty(..)
