@@ -462,7 +462,7 @@ label_ = el "label" DOM.HTMLLabelElement
 -- --------------------------------------------------------------------
 
 class_ :: (DOM.IsElement el) => JSString -> NamedElementProperty el
-class_ txt = NamedElementProperty "id" $ V.ElementProperty
+class_ txt = NamedElementProperty "class" $ V.ElementProperty
   { V.eaGetProperty = DOM.getClassName
   , V.eaSetProperty = DOM.setClassName
   , V.eaValue = txt
