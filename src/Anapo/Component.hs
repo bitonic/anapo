@@ -159,14 +159,14 @@ type Dispatch state = (state -> state) -> ClientM ()
 newtype ComponentM dom read write a = ComponentM
   { unComponentM :: forall out.
          ((write -> ClientM write) -> out -> ClientM out)
-      -- ^ how to modify the outside state given a modification to the
+      -- how to modify the outside state given a modification to the
       -- inside state
       -> DispatchM out
-      -- ^ how to dispatch updates to the state
+      -- how to dispatch updates to the state
       -> Maybe write
-      -- ^ the previous state
+      -- the previous state
       -> read
-      -- ^ the current state
+      -- the current state
       -> ClientM (dom, a)
   }
 
