@@ -174,11 +174,11 @@ runDispatch disp st = disp (return . execState st)
 newtype ComponentM dom read write a = ComponentM
   { unComponentM ::
          Dispatch write
-      -- ^ how to dispatch updates to the state
+      -- how to dispatch updates to the state
       -> Maybe write
-      -- ^ the previous state
+      -- the previous state
       -> read
-      -- ^ the current state
+      -- the current state
       -> ClientM (dom, a)
   }
 
