@@ -170,14 +170,14 @@ youTubeNode = do
 youTubeComponent :: Component' YouTubeState
 youTubeComponent = do
   n$ marked
-    (\trav prevSt st -> case toMaybeOf (trav . ytsToken) prevSt of
-      Just tok -> if tok == st^.ytsToken
+    (\mbPrevSt st -> case mbPrevSt of
+      Just prevSt -> if prevSt^.ytsToken == st^.ytsToken
         then UnsafeDontRerender
         else Rerender
       Nothing -> Rerender)
     (static youTubeNode)
   dispatchM <- askDispatchM
-  bootstrapRow $ bootstrapCol $ zoom' ytsVideoId $ simpleTextInput "video id"
+  bootstrapRow $ bootstrapCol $ zoomL ytsVideoId $ simpleTextInput "video id"
     (dispatchM (\st' -> youTubeInit (st'^.ytsVideoId)))
     "Choose video"
 

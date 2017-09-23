@@ -50,7 +50,7 @@ todoComponent = do
   n$ div_ (class_ "row align-items-center") $ do
     n$ div_ (class_ "col-md-auto") $ do
       -- submit new item
-      zoom' tsCurrentText $ simpleTextInput "todo item"
+      zoomL tsCurrentText $ simpleTextInput "todo item"
         (dispatch $ \st' -> if st' ^. tsCurrentText /= ""
             then let
               newTodoItem = TodoItemState False (st' ^. tsCurrentText)
@@ -75,7 +75,7 @@ todoComponent = do
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =
         n$ div_ (class_ "list-group mx-1 my-2") $ forM_ items $ \(itemKey, itemState) ->
-          zoom_ itemState (tsTodoElements . ix itemKey) $
+          zoomT itemState (tsTodoElements . ix itemKey) $
             key (jsshow itemKey) todoItemNode
   bootstrapRow $ do
     bootstrapCol $ do

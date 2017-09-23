@@ -32,8 +32,8 @@ module Anapo.Component
   , askState
   , askPreviousState
   , zoom
-  , zoom'
-  , zoom_
+  , zoomL
+  , zoomT
 
     -- * basic combinators
   , n
@@ -105,7 +105,7 @@ module Anapo.Component
   ) where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Lens (Lens', view, _Just)
+import Control.Lens (Lens', view)
 import qualified Control.Lens as Lens
 import Control.Monad (ap, void)
 import Data.Monoid ((<>), Endo)
@@ -157,7 +157,18 @@ type DispatchM state = (state -> ClientM state) -> ClientM ()
 type Dispatch state = (state -> state) -> ClientM ()
 
 newtype ComponentM dom read write a = ComponentM
-  { unComponentM :: forall out. AffineTraversal' out write -> DispatchM out -> Maybe out -> read -> ClientM (dom, a) }
+  { unComponentM :: forall out.
+         ((write -> ClientM write) -> out -> ClientM out)
+      -- ^ how to modify the outside state given a modification to the
+      -- inside state
+      -> DispatchM out
+      -- ^ how to dispatch updates to the state
+      -> Maybe write
+      -- ^ the previous state
+      -> read
+      -- ^ the current state
+      -> ClientM (dom, a)
+  }
 
 type ComponentM' dom state = ComponentM dom state state
 type Component' state = ComponentM V.Dom state state ()
@@ -180,8 +191,8 @@ runComponent vdom d mbst st = fst <$> unComponentM vdom id d mbst st
 
 instance Functor (ComponentM dom read write) where
   {-# INLINE fmap #-}
-  fmap f (ComponentM g) = ComponentM $ \l d mbst st -> do
-    (dom, x) <- g l d mbst st
+  fmap f (ComponentM g) = ComponentM $ \write d mbst st -> do
+    (dom, x) <- g write d mbst st
     return (dom, f x)
 
 instance (Monoid dom) => Applicative (ComponentM dom read write) where
@@ -192,68 +203,68 @@ instance (Monoid dom) => Applicative (ComponentM dom read write) where
 
 instance (Monoid dom) => Monad (ComponentM dom read write) where
   {-# INLINE return #-}
-  return x = ComponentM (\_l _d _mbst _st -> return (mempty, x))
+  return x = ComponentM (\_write _d _mbst _st -> return (mempty, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = ComponentM $ \l d mbst st -> do
-    (vdom1, x) <- unComponentM ma l d mbst st
-    (vdom2, y) <- unComponentM (mf x) l d mbst st
+  ma >>= mf = ComponentM $ \write d mbst st -> do
+    (vdom1, x) <- unComponentM ma write d mbst st
+    (vdom2, y) <- unComponentM (mf x) write d mbst st
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
 {-# INLINE unsafeLiftClientM #-}
 unsafeLiftClientM :: Monoid dom => ClientM a -> ComponentM dom read write a
-unsafeLiftClientM m = ComponentM $ \_l _d _mbst _st -> do
+unsafeLiftClientM m = ComponentM $ \_write _d _mbst _st -> do
   x <- m
   return (mempty, x)
 
 {-# INLINE askDispatchM #-}
 askDispatchM :: (Monoid dom) => ComponentM dom read write (DispatchM write)
-askDispatchM = ComponentM $ \lst d _mbst _st -> return
+askDispatchM = ComponentM $ \write d _mbst _st -> return
   ( mempty
-  , \modifySt -> d (lst modifySt)
+  , \modifySt -> d (write modifySt)
   )
 
 {-# INLINE askDispatch #-}
 askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch write)
-askDispatch = ComponentM $ \lst d _mbst _st -> return
+askDispatch = ComponentM $ \write d _mbst _st -> return
   ( mempty
-  , \modifySt -> d (lst (return . modifySt))
+  , \modifySt -> d (write (return . modifySt))
   )
 
 {-# INLINE askState #-}
 askState :: (Monoid dom) => ComponentM dom read write read
-askState = ComponentM (\_lst _d _mbst st -> return (mempty, st))
+askState = ComponentM (\_write _d _mbst st -> return (mempty, st))
 
 {-# INLINE askPreviousState #-}
 askPreviousState ::
      (Monoid dom)
-  => (forall out. AffineTraversal' out write -> out -> ComponentM dom read write a)
-  -> ComponentM dom read write a
-askPreviousState cont = ComponentM $ \lst d mbst st ->
-  unComponentM (cont (_Just . lst) mbst) lst d mbst st
-
-{-# INLINE zoom' #-}
-zoom' :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
-zoom' l' dom = ComponentM $ \l d mbst st ->
-  unComponentM dom (l . l') d mbst (view l' st)
+  => ComponentM dom read write (Maybe write)
+askPreviousState = ComponentM (\_write _d mbst _st -> return (mempty, mbst))
 
 {-# INLINE zoom #-}
 zoom ::
-     (readOut -> readIn)
-  -> AffineTraversal' writeOut writeIn
-  -> ComponentM dom readIn writeIn a
-  -> ComponentM dom readOut writeOut a
-zoom f l' dom = ComponentM $ \l d mbst st ->
-  unComponentM dom (l . l') d mbst (f st)
-
-{-# INLINE zoom_ #-}
-zoom_ ::
      readIn
-  -> AffineTraversal' writeOut writeIn
+  -> (writeOut -> Maybe writeIn)
+  -> ((writeIn -> ClientM writeIn) -> writeOut -> ClientM writeOut)
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
-zoom_ x l' dom = ComponentM $ \l d mbst _st ->
-  unComponentM dom (l . l') d mbst x
+zoom st' get write' dom = ComponentM $ \write d mbst _st ->
+  unComponentM dom (write . write') d (mbst >>= get) st'
+
+{-# INLINE zoomL #-}
+zoomL :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
+zoomL l dom = ComponentM $ \write d mbst st ->
+  unComponentM dom (write . l) d (view l <$> mbst) (view l st)
+
+{-# INLINE zoomT #-}
+zoomT ::
+     HasCallStack
+  => readIn
+  -> AffineTraversal' writeOut writeIn
+  -- ^ note: if the traversal is not affine you'll get crashes.
+  -> ComponentM dom readIn writeIn a
+  -> ComponentM dom readOut writeOut a
+zoomT st l = zoom st (toMaybeOf l) l
 
 -- Type class machinery
 -- --------------------------------------------------------------------
@@ -358,11 +369,11 @@ unsafeWillRemove f nod = nod
 
 {-# INLINE marked #-}
 marked ::
-     (forall out. AffineTraversal' out write -> out -> read -> V.Rerender)
+     (Maybe write -> read -> V.Rerender)
   -> StaticPtr (Node el read write) -> Node el read write
 marked shouldRerender ptr = ComponentM $ \l d mbst st -> do
   let !fprint = staticKey ptr
-  let !rer = shouldRerender (_Just . l) mbst st
+  let !rer = shouldRerender mbst st
   (_, nod) <- unComponentM (deRefStaticPtr ptr) l d mbst st
   return ((), nod{ V.nodeMark = Just (V.Mark fprint rer) })
 

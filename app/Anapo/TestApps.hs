@@ -88,7 +88,7 @@ testAppsComponent = do
   stoe <- askState
   case stoe of
     TASOEError err -> n$ div_ (class_ "m-2 alert alert-danger") (n$ text err)
-    TASOEOk st -> zoom (const st) _TASOEOk $ do
+    TASOEOk st -> zoomT st _TASOEOk $ do
       dispatchM <- askDispatchM
       n$ div_ (class_ "row m-2 align-items-center") $ do
         n$ div_ (class_ "col col-md-auto") $ do
@@ -103,17 +103,17 @@ testAppsComponent = do
                 DOM.preventDefault ev
                 changeToApp True dispatchM (Just app))
               (n$ text (jsshow app))
-        bootstrapCol $ zoom' tasStopTimerOnAppChange $
+        bootstrapCol $ zoomL tasStopTimerOnAppChange $
           n$ div_ (class_ "form-check") $
             n$ label_ (class_ "form-check-label") $ do
               n$ booleanCheckbox
               n$ "Stop timer app when changing app"
       n$ div_ (class_ "row m-2") $ bootstrapCol $ case st^.tasApp of
         Blank -> return ()
-        Todo -> zoom' tasTodo todoComponent
-        Timer -> zoom' tasTimer timerComponent
-        YouTube -> zoom' tasYouTube youTubeComponent
-        SlowRequest -> zoom' tasSlowRequest slowRequestComponent
+        Todo -> zoomL tasTodo todoComponent
+        Timer -> zoomL tasTimer timerComponent
+        YouTube -> zoomL tasYouTube youTubeComponent
+        SlowRequest -> zoomL tasSlowRequest slowRequestComponent
 
 testAppsWith :: DispatchM TestAppsStateOrError -> (TestAppsStateOrError -> ClientM ()) -> ClientM ()
 testAppsWith dispatch cont = do
