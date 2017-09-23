@@ -16,7 +16,7 @@ import Anapo.Component
 import Anapo.Render
 import Anapo.ClientM
 
-withDispatch :: ClientM (DispatchM state, ClientM (Maybe (state -> ClientM state)))
+withDispatch :: ClientM (Dispatch state, ClientM (Maybe (state -> ClientM state)))
 withDispatch = do
   toDispatch :: Chan (state -> ClientM state) <- liftIO newChan
   let
@@ -30,7 +30,7 @@ withDispatch = do
   return (liftIO . writeChan toDispatch, get)
 
 componentLoop :: forall state acc.
-     DispatchM state
+     Dispatch state
   -> ClientM (Maybe (state -> ClientM state))
   -> state
   -> Component' state
@@ -57,7 +57,7 @@ componentLoop dispatch getStateUpdate !st0 vdom !acc0 useDom = do
 
 installComponentBody ::
      RenderOptions
-  -> DispatchM state
+  -> Dispatch state
   -> ClientM (Maybe (state -> ClientM state))
   -> state
   -> Component' state
@@ -72,7 +72,7 @@ installComponentBody ro dispatch getStateUpdate st0 vdom0 = do
 
 installComponentBootstrap ::
      RenderOptions
-  -> DispatchM state
+  -> Dispatch state
   -> ClientM (Maybe (state -> ClientM state))
   -> state
   -> Component' state

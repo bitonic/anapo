@@ -5,7 +5,7 @@ module Anapo.TestApps.TodoList
   , todoInit
   ) where
 
-import Control.Lens (makeLenses, over, (^.), set, ix)
+import Control.Lens (makeLenses, over, (^.), set, ix, (%=))
 import qualified Data.Map.Strict as Map
 import Control.Monad (forM_, when)
 import Data.List (partition)
@@ -33,7 +33,7 @@ todoItemNode = do
   a_
     (href_ "#")
     (class_ aClass)
-    (onclick_ $ \_ ev -> DOM.preventDefault ev >> dispatch (over tisCompleted not))
+    (onclick_ $ \_ ev -> DOM.preventDefault ev >> runDispatch dispatch (tisCompleted %= not))
     (n$ text (st^.tisBody))
 
 data TodoState = TodoState
@@ -51,7 +51,7 @@ todoComponent = do
     n$ div_ (class_ "col-md-auto") $ do
       -- submit new item
       zoomL tsCurrentText $ simpleTextInput "todo item"
-        (dispatch $ \st' -> if st' ^. tsCurrentText /= ""
+        (dispatch $ \st' -> return $ if st' ^. tsCurrentText /= ""
             then let
               newTodoItem = TodoItemState False (st' ^. tsCurrentText)
               itemKey = if Map.null (st' ^. tsTodoElements)
@@ -67,7 +67,7 @@ todoComponent = do
         (class_ "btn btn-primary")
         (onclick_ $ \_ ev -> do
           DOM.preventDefault ev
-          dispatch (over tsShowCompleted not))
+          runDispatch dispatch (tsShowCompleted %= not))
         (n$ if st^.tsShowCompleted
           then "Hide completed tasks"
           else "Show completed tasks")

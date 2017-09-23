@@ -33,7 +33,8 @@ library
     hashable,
     lens,
     time,
-    unordered-containers
+    unordered-containers,
+    transformers
   default-language: Haskell2010
   ghc-options: -Wall
   default-extensions:

@@ -41,7 +41,7 @@ booleanCheckbox = do
     (onchange_ $ \el ev -> do
       DOM.preventDefault ev
       checked <- DOM.getChecked el
-      dispatch (const checked))
+      runDispatch dispatch (put checked))
 
 simpleTextInput ::
      JSString
@@ -67,7 +67,7 @@ simpleTextInput lbl cback buttonTxt = do
         (rawProperty_ "aria-label" (jsval lbl))
         (oninput_ $ \inp _ -> do
           txt <- DOM.getValue inp
-          dispatch (const txt))
+          runDispatch dispatch (put txt))
       n$ button_
         (type_ "submit")
         (class_ "btn btn-primary")

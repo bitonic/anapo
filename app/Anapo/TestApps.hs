@@ -71,7 +71,7 @@ data TestAppsStateOrError =
   | TASOEOk TestAppsState
 makePrisms ''TestAppsStateOrError
 
-changeToApp :: Bool -> DispatchM TestAppsState -> Maybe WhichTestApp -> ClientM ()
+changeToApp :: Bool -> Dispatch TestAppsState -> Maybe WhichTestApp -> ClientM ()
 changeToApp pushHistory dispatchM mbApp =
   dispatchM $ \st' -> do
     let app = fromMaybe (st'^.tasFirstApp) mbApp
@@ -89,7 +89,7 @@ testAppsComponent = do
   case stoe of
     TASOEError err -> n$ div_ (class_ "m-2 alert alert-danger") (n$ text err)
     TASOEOk st -> zoomT st _TASOEOk $ do
-      dispatchM <- askDispatchM
+      dispatch <- askDispatch
       n$ div_ (class_ "row m-2 align-items-center") $ do
         n$ div_ (class_ "col col-md-auto") $ do
           n$ ul_ (class_ "nav nav-pills") $ forM_ allTestApps $ \app -> do
@@ -101,7 +101,7 @@ testAppsComponent = do
               (href_ (testAppToPath app))
               (onclick_ $ \_ ev -> do
                 DOM.preventDefault ev
-                changeToApp True dispatchM (Just app))
+                changeToApp True dispatch (Just app))
               (n$ text (jsshow app))
         bootstrapCol $ zoomL tasStopTimerOnAppChange $
           n$ div_ (class_ "form-check") $
@@ -115,7 +115,7 @@ testAppsComponent = do
         YouTube -> zoomL tasYouTube youTubeComponent
         SlowRequest -> zoomL tasSlowRequest slowRequestComponent
 
-testAppsWith :: DispatchM TestAppsStateOrError -> (TestAppsStateOrError -> ClientM ()) -> ClientM ()
+testAppsWith :: Dispatch TestAppsStateOrError -> (TestAppsStateOrError -> ClientM ()) -> ClientM ()
 testAppsWith dispatch cont = do
   path <- DOM.getPathname =<< DOM.getLocation =<< DOM.currentWindowUnchecked
   case testAppFromPath path of

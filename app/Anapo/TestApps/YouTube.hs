@@ -3,7 +3,7 @@
 {-# LANGUAGE MultiWayIf #-}
 module Anapo.TestApps.YouTube (YouTubeState, youTubeComponent, youTubeInit, youTubeSetup) where
 
-import Control.Lens (makeLenses, (^.), set)
+import Control.Lens (makeLenses, (^.), set, (.=))
 import Data.IORef
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Concurrent.MVar
@@ -156,7 +156,7 @@ youTubeNode = do
         Nothing -> return ()
         Just ytp -> do
           t <- youTubeGetCurrentTime ytp
-          dispatch (set ytsLastPosition (Just t))
+          runDispatch dispatch (ytsLastPosition .= Just t)
   container <- unsafeLiftClientM $ do
     doc <- DOM.currentDocumentUnchecked
     container <- DOM.unsafeCastTo DOM.Element =<< DOM.createElement doc ("div" :: JSString)
@@ -176,8 +176,8 @@ youTubeComponent = do
         else Rerender
       Nothing -> Rerender)
     (static youTubeNode)
-  dispatchM <- askDispatchM
+  dispatch <- askDispatch
   bootstrapRow $ bootstrapCol $ zoomL ytsVideoId $ simpleTextInput "video id"
-    (dispatchM (\st' -> youTubeInit (st'^.ytsVideoId)))
+    (dispatch (\st' -> youTubeInit (st'^.ytsVideoId)))
     "Choose video"
 

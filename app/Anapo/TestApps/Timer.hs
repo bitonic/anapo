@@ -38,7 +38,7 @@ timerComponent = do
           Running t0 t1 _ -> diffUTCTime t1 t0)
   n$ h2_ (class_ "mx-1") $
     n$ text (JSS.pack (printf "%0.2fs" (realToFrac timePassed :: Double)))
-  dispatch <- askDispatchM
+  dispatch <- askDispatch
   n$ button_
     (type_ "button")
     (class_ "mx-1 btn btn-primary")
@@ -71,7 +71,7 @@ timerStop st = case st ^. tsRunning of
       , _tsTimePassed = st ^. tsTimePassed + diffUTCTime t1 t0
       }
 
-timerToggle :: DispatchM TimerState -> ClientM ()
+timerToggle :: Dispatch TimerState -> ClientM ()
 timerToggle disp = disp $ \st -> case st ^. tsRunning of
   Stopped -> do
     t0 <- liftIO getCurrentTime
@@ -90,14 +90,14 @@ timerToggle disp = disp $ \st -> case st ^. tsRunning of
       , _tsTimePassed = st ^. tsTimePassed + diffUTCTime t1 t0
       }
 
-timerBump :: DispatchM TimerState -> ClientM ()
+timerBump :: Dispatch TimerState -> ClientM ()
 timerBump disp = disp $ \st -> case st ^. tsRunning of
   Stopped -> return st
   Running t0 _t1 timer -> do
     t1 <- liftIO getCurrentTime
     return (set tsRunning (Running t0 t1 timer) st)
 
-timerReset :: DispatchM TimerState -> ClientM ()
+timerReset :: Dispatch TimerState -> ClientM ()
 timerReset disp = disp $ \st -> case st ^. tsRunning of
   Stopped -> timerInit
   Running _t0 _t1 timer -> do

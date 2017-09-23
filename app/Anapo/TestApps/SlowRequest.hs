@@ -40,7 +40,6 @@ slowRequestInit = return SRSNotLoaded
 slowRequestComponent :: Component' SlowRequestState
 slowRequestComponent = do
   st <- askState
-  dispatchM <- askDispatchM
   dispatch <- askDispatch
   let
     startLoading = do
@@ -53,7 +52,7 @@ slowRequestComponent = do
           , XHR.reqWithCredentials = False
           , XHR.reqData = XHR.NoData
           }
-        dispatch $ \_ -> case mbResp of
+        dispatch $ \_ -> return $ case mbResp of
           Left err -> SRSError (jsshow err)
           Right resp -> do
             if XHR.status resp /= 200
@@ -74,7 +73,7 @@ slowRequestComponent = do
       SRSError{} -> False)
     (onclick_ $ \_ ev -> do
       preventDefault ev
-      dispatchM $ \case
+      dispatch $ \case
         SRSLoading asy -> return (SRSLoading asy)
         SRSError{} -> startLoading
         SRSNotLoaded{} -> startLoading

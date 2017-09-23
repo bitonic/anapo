@@ -14,9 +14,14 @@ module Anapo.Component
   , AffineTraversal'
   , toMaybeOf
 
-    -- * ComponentM
-  , DispatchM
+    -- * Dispatch
   , Dispatch
+  , runDispatchT
+  , runDispatch
+  , put
+  , get
+
+    -- * ComponentM
   , ComponentM
   , Component
   , Component'
@@ -28,7 +33,6 @@ module Anapo.Component
   , runComponent
   , unsafeLiftClientM
   , askDispatch
-  , askDispatchM
   , askState
   , askPreviousState
   , zoom
@@ -105,7 +109,7 @@ module Anapo.Component
   ) where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Lens (Lens', view)
+import Control.Lens (Lens', view, LensLike')
 import qualified Control.Lens as Lens
 import Control.Monad (ap, void)
 import Data.Monoid ((<>), Endo)
@@ -117,6 +121,7 @@ import Data.JSString (JSString)
 import qualified Data.JSString as JSS
 import GHCJS.Types (JSVal)
 import Data.Coerce
+import Control.Monad.Trans.State (execStateT, execState, StateT, State, put, get)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -150,23 +155,30 @@ toMaybeOf l x = case Lens.toListOf l x of
   [y] -> Just y
   _:_ -> error "toMaybeOf: multiple elements returned!"
 
+-- Dispatching
+-- --------------------------------------------------------------------
+
+type Dispatch state = (state -> ClientM state) -> ClientM ()
+
+{-# INLINE runDispatchT #-}
+runDispatchT :: Dispatch state -> StateT state ClientM () -> ClientM ()
+runDispatchT disp st = disp (execStateT st)
+
+{-# INLINE runDispatch #-}
+runDispatch :: Dispatch state -> State state () -> ClientM ()
+runDispatch disp st = disp (return . execState st)
+
 -- Monad
 -- --------------------------------------------------------------------
 
-type DispatchM state = (state -> ClientM state) -> ClientM ()
-type Dispatch state = (state -> state) -> ClientM ()
-
 newtype ComponentM dom read write a = ComponentM
-  { unComponentM :: forall out.
-         ((write -> ClientM write) -> out -> ClientM out)
-      -- how to modify the outside state given a modification to the
-      -- inside state
-      -> DispatchM out
-      -- how to dispatch updates to the state
+  { unComponentM ::
+         Dispatch write
+      -- ^ how to dispatch updates to the state
       -> Maybe write
-      -- the previous state
+      -- ^ the previous state
       -> read
-      -- the current state
+      -- ^ the current state
       -> ClientM (dom, a)
   }
 
@@ -179,20 +191,21 @@ type Node el read write = ComponentM () read write (V.Node el)
 type Node' el state = ComponentM () state state (V.Node el)
 
 instance (el ~ DOM.Text) => IsString (Node el read write) where
+  {-# INLINE fromString #-}
   fromString = text . JSS.pack
 
 {-# INLINE runComponentM #-}
-runComponentM :: ComponentM dom read write a -> DispatchM write -> Maybe write -> read -> ClientM (dom, a)
-runComponentM vdom = unComponentM vdom id
+runComponentM :: ComponentM dom read write a -> Dispatch write -> Maybe write -> read -> ClientM (dom, a)
+runComponentM vdom = unComponentM vdom
 
 {-# INLINE runComponent #-}
-runComponent :: Component read write -> DispatchM write -> Maybe write -> read -> ClientM V.Dom
-runComponent vdom d mbst st = fst <$> unComponentM vdom id d mbst st
+runComponent :: Component read write -> Dispatch write -> Maybe write -> read -> ClientM V.Dom
+runComponent vdom d mbst st = fst <$> unComponentM vdom d mbst st
 
 instance Functor (ComponentM dom read write) where
   {-# INLINE fmap #-}
-  fmap f (ComponentM g) = ComponentM $ \write d mbst st -> do
-    (dom, x) <- g write d mbst st
+  fmap f (ComponentM g) = ComponentM $ \d mbst st -> do
+    (dom, x) <- g d mbst st
     return (dom, f x)
 
 instance (Monoid dom) => Applicative (ComponentM dom read write) where
@@ -203,58 +216,48 @@ instance (Monoid dom) => Applicative (ComponentM dom read write) where
 
 instance (Monoid dom) => Monad (ComponentM dom read write) where
   {-# INLINE return #-}
-  return x = ComponentM (\_write _d _mbst _st -> return (mempty, x))
+  return x = ComponentM (\_d _mbst _st -> return (mempty, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = ComponentM $ \write d mbst st -> do
-    (vdom1, x) <- unComponentM ma write d mbst st
-    (vdom2, y) <- unComponentM (mf x) write d mbst st
+  ma >>= mf = ComponentM $ \d mbst st -> do
+    (vdom1, x) <- unComponentM ma d mbst st
+    (vdom2, y) <- unComponentM (mf x) d mbst st
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
 {-# INLINE unsafeLiftClientM #-}
 unsafeLiftClientM :: Monoid dom => ClientM a -> ComponentM dom read write a
-unsafeLiftClientM m = ComponentM $ \_write _d _mbst _st -> do
+unsafeLiftClientM m = ComponentM $ \_d _mbst _st -> do
   x <- m
   return (mempty, x)
 
-{-# INLINE askDispatchM #-}
-askDispatchM :: (Monoid dom) => ComponentM dom read write (DispatchM write)
-askDispatchM = ComponentM $ \write d _mbst _st -> return
-  ( mempty
-  , \modifySt -> d (write modifySt)
-  )
-
 {-# INLINE askDispatch #-}
 askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch write)
-askDispatch = ComponentM $ \write d _mbst _st -> return
-  ( mempty
-  , \modifySt -> d (write (return . modifySt))
-  )
+askDispatch = ComponentM (\d _mbst _st -> return (mempty, d))
 
 {-# INLINE askState #-}
 askState :: (Monoid dom) => ComponentM dom read write read
-askState = ComponentM (\_write _d _mbst st -> return (mempty, st))
+askState = ComponentM (\_d _mbst st -> return (mempty, st))
 
 {-# INLINE askPreviousState #-}
 askPreviousState ::
      (Monoid dom)
   => ComponentM dom read write (Maybe write)
-askPreviousState = ComponentM (\_write _d mbst _st -> return (mempty, mbst))
+askPreviousState = ComponentM (\_d mbst _st -> return (mempty, mbst))
 
 {-# INLINE zoom #-}
 zoom ::
      readIn
   -> (writeOut -> Maybe writeIn)
-  -> ((writeIn -> ClientM writeIn) -> writeOut -> ClientM writeOut)
+  -> LensLike' ClientM writeOut writeIn
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
-zoom st' get write' dom = ComponentM $ \write d mbst _st ->
-  unComponentM dom (write . write') d (mbst >>= get) st'
+zoom st' get write' dom = ComponentM $ \d mbst _st ->
+  unComponentM dom (d . write') (mbst >>= get) st'
 
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
-zoomL l dom = ComponentM $ \write d mbst st ->
-  unComponentM dom (write . l) d (view l <$> mbst) (view l st)
+zoomL l dom = ComponentM $ \d mbst st ->
+  unComponentM dom (d . l) (view l <$> mbst) (view l st)
 
 {-# INLINE zoomT #-}
 zoomT ::
@@ -299,14 +302,14 @@ instance (DOM.IsElement el) => ConstructElement el (Node el read write) where
 
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> do
-    (vdom, _) <- unComponentM dom l d mbst st
+  constructElement wrap tag attrs evts dom = ComponentM $ \d mbst st -> do
+    (vdom, _) <- unComponentM dom d mbst st
     return ((), constructElement_ wrap tag attrs evts (V.CNormal vdom))
 
 instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts dom = ComponentM $ \l d mbst st -> do
-    (vdom, _) <- unComponentM dom l d mbst st
+  constructElement wrap tag attrs evts dom = ComponentM $ \d mbst st -> do
+    (vdom, _) <- unComponentM dom d mbst st
     return ((), constructElement_ wrap tag attrs evts (V.CKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml JSString
@@ -371,10 +374,10 @@ unsafeWillRemove f nod = nod
 marked ::
      (Maybe write -> read -> V.Rerender)
   -> StaticPtr (Node el read write) -> Node el read write
-marked shouldRerender ptr = ComponentM $ \l d mbst st -> do
+marked shouldRerender ptr = ComponentM $ \d mbst st -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender mbst st
-  (_, nod) <- unComponentM (deRefStaticPtr ptr) l d mbst st
+  (_, nod) <- unComponentM (deRefStaticPtr ptr) d mbst st
   return ((), nod{ V.nodeMark = Just (V.Mark fprint rer) })
 
 -- useful shorthands
@@ -382,14 +385,14 @@ marked shouldRerender ptr = ComponentM $ \l d mbst st -> do
 
 {-# INLINE n #-}
 n :: (DOM.IsNode el) => Node el read write -> Component read write
-n getNode = ComponentM $ \l d mbst st -> do
-  (_, nod) <- unComponentM getNode l d mbst st
+n getNode = ComponentM $ \d mbst st -> do
+  (_, nod) <- unComponentM getNode d mbst st
   return (DList.singleton (V.SomeNode nod), ())
 
 {-# INLINE key #-}
 key :: (DOM.IsNode el) => JSString -> Node el read write -> KeyedComponent read write
-key k getNode = ComponentM $ \l d mbst st -> do
-  (_, nod) <- unComponentM getNode l d mbst st
+key k getNode = ComponentM $ \d mbst st -> do
+  (_, nod) <- unComponentM getNode d mbst st
   return (V.KeyedDom (HMS.singleton k (V.SomeNode nod)) (DList.singleton k), ())
 
 {-# INLINE text #-}
