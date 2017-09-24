@@ -77,6 +77,8 @@ module Anapo.Component
 
     -- * attributes
   , NamedElementProperty(..)
+  , StyleProperty(..)
+  , style_
   , class_
   , id_
   , HasTypeProperty(..)
@@ -273,15 +275,16 @@ zoomT st l = zoom st (toMaybeOf l) l
 -- --------------------------------------------------------------------
 
 data NamedElementProperty el = NamedElementProperty JSString (V.ElementProperty el)
+data StyleProperty el = StyleProperty JSString JSString
 
 class (DOM.IsElement el) => ConstructElement el a | a -> el where
-  constructElement :: (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [V.SomeEvent el] -> a
+  constructElement :: (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [StyleProperty el] -> [V.SomeEvent el] -> a
 
 {-# INLINE constructElement_ #-}
 constructElement_ ::
-     (DOM.IsElement el)
-  => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [V.SomeEvent el] -> V.Children -> V.Node el
-constructElement_ wrap tag props evts child = V.Node
+     (DOM.IsElement el, DOM.IsElementCSSInlineStyle el)
+  => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [StyleProperty el] -> [V.SomeEvent el] -> V.Children -> V.Node el
+constructElement_ wrap tag props style evts child = V.Node
   { V.nodeMark = Nothing
   , V.nodeCallbacks = mempty
   , V.nodeBody = V.NBElement V.Element
@@ -289,48 +292,56 @@ constructElement_ wrap tag props evts child = V.Node
       , V.elementProperties = HMS.fromList $ do
           NamedElementProperty name prop <- reverse props
           return (name, prop)
+      , V.elementStyle = HMS.fromList $ do
+          StyleProperty name val <- reverse style
+          return (name, val)
       , V.elementEvents = reverse evts
       , V.elementChildren = child
       }
   , V.nodeWrap = wrap
   }
 
-instance (DOM.IsElement el) => ConstructElement el (Node el read write) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el (Node el read write) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts =
-    return (constructElement_ wrap tag attrs evts (V.CNormal mempty))
+  constructElement wrap tag attrs style evts =
+    return (constructElement_ wrap tag attrs style evts (V.CNormal mempty))
 
-instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts dom = ComponentM $ \d mbst st -> do
+  constructElement wrap tag attrs style evts dom = ComponentM $ \d mbst st -> do
     (vdom, _) <- unComponentM dom d mbst st
-    return ((), constructElement_ wrap tag attrs evts (V.CNormal vdom))
+    return ((), constructElement_ wrap tag attrs style evts (V.CNormal vdom))
 
-instance (DOM.IsElement el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts dom = ComponentM $ \d mbst st -> do
+  constructElement wrap tag attrs style evts dom = ComponentM $ \d mbst st -> do
     (vdom, _) <- unComponentM dom d mbst st
-    return ((), constructElement_ wrap tag attrs evts (V.CKeyed vdom))
+    return ((), constructElement_ wrap tag attrs style evts (V.CKeyed vdom))
 
 newtype UnsafeRawHtml = UnsafeRawHtml JSString
 
-instance (DOM.IsElement el) => ConstructElement el (UnsafeRawHtml -> Node el read write) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el (UnsafeRawHtml -> Node el read write) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs evts (UnsafeRawHtml html) =
-    return (constructElement_ wrap tag  attrs evts  (V.CRawHtml html))
+  constructElement wrap tag attrs style evts (UnsafeRawHtml html) =
+    return (constructElement_ wrap tag  attrs style evts  (V.CRawHtml html))
 
 instance (ConstructElement el a) => ConstructElement el (NamedElementProperty el -> a) where
   {-# INLINE constructElement #-}
-  constructElement f tag attrs evts  attr =
-    constructElement f tag (attr : attrs) evts
+  constructElement f tag attrs style evts attr =
+    constructElement f tag (attr : attrs) style evts
+
+instance (ConstructElement el a) => ConstructElement el (StyleProperty el -> a) where
+  {-# INLINE constructElement #-}
+  constructElement f tag attrs style evts stylep =
+    constructElement f tag attrs (stylep : style) evts
 
 instance (ConstructElement el a) => ConstructElement el (V.SomeEvent el -> a) where
   {-# INLINE constructElement #-}
-  constructElement f tag attrs evts evt = constructElement f tag attrs (evt : evts)
+  constructElement f tag attrs style evts evt = constructElement f tag attrs style (evt : evts)
 
 {-# INLINE el #-}
 el :: (ConstructElement el a) => V.ElementTag -> (DOM.JSVal -> el) -> a
-el tag f = constructElement f tag [] []
+el tag f = constructElement f tag [] [] []
 
 -- to manipulate nodes
 -- --------------------------------------------------------------------
@@ -474,6 +485,9 @@ label_ = el "label" DOM.HTMLLabelElement
 
 -- Properties
 -- --------------------------------------------------------------------
+
+style_ :: (DOM.IsElementCSSInlineStyle el) => JSString -> JSString -> StyleProperty el
+style_ k v = StyleProperty k v
 
 class_ :: (DOM.IsElement el) => JSString -> NamedElementProperty el
 class_ txt = NamedElementProperty "class" $ V.ElementProperty

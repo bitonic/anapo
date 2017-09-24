@@ -63,9 +63,9 @@ instance Monoid (Callbacks el) where
     }
 
 data NodeBody el where
-  NBElement :: (DOM.IsElement el) => Element el -> NodeBody el
+  NBElement :: (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => Element el -> NodeBody el
   NBText :: JSString -> NodeBody DOM.Text
-  NBRawNode :: (DOM.IsNode el) => el -> NodeBody el
+  NBRawNode :: el -> NodeBody el
 
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
   SomeEvent (DOM.EventName el e) (el -> e -> ClientM ())
@@ -80,10 +80,14 @@ type ElementTag = JSString
 type ElementPropertyName = JSString
 type ElementProperties el = HMS.HashMap ElementPropertyName (ElementProperty el)
 type ElementEvents el = [SomeEvent el]
+type StylePropertyName = JSString
+type StyleProperty = JSString
+type ElementStyle = HMS.HashMap StylePropertyName StyleProperty
 
 data Element el = Element
   { elementTag :: ElementTag
   , elementProperties :: ElementProperties el
+  , elementStyle :: ElementStyle
   , elementEvents :: ElementEvents el
   , elementChildren :: Children
   }

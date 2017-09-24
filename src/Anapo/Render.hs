@@ -6,9 +6,10 @@ import qualified Data.DList as DList
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.Maybe (catMaybes)
-import Data.Foldable (traverse_)
+import Data.Foldable (traverse_, for_)
 import GHCJS.Foreign.Callback.Internal
 import GHCJS.Foreign.Callback
+import Data.JSString (JSString)
 
 import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -16,6 +17,8 @@ import qualified GHCJS.DOM.Node as DOM
 import qualified GHCJS.DOM.Element as DOM
 import qualified GHCJS.DOM.EventTargetClosures as DOM
 import qualified GHCJS.DOM.EventTarget as DOM
+import qualified GHCJS.DOM.CSSStyleDeclaration as DOM.CSSStyleDeclaration
+import qualified GHCJS.DOM.ElementCSSInlineStyle as DOM.ElementCSSInlineStyle
 
 import Anapo.ClientM
 import qualified Anapo.VDOM as V
@@ -31,11 +34,12 @@ data NodeOverlay = NodeOverlay
   , noResetProperties :: HMS.HashMap V.ElementPropertyName ResetProperty
   -- ^ holds functions that can reset all the properties that
   -- have been set.
+  , noStyle :: V.ElementStyle
   , noChildren :: Overlay
   }
 
 emptyOverlay :: NodeOverlay
-emptyOverlay = NodeOverlay mempty mempty mempty
+emptyOverlay = NodeOverlay mempty mempty mempty mempty
 
 data RenderOptions = RenderOptions
   { roAlwaysRerender :: Bool
@@ -160,6 +164,25 @@ renderVirtualDom RenderOptions{..} doc = let
             )
           Just{} -> Nothing
 
+  {-# INLINE addStyle #-}
+  addStyle ::
+       (DOM.IsElementCSSInlineStyle el)
+    => el
+    -> V.ElementStyle
+    -> V.ElementStyle -- ^ previous style properties
+    -> ClientM V.ElementStyle
+  addStyle el style prevStyle = do
+    css <- DOM.ElementCSSInlineStyle.getStyle el
+    -- remove all the styles that are not there anymore
+    for_ (HMS.keys (prevStyle `HMS.difference` style)) (DOM.CSSStyleDeclaration.removeProperty_ css)
+    -- add the others
+    for_ (HMS.toList style) $ \(propName, prop) -> do
+      let set = DOM.CSSStyleDeclaration.setProperty css propName prop (Nothing :: Maybe JSString)
+      case HMS.lookup propName prevStyle of
+        Nothing -> set
+        Just prop' -> when (prop /= prop') set
+    return style
+
   {-# INLINE renderDomChildren #-}
   renderDomChildren ::
        (DOM.IsElement el)
@@ -192,9 +215,10 @@ renderVirtualDom RenderOptions{..} doc = let
       V.NBElement V.Element{..} -> do
         el <- DOM.unsafeCastTo nodeWrap =<< DOM.createElement doc elementTag
         defProps <- addProperties el nodeWrap elementProperties mempty
+        style <- addStyle el elementStyle mempty
         evts <- addEvents el elementEvents
         childrenEvents <- renderDomChildren el elementChildren
-        cont el nodeCallbacks (NodeOverlay evts defProps childrenEvents)
+        cont el nodeCallbacks (NodeOverlay evts defProps style childrenEvents)
 
   {-# INLINE renderDom #-}
   renderDom ::
@@ -232,7 +256,7 @@ renderVirtualDom RenderOptions{..} doc = let
   -- tag.
   {-# INLINE patchDomElement #-}
   patchDomElement :: forall el1 el2.
-       (DOM.IsElement el1, DOM.IsElement el2)
+       (DOM.IsElement el1, DOM.IsElement el2, DOM.IsElementCSSInlineStyle el2)
     => el2 -- ^ the node we're patching
     -> (DOM.JSVal -> el2)
     -> V.Element el1
@@ -256,12 +280,14 @@ renderVirtualDom RenderOptions{..} doc = let
     forM_ (noEvents prevElOverlay) $ \(evtName, evt) -> do
       DOM.removeEventListener node evtName (Just evt) False
       DOM.eventListenerRelease evt
+    -- add style
+    newStyle <- addStyle node (V.elementStyle el) (noStyle prevElOverlay)
     -- add all events
     evts <- addEvents node (V.elementEvents el)
     -- patch children
     childrenEvts <-
       patchDomChildren node (V.elementChildren prevEl) (noChildren prevElOverlay) (V.elementChildren el)
-    return (NodeOverlay evts newResetProperties childrenEvts)
+    return (NodeOverlay evts newResetProperties newStyle childrenEvts)
 
   {-# INLINE patchDomNode #-}
   patchDomNode ::
