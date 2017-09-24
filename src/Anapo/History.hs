@@ -20,3 +20,7 @@ foreign import javascript unsafe
   "window.onpopstate = null;"
   historyRemoveOnPopState :: IO ()
 
+foreign import javascript unsafe
+  "$r = history.length;"
+  historyLength :: IO Double
+
