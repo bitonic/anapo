@@ -184,6 +184,10 @@ newtype ComponentM dom read write a = ComponentM
       -> ClientM (dom, a)
   }
 
+instance (Monoid dom, a ~ ()) => Monoid (ComponentM dom read write a) where
+  mempty = return ()
+  a `mappend` b = a >> b
+
 type ComponentM' dom state = ComponentM dom state state
 type Component' state = ComponentM V.Dom state state ()
 type Component read write = ComponentM V.Dom read write ()
