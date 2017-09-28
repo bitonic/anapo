@@ -105,11 +105,14 @@ instance Monoid KeyedDom where
   {-# INLINE mempty #-}
   mempty = KeyedDom mempty mempty
   {-# INLINE mappend #-}
-  kvd1 `mappend` kvd2 = let
-    commonKeys = keyedDomNodes kvd1 `HMS.intersection` keyedDomNodes kvd2
-    in if HMS.null commonKeys
-      then KeyedDom (keyedDomNodes kvd1 `mappend` keyedDomNodes kvd2) (keyedDomOrder kvd1 `mappend` keyedDomOrder kvd2)
-      else error ("TODO common keys, make error better: " ++ show (HMS.keys commonKeys))
+  -- TODO note: before we had mappend to check that the intersection of the left
+  -- and right side is empty, to enforce that two keyed doms do not share keys.
+  -- however the `Data.HashMap.Strict.intersection` is O(n * log m), so we if we
+  -- have repeated mappend we can end up with a quadratic operation, especially
+  -- in the common case of repeatedly appending maps of size 1 to a growing
+  -- map. thus we leave this alone and we check in 'Anapo.Render'.
+  kvd1 `mappend` kvd2 =
+    KeyedDom (keyedDomNodes kvd1 `mappend` keyedDomNodes kvd2) (keyedDomOrder kvd1 `mappend` keyedDomOrder kvd2)
 
 -- | Things that can be grouped under a node:
 -- * a list of nodes;

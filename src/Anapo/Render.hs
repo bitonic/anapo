@@ -193,7 +193,10 @@ renderVirtualDom RenderOptions{..} doc = let
     V.CRawHtml html -> do
       DOM.setInnerHTML container html
       return mempty
-    V.CKeyed kvd -> renderDom container (DList.toList (V.unkeyDom kvd))
+    V.CKeyed kvd -> do
+      -- TODO when we do implement keyed properly, check that the list
+      -- size corresponds to the hasmap size
+      renderDom container (DList.toList (V.unkeyDom kvd))
     V.CNormal vdom -> renderDom container (DList.toList vdom)
 
   {-# INLINE renderDomNode #-}
