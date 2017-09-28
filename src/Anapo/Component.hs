@@ -408,7 +408,7 @@ n getNode = ComponentM $ \d mbst st -> do
 key :: (DOM.IsNode el) => JSString -> Node el read write -> KeyedComponent read write
 key k getNode = ComponentM $ \d mbst st -> do
   (_, nod) <- unComponentM getNode d mbst st
-  return (V.KeyedDom (HMS.singleton k (V.SomeNode nod)) (DList.singleton k), ())
+  return (V.KeyedDom (DList.singleton (k, V.SomeNode nod)), ())
 
 {-# INLINE text #-}
 text :: JSString -> Node DOM.Text read write

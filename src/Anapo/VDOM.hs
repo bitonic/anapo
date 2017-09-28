@@ -92,27 +92,12 @@ data Element el = Element
   , elementChildren :: Children
   }
 
-data KeyedDom = KeyedDom
-  { keyedDomNodes :: HMS.HashMap JSString SomeNode
-  , keyedDomOrder :: DList JSString
-  }
+newtype KeyedDom = KeyedDom (DList (JSString, SomeNode))
+  deriving (Monoid)
 
 {-# INLINE unkeyDom #-}
 unkeyDom :: KeyedDom -> Dom
-unkeyDom KeyedDom{..} = fmap (\k -> keyedDomNodes HMS.! k) keyedDomOrder
-
-instance Monoid KeyedDom where
-  {-# INLINE mempty #-}
-  mempty = KeyedDom mempty mempty
-  {-# INLINE mappend #-}
-  -- TODO note: before we had mappend to check that the intersection of the left
-  -- and right side is empty, to enforce that two keyed doms do not share keys.
-  -- however the `Data.HashMap.Strict.intersection` is O(n * log m), so we if we
-  -- have repeated mappend we can end up with a quadratic operation, especially
-  -- in the common case of repeatedly appending maps of size 1 to a growing
-  -- map. thus we leave this alone and we check in 'Anapo.Render'.
-  kvd1 `mappend` kvd2 =
-    KeyedDom (keyedDomNodes kvd1 `mappend` keyedDomNodes kvd2) (keyedDomOrder kvd1 `mappend` keyedDomOrder kvd2)
+unkeyDom (KeyedDom kdom) = fmap snd kdom
 
 -- | Things that can be grouped under a node:
 -- * a list of nodes;

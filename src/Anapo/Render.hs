@@ -332,15 +332,9 @@ renderVirtualDom RenderOptions{..} doc = let
     -> Overlay
     -> V.KeyedDom
     -> ClientM Overlay
-  patchKeyedDom container (V.KeyedDom prevKeyedVdom prevVdomOrder) prevVdomEvents (V.KeyedDom keyedVdom vdomOrder) = do
+  patchKeyedDom container prevkdom prevVdomEvents kdom = do
     -- TODO implement this properly
-    let prevVdom = fmap
-          (\key -> prevKeyedVdom HMS.! key)
-          prevVdomOrder
-    let vdom = fmap
-          (\key -> keyedVdom HMS.! key)
-          vdomOrder
-    patchDom container prevVdom prevVdomEvents vdom
+    patchDom container (V.unkeyDom prevkdom) prevVdomEvents (V.unkeyDom kdom)
 
   {-# INLINE patchDom #-}
   patchDom ::
