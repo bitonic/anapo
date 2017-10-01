@@ -17,7 +17,6 @@ library
   hs-source-dirs:      src
   exposed-modules:
     Anapo
-    Anapo.ClientM
     Anapo.VDOM
     Anapo.Component
     Anapo.Loop

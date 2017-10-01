@@ -20,7 +20,7 @@ data Running =
   | Running
       UTCTime -- ^ when it was started
       UTCTime -- ^ the current time
-      (Async (ClientM Void)) -- ^ the loop updating the time
+      (Async (JSM Void)) -- ^ the loop updating the time
 makePrisms ''Running
 
 data TimerState = TimerState
@@ -61,7 +61,7 @@ timerInit = return $ TimerState
   , _tsTimePassed = 0
   }
 
-timerStop :: TimerState -> ClientM TimerState
+timerStop :: TimerState -> JSM TimerState
 timerStop st = case st ^. tsRunning of
   Stopped -> return st
   Running t0 _t1 timer -> do

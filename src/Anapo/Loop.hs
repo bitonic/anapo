@@ -15,14 +15,13 @@ import qualified GHCJS.DOM.Node as DOM
 import qualified Anapo.VDOM as V
 import Anapo.Component
 import Anapo.Render
-import Anapo.ClientM
 
-withDispatch :: ClientM (Dispatch state, ClientM (Maybe (state -> ClientM state)))
+withDispatch :: DOM.JSM (Dispatch state, DOM.JSM (Maybe (state -> DOM.JSM state)))
 withDispatch = do
-  toDispatch :: Chan (state -> ClientM state) <- liftIO newChan
+  toDispatch :: Chan (state -> DOM.JSM state) <- liftIO newChan
   let
     get = do
-      mbF :: Either BlockedIndefinitelyOnMVar (state -> ClientM state) <- liftIO (try (readChan toDispatch))
+      mbF :: Either BlockedIndefinitelyOnMVar (state -> DOM.JSM state) <- liftIO (try (readChan toDispatch))
       case mbF of
         Left{} -> do
           liftIO (putStrLn "withDispatch: got undefinitedly blocked on mvar, returning Nothing")
@@ -30,7 +29,7 @@ withDispatch = do
         Right f -> return (Just f)
   return (liftIO . writeChan toDispatch, get)
 
-timeIt :: ClientM a -> ClientM (a, NominalDiffTime)
+timeIt :: DOM.JSM a -> DOM.JSM (a, NominalDiffTime)
 timeIt m = do
   t0 <- liftIO getCurrentTime
   x <- m
@@ -40,16 +39,16 @@ timeIt m = do
 componentLoop :: forall state acc.
      RenderOptions
   -> Dispatch state
-  -> ClientM (Maybe (state -> ClientM state))
+  -> DOM.JSM (Maybe (state -> DOM.JSM state))
   -> state
   -> Component' state
-  -> acc -> (acc -> V.Dom -> ClientM acc)
-  -> ClientM acc
+  -> acc -> (acc -> V.Dom -> DOM.JSM acc)
+  -> DOM.JSM acc
   -- ^ returns the final accumulator, when there is nothing left to do.
   -- might never terminate
 componentLoop ro dispatch getStateUpdate !st0 vdom !acc0 useDom = do
   let
-    go :: Maybe state -> state -> acc -> ClientM acc
+    go :: Maybe state -> state -> acc -> DOM.JSM acc
     go mbPrevSt !st !acc = do
       (nodes, vdomDt) <- timeIt (runComponent vdom dispatch mbPrevSt st)
       when (roDebugOutput ro) $
@@ -69,10 +68,10 @@ componentLoop ro dispatch getStateUpdate !st0 vdom !acc0 useDom = do
 installComponentBody ::
      RenderOptions
   -> Dispatch state
-  -> ClientM (Maybe (state -> ClientM state))
+  -> DOM.JSM (Maybe (state -> DOM.JSM state))
   -> state
   -> Component' state
-  -> ClientM ()
+  -> DOM.JSM ()
 installComponentBody ro dispatch getStateUpdate st0 vdom0 = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.getBodyUnchecked doc
@@ -84,10 +83,10 @@ installComponentBody ro dispatch getStateUpdate st0 vdom0 = do
 installComponentBootstrap ::
      RenderOptions
   -> Dispatch state
-  -> ClientM (Maybe (state -> ClientM state))
+  -> DOM.JSM (Maybe (state -> DOM.JSM state))
   -> state
   -> Component' state
-  -> ClientM ()
+  -> DOM.JSM ()
 installComponentBootstrap ro dispatch getStateUpdate st0 vdom0 = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.getBodyUnchecked doc

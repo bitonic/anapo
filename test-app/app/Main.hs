@@ -1,13 +1,12 @@
 module Main where
 
-import Anapo.ClientM
 import Anapo.Loop
 import Anapo.Render
 import Anapo.TestApps
 import Anapo.TestApps.YouTube
 
 main :: IO ()
-main = runClientM $ do
+main = do
   youTubeSetup
   (dispatch, getStateUpdate) <- withDispatch
   testAppsWith dispatch $ \st -> do

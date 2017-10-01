@@ -7,7 +7,6 @@ import Data.Typeable.Internal (Fingerprint)
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM
 
-import Anapo.ClientM
 import Anapo.Text
 
 -- Core types
@@ -36,11 +35,11 @@ data Mark = Mark
   }
 
 data Callbacks el = Callbacks
-  { callbacksUnsafeWillMount :: el -> ClientM ()
-  , callbacksUnsafeDidMount :: el -> ClientM ()
-  , callbacksUnsafeWillPatch :: el -> ClientM ()
-  , callbacksUnsafeDidPatch :: el -> ClientM ()
-  , callbacksUnsafeWillRemove :: el -> ClientM ()
+  { callbacksUnsafeWillMount :: el -> DOM.JSM ()
+  , callbacksUnsafeDidMount :: el -> DOM.JSM ()
+  , callbacksUnsafeWillPatch :: el -> DOM.JSM ()
+  , callbacksUnsafeDidPatch :: el -> DOM.JSM ()
+  , callbacksUnsafeWillRemove :: el -> DOM.JSM ()
   }
 
 instance Monoid (Callbacks el) where
@@ -67,12 +66,12 @@ data NodeBody el where
   NBRawNode :: el -> NodeBody el
 
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
-  SomeEvent (DOM.EventName el e) (el -> e -> ClientM ())
+  SomeEvent (DOM.EventName el e) (el -> e -> DOM.JSM ())
 
 data ElementProperty el = forall a. ElementProperty
-  { eaGetProperty :: el -> ClientM a
-  , eaSetProperty :: el -> a -> ClientM ()
-  , eaValue :: ClientM a
+  { eaGetProperty :: el -> DOM.JSM a
+  , eaSetProperty :: el -> a -> DOM.JSM ()
+  , eaValue :: DOM.JSM a
   }
 
 type ElementTag = Text

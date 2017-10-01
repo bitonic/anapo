@@ -132,7 +132,6 @@ import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
 import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtils
 import qualified GHCJS.DOM as DOM
 
-import Anapo.ClientM
 import qualified Anapo.VDOM as V
 import Anapo.Render
 import Anapo.Text (Text)
@@ -165,10 +164,10 @@ toMaybeOf l x = case Lens.toListOf l x of
 -- Dispatching
 -- --------------------------------------------------------------------
 
-type Dispatch state = (state -> ClientM state) -> IO ()
+type Dispatch state = (state -> DOM.JSM state) -> IO ()
 
 {-# INLINE runDispatchT #-}
-runDispatchT :: MonadIO m => Dispatch state -> StateT state ClientM () -> m ()
+runDispatchT :: MonadIO m => Dispatch state -> StateT state DOM.JSM () -> m ()
 runDispatchT disp st = liftIO (disp (execStateT st))
 
 {-# INLINE runDispatch #-}
@@ -186,7 +185,7 @@ newtype ComponentM dom read write a = ComponentM
       -- the previous state
       -> read
       -- the current state
-      -> ClientM (dom, a)
+      -> DOM.JSM (dom, a)
   }
 
 instance (Monoid dom, a ~ ()) => Monoid (ComponentM dom read write a) where
@@ -220,11 +219,11 @@ instance (el ~ DOM.Text) => IsString (Node el read write) where
   fromString = text . T.pack
 
 {-# INLINE runComponentM #-}
-runComponentM :: ComponentM dom read write a -> Dispatch write -> Maybe write -> read -> ClientM (dom, a)
+runComponentM :: ComponentM dom read write a -> Dispatch write -> Maybe write -> read -> DOM.JSM (dom, a)
 runComponentM vdom = unComponentM vdom
 
 {-# INLINE runComponent #-}
-runComponent :: Component read write -> Dispatch write -> Maybe write -> read -> ClientM V.Dom
+runComponent :: Component read write -> Dispatch write -> Maybe write -> read -> DOM.JSM V.Dom
 runComponent vdom d mbst st = fst <$> unComponentM vdom d mbst st
 
 instance Functor (ComponentM dom read write) where
@@ -249,12 +248,6 @@ instance (Monoid dom) => Monad (ComponentM dom read write) where
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
-{-# INLINE unsafeLiftClientM #-}
-unsafeLiftClientM :: Monoid dom => ClientM a -> ComponentM dom read write a
-unsafeLiftClientM m = ComponentM $ \_d _mbst _st -> do
-  x <- m
-  return (mempty, x)
-
 {-# INLINE askDispatch #-}
 askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch write)
 askDispatch = ComponentM (\d _mbst _st -> return (mempty, d))
@@ -273,7 +266,7 @@ askPreviousState = ComponentM (\_d mbst _st -> return (mempty, mbst))
 zoom ::
      readIn
   -> (writeOut -> Maybe writeIn)
-  -> LensLike' ClientM writeOut writeIn
+  -> LensLike' DOM.JSM writeOut writeIn
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
 zoom st' get write' dom = ComponentM $ \d mbst _st ->
@@ -370,35 +363,35 @@ el tag f = constructElement f tag [] [] []
 -- --------------------------------------------------------------------
 
 {-# INLINE unsafeWillMount #-}
-unsafeWillMount :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeWillMount :: (el -> DOM.JSM ()) -> V.Node el -> V.Node el
 unsafeWillMount f nod = nod
   { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
       { V.callbacksUnsafeWillMount = f }
   }
 
 {-# INLINE unsafeDidMount #-}
-unsafeDidMount :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeDidMount :: (el -> DOM.JSM ()) -> V.Node el -> V.Node el
 unsafeDidMount f nod = nod
   { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
       { V.callbacksUnsafeDidMount = f }
   }
 
 {-# INLINE unsafeWillPatch #-}
-unsafeWillPatch :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeWillPatch :: (el -> DOM.JSM ()) -> V.Node el -> V.Node el
 unsafeWillPatch f nod = nod
   { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
       { V.callbacksUnsafeWillPatch = f }
   }
 
 {-# INLINE unsafeDidPatch #-}
-unsafeDidPatch :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeDidPatch :: (el -> DOM.JSM ()) -> V.Node el -> V.Node el
 unsafeDidPatch f nod = nod
   { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
       { V.callbacksUnsafeDidPatch = f }
   }
 
 {-# INLINE unsafeWillRemove #-}
-unsafeWillRemove :: (el -> ClientM ()) -> V.Node el -> V.Node el
+unsafeWillRemove :: (el -> DOM.JSM ()) -> V.Node el -> V.Node el
 unsafeWillRemove f nod = nod
   { V.nodeCallbacks = mappend (V.nodeCallbacks nod) $ mempty
       { V.callbacksUnsafeWillRemove = f }
@@ -527,8 +520,8 @@ id_ txt = NamedElementProperty "id" $ V.ElementProperty
   }
 
 class HasTypeProperty el where
-  htpGetType :: el -> ClientM Text
-  htpSetType :: el -> Text -> ClientM ()
+  htpGetType :: el -> DOM.JSM Text
+  htpSetType :: el -> Text -> DOM.JSM ()
 
 instance HasTypeProperty DOM.HTMLInputElement where
   htpGetType = DOM.Input.getType
@@ -546,8 +539,8 @@ type_ txt = NamedElementProperty "type" $ V.ElementProperty
   }
 
 class HasHrefProperty el where
-  htpGetHref :: el -> ClientM Text
-  htpSetHref :: el -> Text -> ClientM ()
+  htpGetHref :: el -> DOM.JSM Text
+  htpSetHref :: el -> Text -> DOM.JSM ()
 
 instance HasHrefProperty DOM.HTMLAnchorElement where
   htpGetHref = DOM.HyperlinkElementUtils.getHref
@@ -561,8 +554,8 @@ href_ txt = NamedElementProperty "href" $ V.ElementProperty
   }
 
 class HasValueProperty el where
-  hvpGetValue :: el -> ClientM Text
-  hvpSetValue :: el -> Text -> ClientM ()
+  hvpGetValue :: el -> DOM.JSM Text
+  hvpSetValue :: el -> Text -> DOM.JSM ()
 
 instance HasValueProperty DOM.HTMLInputElement where
   hvpGetValue = DOM.Input.getValue
@@ -580,8 +573,8 @@ value_ txt = NamedElementProperty "value" $ V.ElementProperty
   }
 
 class HasCheckedProperty el where
-  hcpGetChecked :: el -> ClientM Bool
-  hcpSetChecked :: el -> Bool -> ClientM ()
+  hcpGetChecked :: el -> DOM.JSM Bool
+  hcpSetChecked :: el -> Bool -> DOM.JSM ()
 
 instance HasCheckedProperty DOM.HTMLInputElement where
   hcpGetChecked = DOM.Input.getChecked
@@ -602,8 +595,8 @@ selected_ b = NamedElementProperty "selected" $ V.ElementProperty
   }
 
 class HasDisabledProperty el where
-  hdpGetDisabled :: el -> ClientM Bool
-  hdpSetDisabled :: el -> Bool -> ClientM ()
+  hdpGetDisabled :: el -> DOM.JSM Bool
+  hdpSetDisabled :: el -> Bool -> DOM.JSM ()
 
 instance HasDisabledProperty DOM.HTMLButtonElement where
   hdpGetDisabled = DOM.Button.getDisabled
@@ -648,27 +641,27 @@ rawProperty k x = NamedElementProperty k $ V.ElementProperty
 
 onclick_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.MouseEvent -> ClientM ()) -> V.SomeEvent el
+  => (el -> DOM.MouseEvent -> DOM.JSM ()) -> V.SomeEvent el
 onclick_ = V.SomeEvent DOM.click
 
 onchange_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> ClientM ()) -> V.SomeEvent el
+  => (el -> DOM.Event -> DOM.JSM ()) -> V.SomeEvent el
 onchange_ = V.SomeEvent DOM.change
 
 oninput_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> ClientM ()) -> V.SomeEvent el
+  => (el -> DOM.Event -> DOM.JSM ()) -> V.SomeEvent el
 oninput_ = V.SomeEvent DOM.input
 
 onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> ClientM ()) -> V.SomeEvent el
+  => (el -> DOM.Event -> DOM.JSM ()) -> V.SomeEvent el
 onsubmit_ = V.SomeEvent DOM.submit
 
 onselect_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.UIEvent -> ClientM ()) -> V.SomeEvent el
+  => (el -> DOM.UIEvent -> DOM.JSM ()) -> V.SomeEvent el
 onselect_ = V.SomeEvent DOM.select
 
 -- simple rendering
@@ -679,7 +672,7 @@ onselect_ = V.SomeEvent DOM.select
 -- it's just to place some elements in the provided element
 simpleRenderComponent ::
      (DOM.IsElement el)
-  => el -> read -> Component read () -> ClientM ()
+  => el -> read -> Component read () -> DOM.JSM ()
 simpleRenderComponent container st comp = do
   doc <- DOM.currentDocumentUnchecked
   vdom <- runComponent comp (\_ -> return ()) Nothing st

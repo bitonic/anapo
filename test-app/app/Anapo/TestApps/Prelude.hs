@@ -13,6 +13,7 @@ import qualified Data.Aeson.TH as Aeson
 import Data.List (isPrefixOf)
 import Data.Char (toLower)
 
+import GHCJS.DOM.Types as X (JSM)
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
 
@@ -45,7 +46,7 @@ booleanCheckbox = do
 simpleTextInput ::
      Text
   -- ^ the label for the input
-  -> ClientM ()
+  -> JSM ()
   -- ^ what to do when the new text is submitted
   -> Text
   -- ^ what to show in the button

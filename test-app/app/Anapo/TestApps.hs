@@ -71,7 +71,7 @@ data TestAppsStateOrError =
   | TASOEOk TestAppsState
 makePrisms ''TestAppsStateOrError
 
-changeToApp :: Bool -> Dispatch TestAppsState -> Maybe WhichTestApp -> ClientM ()
+changeToApp :: Bool -> Dispatch TestAppsState -> Maybe WhichTestApp -> JSM ()
 changeToApp pushHistory dispatchM mbApp =
   dispatchM $ \st' -> do
     let app = fromMaybe (st'^.tasFirstApp) mbApp
@@ -116,7 +116,7 @@ testAppsComponent = do
         Timer -> zoomL tasTimer timerComponent
         YouTube -> zoomL tasYouTube youTubeComponent
 
-testAppsWith :: Dispatch TestAppsStateOrError -> (TestAppsStateOrError -> ClientM ()) -> ClientM ()
+testAppsWith :: Dispatch TestAppsStateOrError -> (TestAppsStateOrError -> JSM ()) -> JSM ()
 testAppsWith dispatch cont = do
   path <- DOM.getPathname =<< DOM.getLocation =<< DOM.currentWindowUnchecked
   case testAppFromPath path of

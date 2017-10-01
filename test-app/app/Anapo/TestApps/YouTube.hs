@@ -35,11 +35,11 @@ foreign import javascript unsafe
   "window.onYouTubeIframeAPIReady = $1"
   js_setupOnYouTubeIframeAPIReady :: Callback (IO ()) -> IO ()
 
-youTubeEnsureReady :: ClientM ()
+youTubeEnsureReady :: JSM ()
 youTubeEnsureReady = readMVar youTubePlayerReady
 
 -- blocks until yt api is ready
-youTubeSetup :: ClientM ()
+youTubeSetup :: JSM ()
 youTubeSetup = do
   bracket
     (asyncCallback $ do
@@ -119,10 +119,10 @@ makeLenses ''YouTubeState
 youTubeCounter :: IORef Int
 youTubeCounter = unsafePerformIO (newIORef 0)
 
-newYouTubeToken :: ClientM Int
+newYouTubeToken :: JSM Int
 newYouTubeToken = liftIO (atomicModifyIORef' youTubeCounter (\c -> (c+1, c)))
 
-youTubeInit :: VideoId -> ClientM YouTubeState
+youTubeInit :: VideoId -> JSM YouTubeState
 youTubeInit videoId = do
   tok <- newYouTubeToken
   return YouTubeState

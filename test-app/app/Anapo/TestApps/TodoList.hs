@@ -85,7 +85,7 @@ todoComponent = do
       n$ h2_ (class_ "mx-1 my-2") (n$ "Things already done")
       renderItems done
 
-todoInit :: ClientM TodoState
+todoInit :: JSM TodoState
 todoInit = return $ TodoState
   { _tsShowCompleted = True
   , _tsTodoElements = Map.fromList
