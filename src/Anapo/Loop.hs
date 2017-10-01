@@ -50,6 +50,7 @@ componentLoop ro dispatch getStateUpdate !st0 vdom !acc0 useDom = do
   let
     go :: Maybe state -> state -> acc -> DOM.JSM acc
     go mbPrevSt !st !acc = do
+      DOM.syncPoint
       (nodes, vdomDt) <- timeIt (runComponent vdom dispatch mbPrevSt st)
       when (roDebugOutput ro) $
         liftIO (putStrLn ("Vdom generated (" ++ show vdomDt ++ ")"))
