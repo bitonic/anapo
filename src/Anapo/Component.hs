@@ -32,7 +32,6 @@ module Anapo.Component
   , Node'
   , runComponentM
   , runComponent
-  , unsafeLiftClientM
   , askDispatch
   , askState
   , askPreviousState
@@ -201,6 +200,20 @@ type KeyedComponent' state = ComponentM V.KeyedDom state state ()
 type KeyedComponent read write = ComponentM V.KeyedDom read write ()
 type Node el read write = ComponentM () read write (V.Node el)
 type Node' el state = ComponentM () state state (V.Node el)
+
+instance Monoid dom => MonadIO (ComponentM dom read write) where
+  {-# INLINE liftIO #-}
+  liftIO m = ComponentM $ \_d _mbst _st -> do
+    x <- liftIO m
+    return (mempty, x)
+
+#if !defined(ghcjs_HOST_OS)
+instance Monoid dom => JSaddle.MonadJSM (ComponentM dom read write) where
+  {-# INLINE liftJSM' #-}
+  liftJSM' m = ComponentM $ \_d _mbst _st -> do
+    x <- m
+    return (mempty, x)
+#endif
 
 instance (el ~ DOM.Text) => IsString (Node el read write) where
   {-# INLINE fromString #-}

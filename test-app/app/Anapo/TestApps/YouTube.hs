@@ -137,7 +137,7 @@ youTubeNode :: Node' DOM.Element YouTubeState
 youTubeNode = do
   st <- askState
   dispatch <- askDispatch
-  mbYtpRef :: IORef (Maybe YouTubePlayer) <- unsafeLiftClientM (newIORef Nothing)
+  mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
   let
     didMount el = void $ forkIO $ do
       ytp <- youTubeNew el YouTubeNew
@@ -157,7 +157,7 @@ youTubeNode = do
         Just ytp -> do
           t <- youTubeGetCurrentTime ytp
           runDispatch dispatch (ytsLastPosition .= Just t)
-  container <- unsafeLiftClientM $ do
+  container <- DOM.liftJSM $ do
     doc <- DOM.currentDocumentUnchecked
     container <- DOM.unsafeCastTo DOM.Element =<< DOM.createElement doc ("div" :: JSString)
     simpleRenderComponent container () $
