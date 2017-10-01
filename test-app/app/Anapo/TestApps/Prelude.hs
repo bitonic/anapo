@@ -12,17 +12,16 @@ import Control.Concurrent as X (forkIO)
 import qualified Data.Aeson.TH as Aeson
 import Data.List (isPrefixOf)
 import Data.Char (toLower)
-import qualified Data.JSString as JSS
-import Data.JSString (JSString)
-import GHCJS.Types (jsval)
 
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.HTMLInputElement as DOM
 
 import Anapo
+import Anapo.Text (Text)
+import qualified Anapo.Text as T
 
-jsshow :: (Show a) => a -> JSString
-jsshow = JSS.pack . show
+jsshow :: (Show a) => a -> Text
+jsshow = T.pack . show
 
 bootstrapRow :: Component read write -> Component read write
 bootstrapRow = n . div_ (class_ "row")
@@ -44,13 +43,13 @@ booleanCheckbox = do
       runDispatch dispatch (put checked))
 
 simpleTextInput ::
-     JSString
+     Text
   -- ^ the label for the input
   -> ClientM ()
   -- ^ what to do when the new text is submitted
-  -> JSString
+  -> Text
   -- ^ what to show in the button
-  -> Component' JSString
+  -> Component' Text
 simpleTextInput lbl cback buttonTxt = do
   currentTxt <- askState
   dispatch <- askDispatch
@@ -64,7 +63,7 @@ simpleTextInput lbl cback buttonTxt = do
         (type_ "text")
         (class_ "form-control mb-2 mr-sm-2 mb-sm-0")
         (value_ currentTxt)
-        (rawProperty_ "aria-label" (jsval lbl))
+        (rawProperty "aria-label" lbl)
         (oninput_ $ \inp _ -> do
           txt <- DOM.getValue inp
           runDispatch dispatch (put txt))

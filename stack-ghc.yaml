@@ -1,0 +1,12 @@
+packages:
+- '.'
+extra-deps:
+- ghcjs-dom-0.9.2.0
+- ghcjs-dom-jsaddle-0.9.2.0
+- jsaddle-dom-0.9.2.0
+- jsaddle-0.9.4.0
+- ref-tf-0.4.0.1
+- jsaddle-warp-0.9.4.0
+flags: {}
+extra-package-dbs: []
+resolver: lts-8.11

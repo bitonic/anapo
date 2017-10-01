@@ -7,21 +7,21 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.Maybe (catMaybes)
 import Data.Foldable (traverse_, for_)
-import GHCJS.Foreign.Callback.Internal
-import GHCJS.Foreign.Callback
-import Data.JSString (JSString)
+import Unsafe.Coerce (unsafeCoerce)
+import Control.Monad.Trans.Reader (ask)
+import Control.Monad.Trans.Class (lift)
 
 import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Node as DOM
 import qualified GHCJS.DOM.Element as DOM
-import qualified GHCJS.DOM.EventTargetClosures as DOM
-import qualified GHCJS.DOM.EventTarget as DOM
 import qualified GHCJS.DOM.CSSStyleDeclaration as DOM.CSSStyleDeclaration
 import qualified GHCJS.DOM.ElementCSSInlineStyle as DOM.ElementCSSInlineStyle
+import qualified GHCJS.DOM.EventM as DOM
 
 import Anapo.ClientM
 import qualified Anapo.VDOM as V
+import Anapo.Text (Text)
 
 type Overlay = [NodeOverlay]
 
@@ -29,8 +29,13 @@ newtype ResetProperty = ResetProperty
   { resetProperty :: forall el. (DOM.IsElement el) => el -> ClientM ()
   }
 
+data SomeSaferEventListener = forall t e. (DOM.IsEventTarget t, DOM.IsEvent e) => SomeSaferEventListener
+  { _sselName :: DOM.EventName t e
+  , _sselEv :: DOM.SaferEventListener t e
+  }
+
 data NodeOverlay = NodeOverlay
-  { noEvents :: [(DOM.DOMString, DOM.EventListener)]
+  { noEvents :: [SomeSaferEventListener]
   , noResetProperties :: HMS.HashMap V.ElementPropertyName ResetProperty
   -- ^ holds functions that can reset all the properties that
   -- have been set.
@@ -51,11 +56,6 @@ renderVirtualDom :: forall el0.
   => RenderOptions -> DOM.Document -> el0 -> Maybe (V.Dom, Overlay) -> V.Dom
   -> ClientM Overlay
 renderVirtualDom RenderOptions{..} doc = let
-  {-# INLINE releaseEventListener #-}
-  releaseEventListener :: DOM.EventListener -> ClientM ()
-  releaseEventListener (DOM.EventListener jsval) =
-    releaseCallback (Callback jsval :: Callback ())
-
   {-# INLINE removeAllChildren #-}
   removeAllChildren :: (DOM.IsNode el) => el -> ClientM ()
   removeAllChildren el = let
@@ -94,7 +94,7 @@ renderVirtualDom RenderOptions{..} doc = let
       V.NBRawNode{} -> return ()
       V.NBElement V.Element{V.elementChildren} -> do
         removeDomNodeChildren domNode noChildren elementChildren
-        traverse_ (releaseEventListener . snd) noEvents
+        traverse_ (\(SomeSaferEventListener _ ev) -> DOM.releaseListener ev) noEvents
 
   {-# INLINE removeDom #-}
   removeDom ::
@@ -135,12 +135,11 @@ renderVirtualDom RenderOptions{..} doc = let
        (DOM.IsElement el)
     => el
     -> V.ElementEvents el
-    -> ClientM [(DOM.DOMString, DOM.EventListener)]
-  addEvents el evts = forM evts $ \(V.SomeEvent (DOM.EventName evtName) evt) -> do
-    safel <- DOM.eventListenerNew (evt el)
-    raw <- DOM.EventListener <$> DOM.toJSVal safel
-    DOM.addEventListener el evtName (Just raw) False
-    return (evtName, raw)
+    -> ClientM [SomeSaferEventListener]
+  addEvents el evts = forM evts $ \(V.SomeEvent evtName evt) -> do
+    safel <- DOM.newListener (do ev <- ask; lift (evt el ev))
+    DOM.addListener el evtName safel False
+    return (SomeSaferEventListener evtName safel)
 
   {-# INLINE addProperties #-}
   addProperties ::
@@ -154,7 +153,7 @@ renderVirtualDom RenderOptions{..} doc = let
     fmap (HMS.union prevReset . HMS.fromList . catMaybes) $
       forM (HMS.toList props) $ \(propName, V.ElementProperty{..}) -> do
         def <- eaGetProperty el
-        eaSetProperty el eaValue
+        eaSetProperty el =<< eaValue
         return $ case HMS.lookup propName prevReset of
           Nothing -> Just
             ( propName
@@ -177,7 +176,7 @@ renderVirtualDom RenderOptions{..} doc = let
     for_ (HMS.keys (prevStyle `HMS.difference` style)) (DOM.CSSStyleDeclaration.removeProperty_ css)
     -- add the others
     for_ (HMS.toList style) $ \(propName, prop) -> do
-      let set = DOM.CSSStyleDeclaration.setProperty css propName prop (Nothing :: Maybe JSString)
+      let set = DOM.CSSStyleDeclaration.setProperty css propName prop (Nothing :: Maybe Text)
       case HMS.lookup propName prevStyle of
         Nothing -> set
         Just prop' -> when (prop /= prop') set
@@ -280,9 +279,10 @@ renderVirtualDom RenderOptions{..} doc = let
     -- that we do not have to delete everything each time
     -- TODO can it be that changing the attributes triggers some events? we should
     -- check
-    forM_ (noEvents prevElOverlay) $ \(evtName, evt) -> do
-      DOM.removeEventListener node evtName (Just evt) False
-      DOM.eventListenerRelease evt
+    forM_ (noEvents prevElOverlay) $ \(SomeSaferEventListener evtName evt) -> do
+      -- TODO maybe do something safer here...
+      DOM.removeListener (unsafeCoerce node) evtName evt False
+      DOM.releaseListener evt
     -- add style
     newStyle <- addStyle node (V.elementStyle el) (noStyle prevElOverlay)
     -- add all events

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 -- | Note: we use 'Traversal' to keep a cursor to the
 -- write end of the state, but really we should use an
 -- "affine traversal" which guarantees we have either 0
@@ -92,7 +93,7 @@ module Anapo.Component
   , checked_
   , HasDisabledProperty(..)
   , disabled_
-  , rawProperty_
+  , rawProperty
 
     -- * events
   , onclick_
@@ -119,11 +120,8 @@ import qualified Data.DList as DList
 import Data.String (IsString(..))
 import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 import GHC.Stack (HasCallStack)
-import Data.JSString (JSString)
-import qualified Data.JSString as JSS
-import GHCJS.Types (JSVal)
-import Data.Coerce
 import Control.Monad.Trans.State (execStateT, execState, StateT, State, put, get)
+import Control.Monad.IO.Class (MonadIO(..))
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -138,6 +136,14 @@ import qualified GHCJS.DOM as DOM
 import Anapo.ClientM
 import qualified Anapo.VDOM as V
 import Anapo.Render
+import Anapo.Text (Text)
+import qualified Anapo.Text as T
+
+#if defined(ghcjs_HOST_OS)
+import GHCJS.Types (JSVal)
+#else
+import qualified Language.Javascript.JSaddle as JSaddle
+#endif
 
 -- affine traversals
 -- --------------------------------------------------------------------
@@ -160,15 +166,15 @@ toMaybeOf l x = case Lens.toListOf l x of
 -- Dispatching
 -- --------------------------------------------------------------------
 
-type Dispatch state = (state -> ClientM state) -> ClientM ()
+type Dispatch state = (state -> ClientM state) -> IO ()
 
 {-# INLINE runDispatchT #-}
-runDispatchT :: Dispatch state -> StateT state ClientM () -> ClientM ()
-runDispatchT disp st = disp (execStateT st)
+runDispatchT :: MonadIO m => Dispatch state -> StateT state ClientM () -> m ()
+runDispatchT disp st = liftIO (disp (execStateT st))
 
 {-# INLINE runDispatch #-}
-runDispatch :: Dispatch state -> State state () -> ClientM ()
-runDispatch disp st = disp (return . execState st)
+runDispatch :: MonadIO m => Dispatch state -> State state () -> m ()
+runDispatch disp st = liftIO (disp (return . execState st))
 
 -- Monad
 -- --------------------------------------------------------------------
@@ -198,7 +204,7 @@ type Node' el state = ComponentM () state state (V.Node el)
 
 instance (el ~ DOM.Text) => IsString (Node el read write) where
   {-# INLINE fromString #-}
-  fromString = text . JSS.pack
+  fromString = text . T.pack
 
 {-# INLINE runComponentM #-}
 runComponentM :: ComponentM dom read write a -> Dispatch write -> Maybe write -> read -> ClientM (dom, a)
@@ -278,8 +284,8 @@ zoomT st l = zoom st (toMaybeOf l) l
 -- Type class machinery
 -- --------------------------------------------------------------------
 
-data NamedElementProperty el = NamedElementProperty JSString (V.ElementProperty el)
-data StyleProperty el = StyleProperty JSString JSString
+data NamedElementProperty el = NamedElementProperty Text (V.ElementProperty el)
+data StyleProperty el = StyleProperty Text Text
 
 class (DOM.IsElement el) => ConstructElement el a | a -> el where
   constructElement :: (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [StyleProperty el] -> [V.SomeEvent el] -> a
@@ -322,7 +328,7 @@ instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write
     (vdom, _) <- unComponentM dom d mbst st
     return ((), constructElement_ wrap tag attrs style evts (V.CKeyed vdom))
 
-newtype UnsafeRawHtml = UnsafeRawHtml JSString
+newtype UnsafeRawHtml = UnsafeRawHtml Text
 
 instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el (UnsafeRawHtml -> Node el read write) where
   {-# INLINE constructElement #-}
@@ -405,13 +411,13 @@ n getNode = ComponentM $ \d mbst st -> do
   return (DList.singleton (V.SomeNode nod), ())
 
 {-# INLINE key #-}
-key :: (DOM.IsNode el) => JSString -> Node el read write -> KeyedComponent read write
+key :: (DOM.IsNode el) => Text -> Node el read write -> KeyedComponent read write
 key k getNode = ComponentM $ \d mbst st -> do
   (_, nod) <- unComponentM getNode d mbst st
   return (V.KeyedDom (DList.singleton (k, V.SomeNode nod)), ())
 
 {-# INLINE text #-}
-text :: JSString -> Node DOM.Text read write
+text :: Text -> Node DOM.Text read write
 text txt = return $ V.Node
   { V.nodeMark = Nothing
   , V.nodeBody = V.NBText txt
@@ -490,26 +496,26 @@ label_ = el "label" DOM.HTMLLabelElement
 -- Properties
 -- --------------------------------------------------------------------
 
-style_ :: (DOM.IsElementCSSInlineStyle el) => JSString -> JSString -> StyleProperty el
+style_ :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> StyleProperty el
 style_ k v = StyleProperty k v
 
-class_ :: (DOM.IsElement el) => JSString -> NamedElementProperty el
+class_ :: (DOM.IsElement el) => Text -> NamedElementProperty el
 class_ txt = NamedElementProperty "class" $ V.ElementProperty
   { V.eaGetProperty = DOM.getClassName
   , V.eaSetProperty = DOM.setClassName
-  , V.eaValue = txt
+  , V.eaValue = return txt
   }
 
-id_ :: (DOM.IsElement el) => JSString -> NamedElementProperty el
+id_ :: (DOM.IsElement el) => Text -> NamedElementProperty el
 id_ txt = NamedElementProperty "id" $ V.ElementProperty
   { V.eaGetProperty = DOM.getId
   , V.eaSetProperty = DOM.setId
-  , V.eaValue = txt
+  , V.eaValue = return txt
   }
 
 class HasTypeProperty el where
-  htpGetType :: el -> ClientM JSString
-  htpSetType :: el -> JSString -> ClientM ()
+  htpGetType :: el -> ClientM Text
+  htpSetType :: el -> Text -> ClientM ()
 
 instance HasTypeProperty DOM.HTMLInputElement where
   htpGetType = DOM.Input.getType
@@ -519,31 +525,31 @@ instance HasTypeProperty DOM.HTMLButtonElement where
   htpGetType = DOM.Button.getType
   htpSetType = DOM.Button.setType
 
-type_ :: (HasTypeProperty el) => JSString -> NamedElementProperty el
+type_ :: (HasTypeProperty el) => Text -> NamedElementProperty el
 type_ txt = NamedElementProperty "type" $ V.ElementProperty
   { V.eaGetProperty = htpGetType
   , V.eaSetProperty = htpSetType
-  , V.eaValue = txt
+  , V.eaValue = return txt
   }
 
 class HasHrefProperty el where
-  htpGetHref :: el -> ClientM JSString
-  htpSetHref :: el -> JSString -> ClientM ()
+  htpGetHref :: el -> ClientM Text
+  htpSetHref :: el -> Text -> ClientM ()
 
 instance HasHrefProperty DOM.HTMLAnchorElement where
   htpGetHref = DOM.HyperlinkElementUtils.getHref
   htpSetHref = DOM.HyperlinkElementUtils.setHref
 
-href_ :: (HasHrefProperty el) => JSString -> NamedElementProperty el
+href_ :: (HasHrefProperty el) => Text -> NamedElementProperty el
 href_ txt = NamedElementProperty "href" $ V.ElementProperty
   { V.eaGetProperty = htpGetHref
   , V.eaSetProperty = htpSetHref
-  , V.eaValue = txt
+  , V.eaValue = return txt
   }
 
 class HasValueProperty el where
-  hvpGetValue :: el -> ClientM JSString
-  hvpSetValue :: el -> JSString -> ClientM ()
+  hvpGetValue :: el -> ClientM Text
+  hvpSetValue :: el -> Text -> ClientM ()
 
 instance HasValueProperty DOM.HTMLInputElement where
   hvpGetValue = DOM.Input.getValue
@@ -553,11 +559,11 @@ instance HasValueProperty DOM.HTMLOptionElement where
   hvpGetValue = DOM.Option.getValue
   hvpSetValue = DOM.Option.setValue
 
-value_ :: (HasValueProperty el) => JSString -> NamedElementProperty el
+value_ :: (HasValueProperty el) => Text -> NamedElementProperty el
 value_ txt = NamedElementProperty "value" $ V.ElementProperty
   { V.eaGetProperty = hvpGetValue
   , V.eaSetProperty = hvpSetValue
-  , V.eaValue = txt
+  , V.eaValue = return txt
   }
 
 class HasCheckedProperty el where
@@ -572,14 +578,14 @@ checked_ :: (HasCheckedProperty el) => Bool -> NamedElementProperty el
 checked_ b = NamedElementProperty "checked" $ V.ElementProperty
   { V.eaGetProperty = hcpGetChecked
   , V.eaSetProperty = hcpSetChecked
-  , V.eaValue = b
+  , V.eaValue = return b
   }
 
 selected_ :: Bool -> NamedElementProperty DOM.HTMLOptionElement
 selected_ b = NamedElementProperty "selected" $ V.ElementProperty
   { V.eaGetProperty = DOM.Option.getSelected
   , V.eaSetProperty = DOM.Option.setSelected
-  , V.eaValue = b
+  , V.eaValue = return b
   }
 
 class HasDisabledProperty el where
@@ -594,25 +600,35 @@ disabled_ :: HasDisabledProperty el => Bool -> NamedElementProperty el
 disabled_ b = NamedElementProperty "disabled" $ V.ElementProperty
   { V.eaGetProperty = hdpGetDisabled
   , V.eaSetProperty = hdpSetDisabled
-  , V.eaValue = b
+  , V.eaValue = return b
   }
+
+#if defined(ghcjs_HOST_OS)
+-- Raw FFI on js for performance
 
 foreign import javascript unsafe
   "$2[$1]"
-  js_getProperty :: JSString -> JSVal -> IO JSVal
+  js_getProperty :: Text -> JSVal -> IO JSVal
 
 foreign import javascript unsafe
   "$2[$1] = $3"
-  js_setProperty :: JSString -> JSVal -> JSVal -> IO ()
+  js_setProperty :: Text -> JSVal -> JSVal -> IO ()
 
-rawProperty_ :: (DOM.ToJSVal el, Coercible a JSVal) => JSString -> a -> NamedElementProperty el
-rawProperty_ k x = NamedElementProperty k $ V.ElementProperty
-  { V.eaGetProperty = \el_ -> js_getProperty k =<< DOM.toJSVal el_
+rawProperty :: (DOM.PToJSVal el, DOM.ToJSVal a) => Text -> a -> NamedElementProperty el
+rawProperty k x = NamedElementProperty k $ V.ElementProperty
+  { V.eaGetProperty = \el_ -> js_getProperty k (DOM.pToJSVal el_)
   , V.eaSetProperty = \el_ y -> do
-      el' <- DOM.toJSVal el_
-      js_setProperty (coerce k) el' y
-  , V.eaValue = coerce x
+      js_setProperty k (DOM.pToJSVal el_) y
+  , V.eaValue = DOM.toJSVal x
   }
+#else
+rawProperty :: (JSaddle.MakeObject el, DOM.ToJSVal a) => Text -> a -> NamedElementProperty el
+rawProperty k x = NamedElementProperty k $ V.ElementProperty
+  { V.eaGetProperty = \el_ -> el_ JSaddle.! k
+  , V.eaSetProperty = \el_ y -> (el_ JSaddle.<# k) y
+  , V.eaValue = DOM.toJSVal x
+  }
+#endif
 
 -- Events
 -- --------------------------------------------------------------------

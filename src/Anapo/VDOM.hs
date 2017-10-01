@@ -3,13 +3,12 @@ module Anapo.VDOM where
 import qualified Data.HashMap.Strict as HMS
 import Data.DList (DList)
 import Data.Typeable.Internal (Fingerprint)
-import Data.JSString (JSString)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM
 
 import Anapo.ClientM
-import Anapo.Orphans ()
+import Anapo.Text
 
 -- Core types
 -- --------------------------------------------------------------------
@@ -64,7 +63,7 @@ instance Monoid (Callbacks el) where
 
 data NodeBody el where
   NBElement :: (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => Element el -> NodeBody el
-  NBText :: JSString -> NodeBody DOM.Text
+  NBText :: Text -> NodeBody DOM.Text
   NBRawNode :: el -> NodeBody el
 
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
@@ -73,15 +72,15 @@ data SomeEvent el = forall e. (DOM.IsEvent e) =>
 data ElementProperty el = forall a. ElementProperty
   { eaGetProperty :: el -> ClientM a
   , eaSetProperty :: el -> a -> ClientM ()
-  , eaValue :: a
+  , eaValue :: ClientM a
   }
 
-type ElementTag = JSString
-type ElementPropertyName = JSString
+type ElementTag = Text
+type ElementPropertyName = Text
 type ElementProperties el = HMS.HashMap ElementPropertyName (ElementProperty el)
 type ElementEvents el = [SomeEvent el]
-type StylePropertyName = JSString
-type StyleProperty = JSString
+type StylePropertyName = Text
+type StyleProperty = Text
 type ElementStyle = HMS.HashMap StylePropertyName StyleProperty
 
 data Element el = Element
@@ -92,7 +91,7 @@ data Element el = Element
   , elementChildren :: Children
   }
 
-newtype KeyedDom = KeyedDom (DList (JSString, SomeNode))
+newtype KeyedDom = KeyedDom (DList (Text, SomeNode))
   deriving (Monoid)
 
 {-# INLINE unkeyDom #-}
@@ -104,7 +103,7 @@ unkeyDom (KeyedDom kdom) = fmap snd kdom
 -- * a list of keyed nodes;
 -- * some raw html.
 data Children =
-    CRawHtml JSString
+    CRawHtml Text
   | CKeyed KeyedDom
   | CNormal Dom
 

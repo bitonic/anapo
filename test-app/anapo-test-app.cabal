@@ -1,4 +1,4 @@
-name:                anapo
+name:                anapo-test-app
 version:             0.1.0.0
 homepage:            https://github.com/bitonic/anapo#readme
 license:             BSD3
@@ -13,36 +13,35 @@ cabal-version:       >=1.10
 -- synopsis:
 -- description:
 
-library
-  hs-source-dirs:      src
-  exposed-modules:
-    Anapo
-    Anapo.ClientM
-    Anapo.VDOM
-    Anapo.Component
-    Anapo.Loop
-    Anapo.Render
-    Anapo.Text
-  build-depends:
-    base >= 4.7 && < 5,
-    dlist,
-    ghcjs-dom,
-    hashable,
-    lens,
-    time,
-    unordered-containers,
-    transformers
-  if !impl(ghcjs)
-    build-depends:
-      text,
-      jsaddle-warp,
-      jsaddle
-  else
-    build-depends:
-      ghcjs-base
-    js-sources: jsbits/fnv.js
-  default-language: Haskell2010
+executable test-app
+  hs-source-dirs: app
+  main-is: Main.hs
   ghc-options: -Wall
+  build-depends:
+    base,
+    anapo,
+    text,
+    lens,
+    containers,
+    ghcjs-dom,
+    async,
+    time,
+    aeson,
+    vector,
+    bytestring,
+    safe-exceptions,
+    hashable,
+    transformers,
+    ghcjs-base,
+    ghcjs-dom-jsffi
+  other-modules:
+    Anapo.TestApps
+    Anapo.TestApps.Prelude
+    Anapo.TestApps.TodoList
+    Anapo.TestApps.Timer
+    Anapo.TestApps.YouTube
+    Anapo.TestApps.SlowRequest
+  default-language: Haskell2010
   default-extensions:
     BangPatterns
     ConstraintKinds
@@ -63,6 +62,8 @@ library
     TupleSections
     TypeFamilies
     NamedFieldPuns
+    StandaloneDeriving
+    TypeApplications
 
 source-repository head
   type:     git

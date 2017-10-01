@@ -5,33 +5,36 @@ import Control.Lens (makeLenses, set, (^.), makePrisms)
 import Control.Monad (forM_, when)
 import Data.JSString
 import Data.Typeable (Typeable)
-import GHCJS.Foreign.Callback
 import Control.Exception.Safe (bracket)
-import GHCJS.Types (jsval)
 import qualified Data.JSString as JSS
 import GHCJS.Marshal.Pure (pFromJSVal)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
+import Control.Monad.Trans.Reader (ask)
+import Control.Monad.Trans.Class (lift)
 
 import Anapo
-import Anapo.History
+import Anapo.Text (Text)
 import Anapo.TestApps.Prelude
 import Anapo.TestApps.TodoList
 import Anapo.TestApps.Timer
 import Anapo.TestApps.YouTube
-import Anapo.TestApps.SlowRequest
 
 import qualified GHCJS.DOM as DOM
+import qualified GHCJS.DOM.WindowEventHandlers as DOM (popState)
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.Window as DOM
 import qualified GHCJS.DOM.Location as DOM
+import qualified GHCJS.DOM.EventM as DOM (newListener, addListener, removeListener)
+import qualified GHCJS.DOM.PopStateEvent as DOM.PopStateEvent
+import qualified GHCJS.DOM.History as DOM.History
+import qualified GHCJS.DOM.Window as DOM.Window
 
 data WhichTestApp =
     Blank
   | Todo
   | Timer
   | YouTube
-  | SlowRequest
   deriving (Eq, Show, Read, Enum, Bounded, Typeable)
 
 testAppToPath :: WhichTestApp -> JSString
@@ -40,7 +43,6 @@ testAppToPath = \case
   Todo -> "/todo"
   Timer -> "/timer"
   YouTube -> "/youTube"
-  SlowRequest -> "/slowRequest"
 
 testAppFromPath :: JSString -> Maybe WhichTestApp
 testAppFromPath = \case
@@ -48,7 +50,6 @@ testAppFromPath = \case
   "/todo" -> Just Todo
   "/timer" -> Just Timer
   "/youTube" -> Just YouTube
-  "/slowRequest" -> Just SlowRequest
   "/" -> Just Todo
   _ -> Nothing
 
@@ -62,7 +63,6 @@ data TestAppsState = TestAppsState
   , _tasTimer :: TimerState
   , _tasStopTimerOnAppChange :: Bool
   , _tasYouTube :: YouTubeState
-  , _tasSlowRequest :: SlowRequestState
   }
 makeLenses ''TestAppsState
 
@@ -77,7 +77,9 @@ changeToApp pushHistory dispatchM mbApp =
     let app = fromMaybe (st'^.tasFirstApp) mbApp
     when pushHistory $ do
       let appShown = jsshow app
-      historyPushState (jsval appShown) "" (testAppToPath app)
+      window <- DOM.currentWindowUnchecked
+      history <- DOM.Window.getHistory window
+      DOM.History.pushState history appShown ("" :: Text) (Just (testAppToPath app))
     st'' <- if st'^.tasStopTimerOnAppChange && app /= Timer
       then tasTimer timerStop st'
       else return st'
@@ -113,7 +115,6 @@ testAppsComponent = do
         Todo -> zoomL tasTodo todoComponent
         Timer -> zoomL tasTimer timerComponent
         YouTube -> zoomL tasYouTube youTubeComponent
-        SlowRequest -> zoomL tasSlowRequest slowRequestComponent
 
 testAppsWith :: Dispatch TestAppsStateOrError -> (TestAppsStateOrError -> ClientM ()) -> ClientM ()
 testAppsWith dispatch cont = do
@@ -121,15 +122,18 @@ testAppsWith dispatch cont = do
   case testAppFromPath path of
     Nothing -> cont (TASOEError ("No app at location " <> path))
     Just app -> do
+      window <- DOM.currentWindowUnchecked
       bracket
-        (asyncCallback1 $ \st -> do
-          let mbApp = read . JSS.unpack <$> pFromJSVal st
-          changeToApp False (dispatch . _TASOEOk) mbApp)
-        (\callback -> do
-          historyRemoveOnPopState
-          releaseCallback callback)
-        (\callback -> do
-            historySetOnPopState callback
+        (do
+          listener <- DOM.newListener $ do
+            ev <- ask
+            st <- DOM.PopStateEvent.getState ev
+            let mbApp = read . JSS.unpack <$> pFromJSVal st
+            lift (changeToApp False (dispatch . _TASOEOk) mbApp)
+          DOM.addListener window DOM.popState listener False
+          return listener)
+        (\listener -> DOM.removeListener window DOM.popState listener False)
+        (\_ -> do
             st <- TestAppsState
               <$> pure app
               <*> pure app
@@ -137,5 +141,4 @@ testAppsWith dispatch cont = do
               <*> timerInit
               <*> pure False
               <*> youTubeInit "Hah4iGqh7GY"
-              <*> slowRequestInit
             cont (TASOEOk st))

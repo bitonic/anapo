@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eux -o pipefail
 
-stack build --ghc-options '-O0' anapo:test-app
+stack build --ghc-options '-O0' anapo-test-app
 dist_dir=$(stack path --dist-dir)
 bin_dir="$dist_dir/build/test-app/test-app.jsexe"
 ./serve-test-app.hs "$bin_dir" "test-app.html"

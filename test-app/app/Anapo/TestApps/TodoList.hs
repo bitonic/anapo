@@ -10,16 +10,16 @@ import qualified Data.Map.Strict as Map
 import Control.Monad (forM_, when)
 import Data.List (partition)
 import Data.Monoid ((<>))
-import Data.JSString (JSString)
 
 import qualified GHCJS.DOM.Event as DOM
 
 import Anapo
+import Anapo.Text (Text)
 import Anapo.TestApps.Prelude
 
 data TodoItemState = TodoItemState
   { _tisCompleted :: Bool
-  , _tisBody :: JSString
+  , _tisBody :: Text
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
@@ -39,7 +39,7 @@ todoItemNode = do
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
   , _tsTodoElements :: Map.Map Int TodoItemState
-  , _tsCurrentText :: JSString
+  , _tsCurrentText :: Text
   } deriving (Eq, Show)
 makeLenses ''TodoState
 
@@ -51,7 +51,7 @@ todoComponent = do
     n$ div_ (class_ "col-md-auto") $ do
       -- submit new item
       zoomL tsCurrentText $ simpleTextInput "todo item"
-        (dispatch $ \st' -> return $ if st' ^. tsCurrentText /= ""
+        (liftIO $ dispatch $ \st' -> return $ if st' ^. tsCurrentText /= ""
             then let
               newTodoItem = TodoItemState False (st' ^. tsCurrentText)
               itemKey = if Map.null (st' ^. tsTodoElements)
