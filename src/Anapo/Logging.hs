@@ -15,8 +15,8 @@ import Data.Monoid ((<>))
 #if defined(ghcjs_HOST_OS)
 
 foreign import javascript unsafe
-  "console.log($1)"
-  js_consoleLog :: Text -> IO ()
+  "console.debug($1)"
+  js_consoleDebug :: Text -> IO ()
 
 foreign import javascript unsafe
   "console.info($1)"
@@ -44,7 +44,7 @@ logInfo = liftIO . js_consoleInfo . addCallStack callStack
 
 {-# INLINE logDebug #-}
 logDebug :: (HasCallStack, MonadIO m) => Text -> m ()
-logDebug = liftIO . js_consoleLog . addCallStack callStack
+logDebug = liftIO . js_consoleDebug . addCallStack callStack
 
 #else
 
