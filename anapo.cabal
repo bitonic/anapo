@@ -22,6 +22,7 @@ library
     Anapo.Loop
     Anapo.Render
     Anapo.Text
+    Anapo.Logging
   build-depends:
     base >= 4.7 && < 5,
     dlist,

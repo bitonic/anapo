@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Anapo.Render (RenderOptions(..), Overlay, renderVirtualDom) where
 
 import qualified Data.HashMap.Strict as HMS
@@ -10,6 +11,7 @@ import Data.Foldable (traverse_, for_)
 import Unsafe.Coerce (unsafeCoerce)
 import Control.Monad.Trans.Reader (ask)
 import Control.Monad.Trans.Class (lift)
+import Data.Monoid ((<>))
 
 import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -20,7 +22,8 @@ import qualified GHCJS.DOM.ElementCSSInlineStyle as DOM.ElementCSSInlineStyle
 import qualified GHCJS.DOM.EventM as DOM
 
 import qualified Anapo.VDOM as V
-import Anapo.Text (Text)
+import Anapo.Text (Text, pack)
+import Anapo.Logging
 
 type Overlay = [NodeOverlay]
 
@@ -47,7 +50,6 @@ emptyOverlay = NodeOverlay mempty mempty mempty mempty
 
 data RenderOptions = RenderOptions
   { roAlwaysRerender :: Bool
-  , roDebugOutput :: Bool
   }
 
 renderVirtualDom :: forall el0.
@@ -367,8 +369,6 @@ renderVirtualDom RenderOptions{..} doc = let
     mbCursor <- DOM.getFirstChild container
     go mbCursor (DList.toList prevVnodes0) prevVnodesEvents0 (DList.toList vnodes0)
 
-  debugOutput s = liftIO (when roDebugOutput (putStrLn s))
-
   in \container mbPrevVdom vdom -> do
     t0 <- liftIO getCurrentTime
     x <- case mbPrevVdom of
@@ -382,5 +382,5 @@ renderVirtualDom RenderOptions{..} doc = let
         else do
           patchDom container prevVdom prevVdomEvents vdom
     t1 <- liftIO getCurrentTime
-    debugOutput ("Vdom rendered (" ++ show (diffUTCTime t1 t0) ++ ")")
+    logDebug ("Vdom rendered (" <> pack (show (diffUTCTime t1 t0)) <> ")")
     return x

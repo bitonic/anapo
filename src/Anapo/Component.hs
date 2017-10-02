@@ -676,4 +676,4 @@ simpleRenderComponent ::
 simpleRenderComponent container st comp = do
   doc <- DOM.currentDocumentUnchecked
   vdom <- runComponent comp (\_ -> return ()) Nothing st
-  void (renderVirtualDom RenderOptions{roAlwaysRerender = True, roDebugOutput = False} doc container Nothing vdom)
+  void (renderVirtualDom RenderOptions{roAlwaysRerender = True} doc container Nothing vdom)
