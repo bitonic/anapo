@@ -11,6 +11,6 @@ main = do
   (dispatch, getStateUpdate) <- withDispatch
   testAppsWith dispatch $ \st -> do
     installComponentBootstrap
-      RenderOptions{roAlwaysRerender = False, roDebugOutput = True}
+      RenderOptions{roAlwaysRerender = False, roErase = True}
       dispatch getStateUpdate
       st testAppsComponent

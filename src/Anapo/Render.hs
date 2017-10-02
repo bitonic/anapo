@@ -50,6 +50,7 @@ emptyOverlay = NodeOverlay mempty mempty mempty mempty
 
 data RenderOptions = RenderOptions
   { roAlwaysRerender :: Bool
+  , roErase :: Bool
   }
 
 renderVirtualDom :: forall el0.
@@ -57,9 +58,9 @@ renderVirtualDom :: forall el0.
   => RenderOptions -> DOM.Document -> el0 -> Maybe (V.Dom, Overlay) -> V.Dom
   -> DOM.JSM Overlay
 renderVirtualDom RenderOptions{..} doc = let
-  {-# INLINE removeAllChildren #-}
-  removeAllChildren :: (DOM.IsNode el) => el -> DOM.JSM ()
-  removeAllChildren el = let
+  {-# INLINE eraseAllChildren #-}
+  eraseAllChildren :: (DOM.IsNode el) => el -> DOM.JSM ()
+  eraseAllChildren el = let
     go = do
       mbChild <- DOM.getFirstChild el
       forM_ mbChild $ \child -> do
@@ -130,6 +131,70 @@ renderVirtualDom RenderOptions{..} doc = let
       Nothing -> DOM.getFirstChild container
       Just cursor -> return (Just cursor)
     go mbCursor overlay00 nodes00
+
+  {-# INLINE releaseOverlay #-}
+  releaseOverlay :: Overlay -> DOM.JSM ()
+  releaseOverlay = traverse_ releaseNodeOverlay
+
+  {-# INLINE releaseNodeOverlay #-}
+  releaseNodeOverlay :: NodeOverlay -> DOM.JSM ()
+  releaseNodeOverlay NodeOverlay{..} = for_ noEvents (\(SomeSaferEventListener _ ev) -> DOM.releaseListener ev)
+
+  {-# INLINE releaseNode #-}
+  releaseNode :: V.SomeNode -> DOM.JSM ()
+  releaseNode node0 = do
+    let go (V.SomeNode V.Node{..}) = do
+          case nodeBody of
+            V.NBElement V.Element{..} -> case elementChildren of
+              V.CRawHtml{} -> return ()
+              V.CKeyed kd -> releaseNodes (V.unkeyDom kd)
+              V.CNormal n -> releaseNodes n
+            V.NBText{} -> return ()
+            V.NBRawNode{} -> return ()
+    go node0
+
+  {-# INLINE releaseNodes #-}
+  releaseNodes :: Foldable t => t V.SomeNode -> DOM.JSM ()
+  releaseNodes = traverse_ releaseNode
+
+  {-# INLINE eraseDom #-}
+  eraseDom ::
+       (DOM.IsNode el1)
+    => el1
+    -- ^ the container node
+    -> Maybe DOM.Node
+    -- ^ the node to start removing from. if 'Nothing' will start from
+    -- first child of container
+    -> Overlay
+    -> [V.SomeNode]
+    -> DOM.JSM ()
+  eraseDom container mbCursor00 overlay nodes = do
+    -- first remove children, then release callbacks
+    let
+      erase :: Maybe DOM.Node -> DOM.JSM ()
+      erase = \case
+        Nothing -> return ()
+        Just cursor -> do
+          nextCursor <- DOM.getNextSibling cursor
+          DOM.removeChild_ container cursor
+          erase nextCursor
+    erase mbCursor00
+    releaseNodes nodes
+    releaseOverlay overlay
+
+  {-# INLINE eraseDomNodeChildren #-}
+  eraseDomNodeChildren ::
+       (DOM.IsNode el)
+    => el -- ^ the node
+    -> Overlay
+    -> V.Children
+    -> DOM.JSM ()
+  eraseDomNodeChildren domNode overlay children = case children of
+    V.CRawHtml{} -> if null overlay
+      then return ()
+      else fail "eraseDomNodeChildren: expecting no overlay nodes with rawhtml, but got some"
+    V.CKeyed kvd -> eraseDom domNode Nothing overlay (DList.toList (V.unkeyDom kvd))
+    V.CNormal vdom -> eraseDom domNode Nothing overlay (DList.toList vdom)
 
   {-# INLINE addEvents #-}
   addEvents ::
@@ -252,7 +317,9 @@ renderVirtualDom RenderOptions{..} doc = let
       (V.CNormal prevNChildren, evts, V.CNormal nchildren) ->
         patchDom container prevNChildren evts nchildren
       (prevChildren, evts, children) -> do
-        removeDomNodeChildren container evts prevChildren
+        if roErase
+          then eraseDomNodeChildren container evts prevChildren
+          else removeDomNodeChildren container evts prevChildren
         renderDomChildren container children
 
   -- | Note that the elements are already assumed to be of the same
@@ -303,7 +370,6 @@ renderVirtualDom RenderOptions{..} doc = let
     -> V.SomeNode -- ^ the next vdom
     -> DOM.JSM NodeOverlay
   patchDomNode container node prevVdom@(V.SomeNode (V.Node prevMark prevBody _ _)) prevVdomEvents vdom@(V.SomeNode (V.Node mark body callbacks wrap)) = do
-    -- check if they're both marked and without the rerender
     case (prevMark, mark) of
       (Just (V.Mark prevFprint _), Just (V.Mark fprint V.UnsafeDontRerender)) | prevFprint == fprint -> return prevVdomEvents
       _ -> case (prevBody, body) of
@@ -320,7 +386,10 @@ renderVirtualDom RenderOptions{..} doc = let
           return x
         -- In all other cases we erase and rerender
         _ -> do
-          removeDomNode node prevVdomEvents prevVdom
+          -- if we're erasing, replacing the node later will be enough
+          if roErase
+            then releaseNode prevVdom >> releaseNodeOverlay prevVdomEvents
+            else removeDomNode node prevVdomEvents prevVdom
           renderDomNode vdom $ \el evts -> do
             DOM.replaceChild_ container el node
             return evts
@@ -355,7 +424,9 @@ renderVirtualDom RenderOptions{..} doc = let
             fail "patchDom: expecting no cursor at the end of previous nodes, but got one"
           renderDom container vnodes'
         (prevVnodes', prevVnodesEvents', []) -> do
-          removeDom container mbCursor prevVnodesEvents'  prevVnodes'
+          if roErase
+            then eraseDom container mbCursor prevVnodesEvents' prevVnodes'
+            else removeDom container mbCursor prevVnodesEvents'  prevVnodes'
           return mempty
         (prevVnode : prevVnodes', prevVnodeEvents : prevVnodesEvents', node : nodes') -> do
           case mbCursor of
@@ -373,11 +444,13 @@ renderVirtualDom RenderOptions{..} doc = let
     t0 <- liftIO getCurrentTime
     x <- case mbPrevVdom of
       Nothing -> do
-        removeAllChildren container
+        eraseAllChildren container
         renderDom container (DList.toList vdom)
       Just (prevVdom, prevVdomEvents) -> if roAlwaysRerender
         then do
-          removeDom container Nothing prevVdomEvents (DList.toList prevVdom)
+          if roErase
+            then removeDom container Nothing prevVdomEvents (DList.toList prevVdom)
+            else eraseDom container Nothing prevVdomEvents (DList.toList prevVdom)
           renderDom container (DList.toList vdom)
         else do
           patchDom container prevVdom prevVdomEvents vdom
