@@ -370,9 +370,22 @@ renderVirtualDom RenderOptions{..} doc = let
     -> V.SomeNode -- ^ the next vdom
     -> DOM.JSM NodeOverlay
   patchDomNode container node prevVdom@(V.SomeNode (V.Node prevMark prevBody _ _)) prevVdomEvents vdom@(V.SomeNode (V.Node mark body callbacks wrap)) = do
+    -- check if they're both marked and without the rerender
+    -- also note that if we switch from marked to unmarked, or
+    -- if the fingerprints differ, we always assume they're incompatible,
+    -- to speed up deletion (especially on jssaddle)
     case (prevMark, mark) of
-      (Just (V.Mark prevFprint _), Just (V.Mark fprint V.UnsafeDontRerender)) | prevFprint == fprint -> return prevVdomEvents
-      _ -> case (prevBody, body) of
+      (Just (V.Mark prevFprint _), Just (V.Mark fprint rerender)) ->
+        if prevFprint == fprint
+          then case rerender of
+            V.UnsafeDontRerender -> return prevVdomEvents
+            V.Rerender -> patch
+          else incompatible
+      (Just{}, Nothing) -> incompatible
+      (Nothing, Just{}) -> incompatible
+      (Nothing, Nothing) -> patch
+    where
+      patch = case (prevBody, body) of
         -- Text
         -- TODO consider ref. equality, also for rawnode
         -- TODO consider asserting no events when appropriate
@@ -385,14 +398,16 @@ renderVirtualDom RenderOptions{..} doc = let
           V.callbacksUnsafeDidPatch callbacks node'
           return x
         -- In all other cases we erase and rerender
-        _ -> do
-          -- if we're erasing, replacing the node later will be enough
-          if roErase
-            then releaseNode prevVdom >> releaseNodeOverlay prevVdomEvents
-            else removeDomNode node prevVdomEvents prevVdom
-          renderDomNode vdom $ \el evts -> do
-            DOM.replaceChild_ container el node
-            return evts
+        _ -> incompatible
+
+      incompatible = do
+        -- if we're erasing, replacing the node later will be enough
+        if roErase
+          then releaseNode prevVdom >> releaseNodeOverlay prevVdomEvents
+          else removeDomNode node prevVdomEvents prevVdom
+        renderDomNode vdom $ \el evts -> do
+          DOM.replaceChild_ container el node
+          return evts
 
   {-# INLINE patchKeyedDom #-}
   patchKeyedDom ::
