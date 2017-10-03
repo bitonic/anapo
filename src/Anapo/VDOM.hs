@@ -2,7 +2,7 @@ module Anapo.VDOM where
 
 import qualified Data.HashMap.Strict as HMS
 import Data.DList (DList)
-import Data.Typeable.Internal (Fingerprint)
+import GHC.Fingerprint.Type (Fingerprint)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM
