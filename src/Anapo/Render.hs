@@ -178,7 +178,10 @@ renderVirtualDom RenderOptions{..} doc = let
           nextCursor <- DOM.getNextSibling cursor
           DOM.removeChild_ container cursor
           erase nextCursor
-    erase mbCursor00
+    mbCursor <- case mbCursor00 of
+      Nothing -> DOM.getFirstChild container
+      Just cursor -> return (Just cursor)
+    erase mbCursor
     releaseNodes nodes
     releaseOverlay overlay
 
