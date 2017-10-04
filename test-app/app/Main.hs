@@ -1,16 +1,14 @@
-module Main where
+{-# LANGUAGE OverloadedStrings #-}
+module Main (main) where
 
+import Anapo
 import Anapo.Loop
 import Anapo.Render
-import Anapo.TestApps
-import Anapo.TestApps.YouTube
+import Anapo.TestApps.Prelude
 
 main :: IO ()
 main = do
-  youTubeSetup
-  (dispatch, getStateUpdate) <- withDispatch
-  testAppsWith dispatch $ \st -> do
-    installComponentBootstrap
-      RenderOptions{roAlwaysRerender = False, roErase = True}
-      dispatch getStateUpdate
-      st testAppsComponent
+  installComponentBootstrap
+    RenderOptions{roAlwaysRerender = False, roErase = True}
+    dispatch getStateUpdate
+    True (n$ marked (\_ _ -> Rerender) (static listComponent))

@@ -12,6 +12,7 @@ import Control.Concurrent as X (forkIO)
 import qualified Data.Aeson.TH as Aeson
 import Data.List (isPrefixOf)
 import Data.Char (toLower)
+import Control.Monad.Trans.State (put)
 
 import GHCJS.DOM.Types as X (JSM)
 import qualified GHCJS.DOM.Event as DOM

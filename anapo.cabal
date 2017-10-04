@@ -23,6 +23,7 @@ library
     Anapo.Render
     Anapo.Text
     Anapo.Logging
+    Anapo.Orphans
   build-depends:
     base >= 4.7 && < 5,
     dlist,
@@ -31,7 +32,10 @@ library
     lens,
     time,
     unordered-containers,
-    transformers
+    transformers,
+    safe-exceptions,
+    unliftio-core,
+    async
   if !impl(ghcjs)
     build-depends:
       text,

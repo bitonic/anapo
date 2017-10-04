@@ -19,8 +19,11 @@ module Anapo.Component
   , Dispatch
   , runDispatchT
   , runDispatch
-  , put
-  , get
+
+    -- * Register / handler
+  , RegisterThread
+  , HandleException
+  , forkRegistered
 
     -- * ComponentM
   , ComponentM
@@ -33,9 +36,14 @@ module Anapo.Component
   , runComponentM
   , runComponent
   , askDispatch
+  , localDispatch
+  , askRegisterThread
+  , localRegisterThread
+  , askHandleException
+  , localHandleException
   , askState
+  , localState
   , askPreviousState
-  , zoom
   , zoomL
   , zoomT
 
@@ -119,8 +127,11 @@ import qualified Data.DList as DList
 import Data.String (IsString(..))
 import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 import GHC.Stack (HasCallStack)
-import Control.Monad.Trans.State (execStateT, execState, StateT, State, put, get)
+import Control.Monad.Trans.State (execStateT, execState, StateT, State)
 import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO)
+import Control.Exception.Safe (SomeException, uninterruptibleMask, tryAny, throwIO)
+import Control.Concurrent (ThreadId, forkIO, myThreadId)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -134,7 +145,9 @@ import qualified GHCJS.DOM as DOM
 
 import qualified Anapo.VDOM as V
 import Anapo.Render
-import Anapo.Text (Text)
+import Anapo.Logging
+import Anapo.Orphans ()
+import Anapo.Text (Text, pack)
 import qualified Anapo.Text as T
 
 #if defined(ghcjs_HOST_OS)
@@ -161,7 +174,7 @@ toMaybeOf l x = case Lens.toListOf l x of
   [y] -> Just y
   _:_ -> error "toMaybeOf: multiple elements returned!"
 
--- Dispatching
+-- Dispatching and handling
 -- --------------------------------------------------------------------
 
 type Dispatch state = (state -> DOM.JSM state) -> IO ()
@@ -174,12 +187,39 @@ runDispatchT disp st = liftIO (disp (execStateT st))
 runDispatch :: MonadIO m => Dispatch state -> State state () -> m ()
 runDispatch disp st = liftIO (disp (return . execState st))
 
+-- Register / handle
+-- --------------------------------------------------------------------
+
+-- we use these two on events and on forks, so that we can handle
+-- all exceptions in a central place and so that we don't leave
+-- dangling threads
+
+type RegisterThread = IO () -> IO ()
+type HandleException = SomeException -> IO ()
+
+{-# INLINE forkRegistered #-}
+forkRegistered :: MonadUnliftIO m => RegisterThread -> HandleException -> m () -> m ThreadId
+forkRegistered register handler m = do
+  u <- askUnliftIO
+  liftIO $ uninterruptibleMask $ \restore -> forkIO $ register $ do
+    mbErr <- tryAny (restore (unliftIO u m))
+    case mbErr of
+      Left err -> do
+        tid <- myThreadId
+        logError ("Caught exception in registered thread " <> pack (show tid) <> ", will handle it upstream: " <> pack (show err))
+        handler err
+      Right _ -> return ()
+
 -- Monad
 -- --------------------------------------------------------------------
 
 newtype ComponentM dom read write a = ComponentM
   { unComponentM ::
-         Dispatch write
+         RegisterThread
+      -- how to register threads resulting from events / forks
+      -> HandleException
+      -- how to handle exceptions that happen in events / forks
+      -> Dispatch write
       -- how to dispatch updates to the state
       -> Maybe write
       -- the previous state
@@ -189,7 +229,9 @@ newtype ComponentM dom read write a = ComponentM
   }
 
 instance (Monoid dom, a ~ ()) => Monoid (ComponentM dom read write a) where
+  {-# INLINE mempty #-}
   mempty = return ()
+  {-# INLINE mappend #-}
   a `mappend` b = a >> b
 
 type ComponentM' dom state = ComponentM dom state state
@@ -202,14 +244,14 @@ type Node' el state = ComponentM () state state (V.Node el)
 
 instance Monoid dom => MonadIO (ComponentM dom read write) where
   {-# INLINE liftIO #-}
-  liftIO m = ComponentM $ \_d _mbst _st -> do
+  liftIO m = ComponentM $ \_reg _hdl _d _mbst _st -> do
     x <- liftIO m
     return (mempty, x)
 
 #if !defined(ghcjs_HOST_OS)
 instance Monoid dom => JSaddle.MonadJSM (ComponentM dom read write) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = ComponentM $ \_d _mbst _st -> do
+  liftJSM' m = ComponentM $ \_reg _hdl _d _mbst _st -> do
     x <- m
     return (mempty, x)
 #endif
@@ -219,17 +261,17 @@ instance (el ~ DOM.Text) => IsString (Node el read write) where
   fromString = text . T.pack
 
 {-# INLINE runComponentM #-}
-runComponentM :: ComponentM dom read write a -> Dispatch write -> Maybe write -> read -> DOM.JSM (dom, a)
+runComponentM :: ComponentM dom read write a -> RegisterThread -> HandleException -> Dispatch write -> Maybe write -> read -> DOM.JSM (dom, a)
 runComponentM vdom = unComponentM vdom
 
 {-# INLINE runComponent #-}
-runComponent :: Component read write -> Dispatch write -> Maybe write -> read -> DOM.JSM V.Dom
-runComponent vdom d mbst st = fst <$> unComponentM vdom d mbst st
+runComponent :: Component read write -> RegisterThread -> HandleException -> Dispatch write -> Maybe write -> read -> DOM.JSM V.Dom
+runComponent vdom reg hdl d mbst st = fst <$> unComponentM vdom reg hdl d mbst st
 
 instance Functor (ComponentM dom read write) where
   {-# INLINE fmap #-}
-  fmap f (ComponentM g) = ComponentM $ \d mbst st -> do
-    (dom, x) <- g d mbst st
+  fmap f (ComponentM g) = ComponentM $ \reg hdl d mbst st -> do
+    (dom, x) <- g reg hdl d mbst st
     return (dom, f x)
 
 instance (Monoid dom) => Applicative (ComponentM dom read write) where
@@ -240,27 +282,49 @@ instance (Monoid dom) => Applicative (ComponentM dom read write) where
 
 instance (Monoid dom) => Monad (ComponentM dom read write) where
   {-# INLINE return #-}
-  return x = ComponentM (\_d _mbst _st -> return (mempty, x))
+  return x = ComponentM (\_reg _hdl _d _mbst _st -> return (mempty, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = ComponentM $ \d mbst st -> do
-    (vdom1, x) <- unComponentM ma d mbst st
-    (vdom2, y) <- unComponentM (mf x) d mbst st
+  ma >>= mf = ComponentM $ \reg hdl d mbst st -> do
+    (vdom1, x) <- unComponentM ma reg hdl d mbst st
+    (vdom2, y) <- unComponentM (mf x) reg hdl d mbst st
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
 {-# INLINE askDispatch #-}
 askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch write)
-askDispatch = ComponentM (\d _mbst _st -> return (mempty, d))
+askDispatch = ComponentM (\_reg _hdl d _mbst _st -> return (mempty, d))
+
+{-# INLINE localDispatch #-}
+localDispatch :: (Monoid dom) => Dispatch write' -> Maybe write' -> ComponentM dom read write' a -> ComponentM dom read write a
+localDispatch d mbst comp = ComponentM (\reg hdl _d _mbst st -> unComponentM comp reg hdl d mbst st)
+
+{-# INLINE askRegisterThread #-}
+askRegisterThread :: (Monoid dom) => ComponentM dom read write RegisterThread
+askRegisterThread = ComponentM (\reg _hdl _d _mbst _st -> return (mempty, reg))
+
+{-# INLINE localRegisterThread #-}
+localRegisterThread :: (Monoid dom) => RegisterThread -> ComponentM dom read write a -> ComponentM dom read write a
+localRegisterThread reg comp = ComponentM (\_reg hdl d mbst st -> unComponentM comp reg hdl d mbst st)
+
+{-# INLINE askHandleException #-}
+askHandleException :: (Monoid dom) => ComponentM dom read write HandleException
+askHandleException = ComponentM (\_reg hdl _d _mbst _st -> return (mempty, hdl))
+
+{-# INLINE localHandleException #-}
+localHandleException :: (Monoid dom) => HandleException -> ComponentM dom read write a -> ComponentM dom read write a
+localHandleException hdl comp = ComponentM (\reg _hdl d mbst st -> unComponentM comp reg hdl d mbst st)
 
 {-# INLINE askState #-}
 askState :: (Monoid dom) => ComponentM dom read write read
-askState = ComponentM (\_d _mbst st -> return (mempty, st))
+askState = ComponentM (\_reg _hdl _d _mbst st -> return (mempty, st))
+
+{-# INLINE localState #-}
+localState :: (Monoid dom) => read' -> ComponentM dom read' write a -> ComponentM dom read write a
+localState st comp = ComponentM (\reg hdl d mbst _st -> runComponentM comp reg hdl d mbst st)
 
 {-# INLINE askPreviousState #-}
-askPreviousState ::
-     (Monoid dom)
-  => ComponentM dom read write (Maybe write)
-askPreviousState = ComponentM (\_d mbst _st -> return (mempty, mbst))
+askPreviousState :: (Monoid dom) => ComponentM dom read write (Maybe write)
+askPreviousState = ComponentM (\_reg _hdl _d mbst _st -> return (mempty, mbst))
 
 {-# INLINE zoom #-}
 zoom ::
@@ -269,13 +333,13 @@ zoom ::
   -> LensLike' DOM.JSM writeOut writeIn
   -> ComponentM dom readIn writeIn a
   -> ComponentM dom readOut writeOut a
-zoom st' get write' dom = ComponentM $ \d mbst _st ->
-  unComponentM dom (d . write') (mbst >>= get) st'
+zoom st' get write' dom = ComponentM $ \reg hdl d mbst _st ->
+  unComponentM dom reg hdl (d . write') (mbst >>= get) st'
 
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
-zoomL l dom = ComponentM $ \d mbst st ->
-  unComponentM dom (d . l) (view l <$> mbst) (view l st)
+zoomL l dom = ComponentM $ \reg hdl d mbst st ->
+  unComponentM dom reg hdl (d . l) (view l <$> mbst) (view l st)
 
 {-# INLINE zoomT #-}
 zoomT ::
@@ -299,47 +363,63 @@ class (DOM.IsElement el) => ConstructElement el a | a -> el where
 {-# INLINE constructElement_ #-}
 constructElement_ ::
      (DOM.IsElement el, DOM.IsElementCSSInlineStyle el)
-  => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [StyleProperty el] -> [V.SomeEvent el] -> V.Children -> V.Node el
-constructElement_ wrap tag props style evts child = V.Node
-  { V.nodeMark = Nothing
-  , V.nodeCallbacks = mempty
-  , V.nodeBody = V.NBElement V.Element
-      { V.elementTag = tag
-      , V.elementProperties = HMS.fromList $ do
-          NamedElementProperty name prop <- reverse props
-          return (name, prop)
-      , V.elementStyle = HMS.fromList $ do
-          StyleProperty name val <- reverse style
-          return (name, val)
-      , V.elementEvents = reverse evts
-      , V.elementChildren = child
-      }
-  , V.nodeWrap = wrap
-  }
+  => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [StyleProperty el] -> [V.SomeEvent el] -> V.Children
+  -> Node el read write
+constructElement_ wrap tag props style evts child = do
+  register <- askRegisterThread
+  handle <- askHandleException
+  return V.Node
+    { V.nodeMark = Nothing
+    , V.nodeCallbacks = mempty
+    , V.nodeBody = V.NBElement V.Element
+        { V.elementTag = tag
+        , V.elementProperties = HMS.fromList $ do
+            NamedElementProperty name prop <- reverse props
+            return (name, prop)
+        , V.elementStyle = HMS.fromList $ do
+            StyleProperty name val <- reverse style
+            return (name, val)
+        , V.elementEvents = do
+            V.SomeEvent evtName evtHandler <- reverse evts
+            return $ V.SomeEvent evtName $ \el_ ev -> do
+              u <- askUnliftIO
+              liftIO $ uninterruptibleMask $ \restore -> register $ do
+                mbExc <- tryAny (restore (unliftIO u (evtHandler el_ ev)))
+                case mbExc of
+                  Left err -> do
+                    logError ("Caught exception in event, will handle it upstream: " <> pack (show err))
+                    handle err
+                  Right x -> return x
+        , V.elementChildren = child
+        }
+    , V.nodeWrap = wrap
+    }
 
 instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el (Node el read write) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs style evts =
-    return (constructElement_ wrap tag attrs style evts (V.CNormal mempty))
+    constructElement_ wrap tag attrs style evts (V.CNormal mempty)
 
 instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs style evts dom = ComponentM $ \d mbst st -> do
-    (vdom, _) <- unComponentM dom d mbst st
-    return ((), constructElement_ wrap tag attrs style evts (V.CNormal vdom))
+  constructElement wrap tag attrs style evts dom = ComponentM $ \reg hdl d mbst st -> do
+    (vdom, _) <- unComponentM dom reg hdl d mbst st
+    (_, el_) <- unComponentM (constructElement_ wrap tag attrs style evts (V.CNormal vdom)) reg hdl d mbst st
+    return ((), el_)
 
 instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
-  constructElement wrap tag attrs style evts dom = ComponentM $ \d mbst st -> do
-    (vdom, _) <- unComponentM dom d mbst st
-    return ((), constructElement_ wrap tag attrs style evts (V.CKeyed vdom))
+  constructElement wrap tag attrs style evts dom = ComponentM $ \reg hdl d mbst st -> do
+    (vdom, _) <- unComponentM dom reg hdl d mbst st
+    (_, el_) <- unComponentM (constructElement_ wrap tag attrs style evts (V.CKeyed vdom)) reg hdl d mbst st
+    return ((), el_)
 
 newtype UnsafeRawHtml = UnsafeRawHtml Text
 
 instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el (UnsafeRawHtml -> Node el read write) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs style evts (UnsafeRawHtml html) =
-    return (constructElement_ wrap tag  attrs style evts  (V.CRawHtml html))
+    constructElement_ wrap tag  attrs style evts  (V.CRawHtml html)
 
 instance (ConstructElement el a) => ConstructElement el (NamedElementProperty el -> a) where
   {-# INLINE constructElement #-}
@@ -401,10 +481,10 @@ unsafeWillRemove f nod = nod
 marked ::
      (Maybe write -> read -> V.Rerender)
   -> StaticPtr (Node el read write) -> Node el read write
-marked shouldRerender ptr = ComponentM $ \d mbst st -> do
+marked shouldRerender ptr = ComponentM $ \reg hdl d mbst st -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender mbst st
-  (_, nod) <- unComponentM (deRefStaticPtr ptr) d mbst st
+  (_, nod) <- unComponentM (deRefStaticPtr ptr) reg hdl d mbst st
   return ((), nod{ V.nodeMark = Just (V.Mark fprint rer) })
 
 -- useful shorthands
@@ -412,14 +492,14 @@ marked shouldRerender ptr = ComponentM $ \d mbst st -> do
 
 {-# INLINE n #-}
 n :: (DOM.IsNode el) => Node el read write -> Component read write
-n getNode = ComponentM $ \d mbst st -> do
-  (_, nod) <- unComponentM getNode d mbst st
+n getNode = ComponentM $ \reg hdl d mbst st -> do
+  (_, nod) <- unComponentM getNode reg hdl d mbst st
   return (DList.singleton (V.SomeNode nod), ())
 
 {-# INLINE key #-}
 key :: (DOM.IsNode el) => Text -> Node el read write -> KeyedComponent read write
-key k getNode = ComponentM $ \d mbst st -> do
-  (_, nod) <- unComponentM getNode d mbst st
+key k getNode = ComponentM $ \reg hdl d mbst st -> do
+  (_, nod) <- unComponentM getNode reg hdl d mbst st
   return (V.KeyedDom (DList.singleton (k, V.SomeNode nod)), ())
 
 {-# INLINE text #-}
@@ -675,5 +755,5 @@ simpleRenderComponent ::
   => el -> read -> Component read () -> DOM.JSM ()
 simpleRenderComponent container st comp = do
   doc <- DOM.currentDocumentUnchecked
-  vdom <- runComponent comp (\_ -> return ()) Nothing st
+  vdom <- runComponent comp id throwIO (\_ -> return ()) Nothing st
   void (renderVirtualDom RenderOptions{roAlwaysRerender = True, roErase = False} doc container Nothing vdom)
