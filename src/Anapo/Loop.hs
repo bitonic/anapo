@@ -42,7 +42,7 @@ timeIt m = do
 
 {-# INLINE componentLoop #-}
 componentLoop :: forall state acc.
-     (forall a. RegisterThread -> HandleException -> Dispatch state -> (state -> DOM.JSM a) -> DOM.JSM a)
+     (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Component (Either SomeException state) state
   -> acc -> (acc -> V.Dom -> DOM.JSM acc)
   -> DOM.JSM acc
@@ -59,7 +59,7 @@ componentLoop withState vdom !acc0 useDom = do
           logInfo "got undefinitedly blocked on mvar on dispatch channel, will stop"
           return Nothing
         Right f -> return (Just f)
-  let dispatch = writeChan dispatchChan
+  let disp = writeChan dispatchChan
   -- exception mvar
   excVar :: MVar SomeException <- liftIO newEmptyMVar
   let handler err = void (tryPutMVar excVar err)
@@ -73,41 +73,43 @@ componentLoop withState vdom !acc0 useDom = do
         (\_ -> atomicModifyIORef' tidsRef (\tids -> (HS.delete tid tids, ())))
         (\_ -> m)
   -- compute state
-  withState register handler dispatch $ \st0 -> do
-    -- main loop
-    let
-      go :: Maybe state -> Either SomeException state -> acc -> DOM.JSM acc
-      go mbPrevSt !stOrErr !acc = do
-        (nodes, vdomDt) <- timeIt (runComponent vdom register handler dispatch mbPrevSt stOrErr)
-        DOM.syncPoint
-        logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
-        acc' <- useDom acc nodes
-        case stOrErr of
-          Left err -> do
-            logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
-            liftIO (throwIO err)
-          Right st -> do
-            -- we are biased towards exceptions since we want
-            -- to exit immediately when there is a failure
-            fOrErr :: Either SomeException (Maybe (state -> DOM.JSM state)) <- liftIO (Async.race (readMVar excVar) get)
-            case fOrErr of
-              Left err -> go Nothing (Left err) acc'
-              Right Nothing -> do
-                logInfo "No state update received, terminating component loop"
-                return acc'
-              Right (Just f) -> do
-                (st', updateDt) <- timeIt (f st)
-                logDebug ("State updated (" <> pack (show updateDt) <> "), will re render")
-                go (Just st) (Right st') acc'
-    tid <- liftIO myThreadId
-    finally
-      (go Nothing (Right st0) acc0)
-      (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid'))))
+  runAction
+    (withState $ \st0 -> do
+      -- main loop
+      let
+        go :: Maybe state -> Either SomeException state -> acc -> DOM.JSM acc
+        go mbPrevSt !stOrErr !acc = do
+          (nodes, vdomDt) <- timeIt (runComponent vdom register handler disp mbPrevSt stOrErr)
+          DOM.syncPoint
+          logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
+          acc' <- useDom acc nodes
+          case stOrErr of
+            Left err -> do
+              logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
+              liftIO (throwIO err)
+            Right st -> do
+              -- we are biased towards exceptions since we want
+              -- to exit immediately when there is a failure
+              fOrErr :: Either SomeException (Maybe (state -> DOM.JSM state)) <- liftIO (Async.race (readMVar excVar) get)
+              case fOrErr of
+                Left err -> go Nothing (Left err) acc'
+                Right Nothing -> do
+                  logInfo "No state update received, terminating component loop"
+                  return acc'
+                Right (Just f) -> do
+                  (st', updateDt) <- timeIt (f st)
+                  logDebug ("State updated (" <> pack (show updateDt) <> "), will re render")
+                  go (Just st) (Right st') acc'
+      tid <- liftIO myThreadId
+      finally
+        (go Nothing (Right st0) acc0)
+        (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid')))))
+    register handler disp
 
 {-# INLINE installComponentBody #-}
 installComponentBody ::
      RenderOptions
-  -> (forall a. RegisterThread -> HandleException -> Dispatch state -> (state -> DOM.JSM a) -> DOM.JSM a)
+  -> (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Component (Either SomeException state) state
   -> DOM.JSM ()
 installComponentBody ro getSt vdom0 = do
@@ -120,7 +122,7 @@ installComponentBody ro getSt vdom0 = do
 {-# INLINE installComponentBootstrap #-}
 installComponentBootstrap ::
      RenderOptions
-  -> (forall a. RegisterThread -> HandleException -> Dispatch state -> (state -> DOM.JSM a) -> DOM.JSM a)
+  -> (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Component (Either SomeException state) state
   -> DOM.JSM ()
 installComponentBootstrap ro getSt vdom0 = do

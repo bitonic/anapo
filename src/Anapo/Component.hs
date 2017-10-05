@@ -24,9 +24,13 @@ module Anapo.Component
   , RegisterThread
   , HandleException
   , forkRegistered
+  , Action(..)
+  , runAction
+  , dispatch
+  , forkAction
 
     -- * ComponentM
-  , ComponentM
+  , ComponentM(..)
   , Component
   , Component'
   , KeyedComponent
@@ -111,8 +115,6 @@ module Anapo.Component
 
     -- * dom re-exports
   , DOM.preventDefault
-  , DOM.HTMLAnchorElement
-  , DOM.HTMLButtonElement
 
     -- * simple rendering
   , simpleRenderComponent
@@ -129,7 +131,7 @@ import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 import GHC.Stack (HasCallStack)
 import Control.Monad.Trans.State (execStateT, execState, StateT, State)
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO)
+import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO, UnliftIO(..))
 import Control.Exception.Safe (SomeException, uninterruptibleMask, tryAny, throwIO)
 import Control.Concurrent (ThreadId, forkIO, myThreadId)
 
@@ -137,6 +139,7 @@ import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
 import qualified GHCJS.DOM.Element as DOM
+import qualified GHCJS.DOM.EventM as DOM.EventM
 import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
 import qualified GHCJS.DOM.HTMLButtonElement as DOM.Button
 import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
@@ -197,6 +200,59 @@ runDispatch disp st = liftIO (disp (return . execState st))
 type RegisterThread = IO () -> IO ()
 type HandleException = SomeException -> IO ()
 
+-- Action
+-- --------------------------------------------------------------------
+
+-- | An action we'll spawn from a component -- for example when an
+-- event fires or as a fork in an event
+newtype Action write a = Action
+  { unAction ::
+         RegisterThread
+      -> HandleException
+      -> Dispatch write
+      -> DOM.JSM a
+  }
+
+{-# INLINE runAction #-}
+runAction :: Action write a -> RegisterThread -> HandleException -> Dispatch write -> DOM.JSM a
+runAction vdom = unAction vdom
+
+instance Functor (Action write) where
+  {-# INLINE fmap #-}
+  fmap f (Action g) = Action $ \reg hdl d -> do
+    x <- g reg hdl d
+    return (f x)
+
+instance Applicative (Action write) where
+  {-# INLINE pure #-}
+  pure = return
+  {-# INLINE (<*>) #-}
+  (<*>) = ap
+
+instance Monad (Action write) where
+  {-# INLINE return #-}
+  return x = Action (\_reg _hdl _d -> return x)
+  {-# INLINE (>>=) #-}
+  ma >>= mf = Action $ \reg hdl d -> do
+    x <- unAction ma reg hdl d
+    unAction (mf x) reg hdl d
+
+instance MonadIO (Action write) where
+  {-# INLINE liftIO #-}
+  liftIO m = Action (\_reg _hdl _d -> liftIO m)
+
+#if !defined(ghcjs_HOST_OS)
+instance  JSaddle.MonadJSM (Action write) where
+  {-# INLINE liftJSM' #-}
+  liftJSM' m = Action (\_reg _hdl _d -> m)
+#endif
+
+instance MonadUnliftIO (Action write) where
+  {-# INLINE askUnliftIO #-}
+  askUnliftIO = Action $ \reg hdl d -> do
+    u <- askUnliftIO
+    return (UnliftIO (\(Action m) -> unliftIO u (m reg hdl d)))
+
 {-# INLINE forkRegistered #-}
 forkRegistered :: MonadUnliftIO m => RegisterThread -> HandleException -> m () -> m ThreadId
 forkRegistered register handler m = do
@@ -209,6 +265,14 @@ forkRegistered register handler m = do
         logError ("Caught exception in registered thread " <> pack (show tid) <> ", will handle it upstream: " <> pack (show err))
         handler err
       Right _ -> return ()
+
+{-# INLINE forkAction #-}
+forkAction :: Action write () -> Action write ThreadId
+forkAction m = Action (\reg hdl d -> forkRegistered reg hdl (unAction m reg hdl d))
+
+{-# INLINE dispatch #-}
+dispatch :: StateT write (Action write) () -> Action write ()
+dispatch m = Action (\reg hdl d -> liftIO (d (\st -> unAction (execStateT m st) reg hdl d)))
 
 -- Monad
 -- --------------------------------------------------------------------
@@ -354,20 +418,23 @@ zoomT st l = zoom st (toMaybeOf l) l
 -- Type class machinery
 -- --------------------------------------------------------------------
 
-data NamedElementProperty el = NamedElementProperty Text (V.ElementProperty el)
-data StyleProperty el = StyleProperty Text Text
+data NamedElementProperty el write = NamedElementProperty Text (V.ElementProperty el)
+data StyleProperty el write = StyleProperty Text Text
+data SomeEventAction el write = forall e. (DOM.IsEvent e) =>
+  SomeEventAction (DOM.EventM.EventName el e) (el -> e -> Action write ())
 
-class (DOM.IsElement el) => ConstructElement el a | a -> el where
-  constructElement :: (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [StyleProperty el] -> [V.SomeEvent el] -> a
+class (DOM.IsElement el) => ConstructElement el write a | a -> el, a -> write where
+  constructElement :: (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el write] -> [StyleProperty el write] -> [SomeEventAction el write] -> a
 
 {-# INLINE constructElement_ #-}
 constructElement_ ::
      (DOM.IsElement el, DOM.IsElementCSSInlineStyle el)
-  => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el] -> [StyleProperty el] -> [V.SomeEvent el] -> V.Children
+  => (DOM.JSVal -> el) -> V.ElementTag -> [NamedElementProperty el write] -> [StyleProperty el write] -> [SomeEventAction el write] -> V.Children
   -> Node el read write
 constructElement_ wrap tag props style evts child = do
   register <- askRegisterThread
   handle <- askHandleException
+  disp <- askDispatch
   return V.Node
     { V.nodeMark = Nothing
     , V.nodeCallbacks = mempty
@@ -380,11 +447,11 @@ constructElement_ wrap tag props style evts child = do
             StyleProperty name val <- reverse style
             return (name, val)
         , V.elementEvents = do
-            V.SomeEvent evtName evtHandler <- reverse evts
+            SomeEventAction evtName evtHandler <- reverse evts
             return $ V.SomeEvent evtName $ \el_ ev -> do
               u <- askUnliftIO
               liftIO $ uninterruptibleMask $ \restore -> register $ do
-                mbExc <- tryAny (restore (unliftIO u (evtHandler el_ ev)))
+                mbExc <- tryAny (restore (unliftIO u (unAction (evtHandler el_ ev) register handle disp)))
                 case mbExc of
                   Left err -> do
                     logError ("Caught exception in event, will handle it upstream: " <> pack (show err))
@@ -395,19 +462,19 @@ constructElement_ wrap tag props style evts child = do
     , V.nodeWrap = wrap
     }
 
-instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el (Node el read write) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el write (Node el read write) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs style evts =
     constructElement_ wrap tag attrs style evts (V.CNormal mempty)
 
-instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el (Component read1 write1 -> Node el read2 write2) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el write2 (Component read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs style evts dom = ComponentM $ \reg hdl d mbst st -> do
     (vdom, _) <- unComponentM dom reg hdl d mbst st
     (_, el_) <- unComponentM (constructElement_ wrap tag attrs style evts (V.CNormal vdom)) reg hdl d mbst st
     return ((), el_)
 
-instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el (KeyedComponent read1 write1 -> Node el read2 write2) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write1 ~ write2) => ConstructElement el write2 (KeyedComponent read1 write1 -> Node el read2 write2) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs style evts dom = ComponentM $ \reg hdl d mbst st -> do
     (vdom, _) <- unComponentM dom reg hdl d mbst st
@@ -416,27 +483,27 @@ instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el, read1 ~ read2, write
 
 newtype UnsafeRawHtml = UnsafeRawHtml Text
 
-instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el (UnsafeRawHtml -> Node el read write) where
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el write (UnsafeRawHtml -> Node el read write) where
   {-# INLINE constructElement #-}
   constructElement wrap tag attrs style evts (UnsafeRawHtml html) =
     constructElement_ wrap tag  attrs style evts  (V.CRawHtml html)
 
-instance (ConstructElement el a) => ConstructElement el (NamedElementProperty el -> a) where
+instance (ConstructElement el write a) => ConstructElement el write (NamedElementProperty el write -> a) where
   {-# INLINE constructElement #-}
   constructElement f tag attrs style evts attr =
     constructElement f tag (attr : attrs) style evts
 
-instance (ConstructElement el a) => ConstructElement el (StyleProperty el -> a) where
+instance (ConstructElement el write a) => ConstructElement el write (StyleProperty el write -> a) where
   {-# INLINE constructElement #-}
   constructElement f tag attrs style evts stylep =
     constructElement f tag attrs (stylep : style) evts
 
-instance (ConstructElement el a) => ConstructElement el (V.SomeEvent el -> a) where
+instance (ConstructElement el write a) => ConstructElement el write (SomeEventAction el write -> a) where
   {-# INLINE constructElement #-}
   constructElement f tag attrs style evts evt = constructElement f tag attrs style (evt : evts)
 
 {-# INLINE el #-}
-el :: (ConstructElement el a) => V.ElementTag -> (DOM.JSVal -> el) -> a
+el :: (ConstructElement el write a) => V.ElementTag -> (DOM.JSVal -> el) -> a
 el tag f = constructElement f tag [] [] []
 
 -- to manipulate nodes
@@ -524,75 +591,75 @@ rawNode wrap x = return $ V.Node
 -- --------------------------------------------------------------------
 
 {-# INLINE div_ #-}
-div_ :: (ConstructElement DOM.HTMLDivElement a) => a
+div_ :: (ConstructElement DOM.HTMLDivElement write a) => a
 div_ = el "div" DOM.HTMLDivElement
 
 {-# INLINE span_ #-}
-span_ :: (ConstructElement DOM.HTMLSpanElement a) => a
+span_ :: (ConstructElement DOM.HTMLSpanElement write a) => a
 span_ = el "span" DOM.HTMLSpanElement
 
 {-# INLINE a_ #-}
-a_ :: (ConstructElement DOM.HTMLAnchorElement a) => a
+a_ :: (ConstructElement DOM.HTMLAnchorElement write a) => a
 a_ = el "a" DOM.HTMLAnchorElement
 
 {-# INLINE p_ #-}
-p_ :: (ConstructElement DOM.HTMLParagraphElement a) => a
+p_ :: (ConstructElement DOM.HTMLParagraphElement write a) => a
 p_ = el "p" DOM.HTMLParagraphElement
 
 {-# INLINE input_ #-}
-input_ :: (ConstructElement DOM.HTMLInputElement a) => a
+input_ :: (ConstructElement DOM.HTMLInputElement write a) => a
 input_ = el "input" DOM.HTMLInputElement
 
 {-# INLINE form_ #-}
-form_ :: (ConstructElement DOM.HTMLFormElement a) => a
+form_ :: (ConstructElement DOM.HTMLFormElement write a) => a
 form_ = el "form" DOM.HTMLFormElement
 
 {-# INLINE button_ #-}
-button_ :: (ConstructElement DOM.HTMLButtonElement a) => a
+button_ :: (ConstructElement DOM.HTMLButtonElement write a) => a
 button_ = el "button" DOM.HTMLButtonElement
 
 {-# INLINE ul_ #-}
-ul_ :: (ConstructElement DOM.HTMLUListElement a) => a
+ul_ :: (ConstructElement DOM.HTMLUListElement write a) => a
 ul_ = el "ul" DOM.HTMLUListElement
 
 {-# INLINE li_ #-}
-li_ :: (ConstructElement DOM.HTMLLIElement a) => a
+li_ :: (ConstructElement DOM.HTMLLIElement write a) => a
 li_ = el "li" DOM.HTMLLIElement
 
 {-# INLINE h2_ #-}
-h2_ :: (ConstructElement DOM.HTMLHeadingElement a) => a
+h2_ :: (ConstructElement DOM.HTMLHeadingElement write a) => a
 h2_ = el "h2" DOM.HTMLHeadingElement
 
 {-# INLINE h5_ #-}
-h5_ :: (ConstructElement DOM.HTMLHeadingElement a) => a
+h5_ :: (ConstructElement DOM.HTMLHeadingElement write a) => a
 h5_ = el "h5" DOM.HTMLHeadingElement
 
 {-# INLINE select_ #-}
-select_ :: (ConstructElement DOM.HTMLSelectElement a) => a
+select_ :: (ConstructElement DOM.HTMLSelectElement write a) => a
 select_ = el "select" DOM.HTMLSelectElement
 
 {-# INLINE option_ #-}
-option_ :: (ConstructElement DOM.HTMLOptionElement a) => a
+option_ :: (ConstructElement DOM.HTMLOptionElement write a) => a
 option_ = el "option" DOM.HTMLOptionElement
 
 {-# INLINE label_ #-}
-label_ :: (ConstructElement DOM.HTMLLabelElement a) => a
+label_ :: (ConstructElement DOM.HTMLLabelElement write a) => a
 label_ = el "label" DOM.HTMLLabelElement
 
 -- Properties
 -- --------------------------------------------------------------------
 
-style_ :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> StyleProperty el
+style_ :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> StyleProperty el write
 style_ k v = StyleProperty k v
 
-class_ :: (DOM.IsElement el) => Text -> NamedElementProperty el
+class_ :: (DOM.IsElement el) => Text -> NamedElementProperty el write
 class_ txt = NamedElementProperty "class" $ V.ElementProperty
   { V.eaGetProperty = DOM.getClassName
   , V.eaSetProperty = DOM.setClassName
   , V.eaValue = return txt
   }
 
-id_ :: (DOM.IsElement el) => Text -> NamedElementProperty el
+id_ :: (DOM.IsElement el) => Text -> NamedElementProperty el write
 id_ txt = NamedElementProperty "id" $ V.ElementProperty
   { V.eaGetProperty = DOM.getId
   , V.eaSetProperty = DOM.setId
@@ -611,7 +678,7 @@ instance HasTypeProperty DOM.HTMLButtonElement where
   htpGetType = DOM.Button.getType
   htpSetType = DOM.Button.setType
 
-type_ :: (HasTypeProperty el) => Text -> NamedElementProperty el
+type_ :: (HasTypeProperty el) => Text -> NamedElementProperty el write
 type_ txt = NamedElementProperty "type" $ V.ElementProperty
   { V.eaGetProperty = htpGetType
   , V.eaSetProperty = htpSetType
@@ -626,7 +693,7 @@ instance HasHrefProperty DOM.HTMLAnchorElement where
   htpGetHref = DOM.HyperlinkElementUtils.getHref
   htpSetHref = DOM.HyperlinkElementUtils.setHref
 
-href_ :: (HasHrefProperty el) => Text -> NamedElementProperty el
+href_ :: (HasHrefProperty el) => Text -> NamedElementProperty el write
 href_ txt = NamedElementProperty "href" $ V.ElementProperty
   { V.eaGetProperty = htpGetHref
   , V.eaSetProperty = htpSetHref
@@ -645,7 +712,7 @@ instance HasValueProperty DOM.HTMLOptionElement where
   hvpGetValue = DOM.Option.getValue
   hvpSetValue = DOM.Option.setValue
 
-value_ :: (HasValueProperty el) => Text -> NamedElementProperty el
+value_ :: (HasValueProperty el) => Text -> NamedElementProperty el write
 value_ txt = NamedElementProperty "value" $ V.ElementProperty
   { V.eaGetProperty = hvpGetValue
   , V.eaSetProperty = hvpSetValue
@@ -660,14 +727,14 @@ instance HasCheckedProperty DOM.HTMLInputElement where
   hcpGetChecked = DOM.Input.getChecked
   hcpSetChecked = DOM.Input.setChecked
 
-checked_ :: (HasCheckedProperty el) => Bool -> NamedElementProperty el
+checked_ :: (HasCheckedProperty el) => Bool -> NamedElementProperty el write
 checked_ b = NamedElementProperty "checked" $ V.ElementProperty
   { V.eaGetProperty = hcpGetChecked
   , V.eaSetProperty = hcpSetChecked
   , V.eaValue = return b
   }
 
-selected_ :: Bool -> NamedElementProperty DOM.HTMLOptionElement
+selected_ :: Bool -> NamedElementProperty DOM.HTMLOptionElement write
 selected_ b = NamedElementProperty "selected" $ V.ElementProperty
   { V.eaGetProperty = DOM.Option.getSelected
   , V.eaSetProperty = DOM.Option.setSelected
@@ -682,7 +749,7 @@ instance HasDisabledProperty DOM.HTMLButtonElement where
   hdpGetDisabled = DOM.Button.getDisabled
   hdpSetDisabled = DOM.Button.setDisabled
 
-disabled_ :: HasDisabledProperty el => Bool -> NamedElementProperty el
+disabled_ :: HasDisabledProperty el => Bool -> NamedElementProperty el write
 disabled_ b = NamedElementProperty "disabled" $ V.ElementProperty
   { V.eaGetProperty = hdpGetDisabled
   , V.eaSetProperty = hdpSetDisabled
@@ -700,7 +767,7 @@ foreign import javascript unsafe
   "$2[$1] = $3"
   js_setProperty :: Text -> JSVal -> JSVal -> IO ()
 
-rawProperty :: (DOM.PToJSVal el, DOM.ToJSVal a) => Text -> a -> NamedElementProperty el
+rawProperty :: (DOM.PToJSVal el, DOM.ToJSVal a) => Text -> a -> NamedElementProperty el write
 rawProperty k x = NamedElementProperty k $ V.ElementProperty
   { V.eaGetProperty = \el_ -> js_getProperty k (DOM.pToJSVal el_)
   , V.eaSetProperty = \el_ y -> do
@@ -708,7 +775,7 @@ rawProperty k x = NamedElementProperty k $ V.ElementProperty
   , V.eaValue = DOM.toJSVal x
   }
 #else
-rawProperty :: (JSaddle.MakeObject el, DOM.ToJSVal a) => Text -> a -> NamedElementProperty el
+rawProperty :: (JSaddle.MakeObject el, DOM.ToJSVal a) => Text -> a -> NamedElementProperty el write
 rawProperty k x = NamedElementProperty k $ V.ElementProperty
   { V.eaGetProperty = \el_ -> el_ JSaddle.! k
   , V.eaSetProperty = \el_ y -> (el_ JSaddle.<# k) y
@@ -721,28 +788,28 @@ rawProperty k x = NamedElementProperty k $ V.ElementProperty
 
 onclick_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.MouseEvent -> DOM.JSM ()) -> V.SomeEvent el
-onclick_ = V.SomeEvent DOM.click
+  => (el -> DOM.MouseEvent -> Action write ()) -> SomeEventAction el write
+onclick_ = SomeEventAction DOM.click
 
 onchange_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> DOM.JSM ()) -> V.SomeEvent el
-onchange_ = V.SomeEvent DOM.change
+  => (el -> DOM.Event -> Action write ()) -> SomeEventAction el write
+onchange_ = SomeEventAction DOM.change
 
 oninput_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> DOM.JSM ()) -> V.SomeEvent el
-oninput_ = V.SomeEvent DOM.input
+  => (el -> DOM.Event -> Action write ()) -> SomeEventAction el write
+oninput_ = SomeEventAction DOM.input
 
 onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> DOM.JSM ()) -> V.SomeEvent el
-onsubmit_ = V.SomeEvent DOM.submit
+  => (el -> DOM.Event -> Action write ()) -> SomeEventAction el write
+onsubmit_ = SomeEventAction DOM.submit
 
 onselect_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.UIEvent -> DOM.JSM ()) -> V.SomeEvent el
-onselect_ = V.SomeEvent DOM.select
+  => (el -> DOM.UIEvent -> Action write ()) -> SomeEventAction el write
+onselect_ = SomeEventAction DOM.select
 
 -- simple rendering
 -- --------------------------------------------------------------------
