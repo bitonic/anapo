@@ -28,6 +28,7 @@ module Anapo.Component
   , runAction
   , dispatch
   , forkAction
+  , MonadAction(..)
 
     -- * ComponentM
   , ComponentM(..)
@@ -134,6 +135,7 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO, UnliftIO(..))
 import Control.Exception.Safe (SomeException, uninterruptibleMask, tryAny, throwIO)
 import Control.Concurrent (ThreadId, forkIO, myThreadId)
+import Control.Monad.Trans.Class (lift)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -253,6 +255,17 @@ instance MonadUnliftIO (Action write) where
     u <- askUnliftIO
     return (UnliftIO (\(Action m) -> unliftIO u (m reg hdl d)))
 
+class (DOM.MonadJSM m) => MonadAction write m | m -> write where
+  liftAction :: Action write a -> m a
+
+instance MonadAction write (Action write) where
+  {-# INLINE liftAction #-}
+  liftAction = id
+
+instance MonadAction write (StateT s (Action write)) where
+  {-# INLINE liftAction #-}
+  liftAction = lift
+
 {-# INLINE forkRegistered #-}
 forkRegistered :: MonadUnliftIO m => RegisterThread -> HandleException -> m () -> m ThreadId
 forkRegistered register handler m = do
@@ -267,12 +280,12 @@ forkRegistered register handler m = do
       Right _ -> return ()
 
 {-# INLINE forkAction #-}
-forkAction :: Action write () -> Action write ThreadId
-forkAction m = Action (\reg hdl d -> forkRegistered reg hdl (unAction m reg hdl d))
+forkAction :: MonadAction write m => Action write () -> m ThreadId
+forkAction m = liftAction (Action (\reg hdl d -> forkRegistered reg hdl (unAction m reg hdl d)))
 
 {-# INLINE dispatch #-}
-dispatch :: StateT write (Action write) () -> Action write ()
-dispatch m = Action (\reg hdl d -> liftIO (d (\st -> unAction (execStateT m st) reg hdl d)))
+dispatch :: MonadAction write m => StateT write (Action write) () -> m ()
+dispatch m = liftAction (Action (\reg hdl d -> liftIO (d (\st -> unAction (execStateT m st) reg hdl d))))
 
 -- Monad
 -- --------------------------------------------------------------------
