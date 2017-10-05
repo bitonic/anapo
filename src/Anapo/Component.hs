@@ -49,6 +49,7 @@ module Anapo.Component
   , askState
   , localState
   , askPreviousState
+  , zoom
   , zoomL
   , zoomT
 
