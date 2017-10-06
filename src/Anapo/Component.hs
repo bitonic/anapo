@@ -28,6 +28,7 @@ module Anapo.Component
   , runAction
   , dispatch
   , forkAction
+  , zoomAction
   , MonadAction(..)
 
     -- * ComponentM
@@ -80,14 +81,23 @@ module Anapo.Component
   , p_
   , input_
   , form_
+  , h1_
   , h2_
+  , h4_
   , h5_
+  , h6_
   , select_
   , option_
   , button_
   , ul_
   , li_
   , label_
+  , multiple_
+  , iframe_
+  , small_
+  , pre_
+  , code_
+  , nav_
 
     -- * attributes
   , NamedElementProperty(..)
@@ -106,7 +116,12 @@ module Anapo.Component
   , checked_
   , HasDisabledProperty(..)
   , disabled_
+  , src_
+  , placeholder_
+  , for_
   , rawProperty
+  , rawAttribute
+  , onEvent
 
     -- * events
   , onclick_
@@ -137,6 +152,8 @@ import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO, UnliftIO(.
 import Control.Exception.Safe (SomeException, uninterruptibleMask, tryAny, throwIO)
 import Control.Concurrent (ThreadId, forkIO, myThreadId)
 import Control.Monad.Trans.Class (lift)
+import Data.Maybe (fromMaybe)
+import Control.Monad.Trans.Reader (ask)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -146,6 +163,10 @@ import qualified GHCJS.DOM.EventM as DOM.EventM
 import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
 import qualified GHCJS.DOM.HTMLButtonElement as DOM.Button
 import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
+import qualified GHCJS.DOM.HTMLLabelElement as DOM.Label
+import qualified GHCJS.DOM.HTMLSelectElement as DOM.Select
+import qualified GHCJS.DOM.HTMLIFrameElement as DOM.IFrame
+import qualified GHCJS.DOM.HTMLTextAreaElement as DOM.TextArea
 import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtils
 import qualified GHCJS.DOM as DOM
 
@@ -266,6 +287,10 @@ instance MonadAction write (Action write) where
 instance MonadAction write (StateT s (Action write)) where
   {-# INLINE liftAction #-}
   liftAction = lift
+
+{-# INLINE zoomAction #-}
+zoomAction :: MonadAction writeOut m => LensLike' DOM.JSM writeOut writeIn -> Action writeIn a -> m a
+zoomAction l m = liftAction (Action (\reg hdl disp -> runAction m reg hdl (disp . l)))
 
 {-# INLINE forkRegistered #-}
 forkRegistered :: MonadUnliftIO m => RegisterThread -> HandleException -> m () -> m ThreadId
@@ -660,6 +685,35 @@ option_ = el "option" DOM.HTMLOptionElement
 label_ :: (ConstructElement DOM.HTMLLabelElement write a) => a
 label_ = el "label" DOM.HTMLLabelElement
 
+{-# INLINE nav_ #-}
+nav_ :: (ConstructElement DOM.HTMLElement write a) => a
+nav_ = el "nav" DOM.HTMLElement
+
+{-# INLINE h1_ #-}
+h1_ :: (ConstructElement DOM.HTMLHeadingElement write a) => a
+h1_ = el "h1" DOM.HTMLHeadingElement
+
+{-# INLINE h4_ #-}
+h4_ :: (ConstructElement DOM.HTMLHeadingElement write a) => a
+h4_ = el "h4" DOM.HTMLHeadingElement
+
+{-# INLINE h6_ #-}
+h6_ :: (ConstructElement DOM.HTMLHeadingElement write a) => a
+h6_ = el "h6" DOM.HTMLHeadingElement
+
+{-# INLINE small_ #-}
+small_ :: (ConstructElement DOM.HTMLElement write a) => a
+small_ = el "small" DOM.HTMLElement
+
+{-# INLINE pre_ #-}
+pre_ :: (ConstructElement DOM.HTMLElement write a) => a
+pre_ = el "pre" DOM.HTMLElement
+
+{-# INLINE code_ #-}
+code_ :: (ConstructElement DOM.HTMLElement write a) => a
+code_ = el "code" DOM.HTMLElement
+
+
 -- Properties
 -- --------------------------------------------------------------------
 
@@ -796,6 +850,91 @@ rawProperty k x = NamedElementProperty k $ V.ElementProperty
   , V.eaValue = DOM.toJSVal x
   }
 #endif
+
+{-# INLINE rawAttribute #-}
+rawAttribute :: (DOM.IsElement el) => Text -> Text -> NamedElementProperty el write
+rawAttribute k x = NamedElementProperty k $ V.ElementProperty
+  { V.eaGetProperty = \el_ -> fromMaybe "" <$> DOM.getAttribute el_ k
+  , V.eaSetProperty = \el_ y -> DOM.setAttribute el_ k y
+  , V.eaValue = return x
+  }
+
+class HasPlaceholderProperty el where
+  getPlaceholder :: el -> DOM.JSM Text
+  setPlaceholder :: el -> Text -> DOM.JSM ()
+
+instance HasPlaceholderProperty DOM.HTMLInputElement where
+  getPlaceholder = DOM.Input.getPlaceholder
+  setPlaceholder = DOM.Input.setPlaceholder
+
+instance HasPlaceholderProperty DOM.HTMLTextAreaElement where
+  getPlaceholder = DOM.TextArea.getPlaceholder
+  setPlaceholder = DOM.TextArea.setPlaceholder
+
+placeholder_ :: (HasPlaceholderProperty el) => Text -> NamedElementProperty el write
+placeholder_ txt = NamedElementProperty "placeholder" $ V.ElementProperty
+  { V.eaGetProperty = getPlaceholder
+  , V.eaSetProperty = setPlaceholder
+  , V.eaValue = return txt
+  }
+
+{-# INLINE for_ #-}
+for_ :: Text -> NamedElementProperty DOM.HTMLLabelElement write
+for_ txt = NamedElementProperty "for" $ V.ElementProperty
+  { V.eaGetProperty = DOM.Label.getHtmlFor
+  , V.eaSetProperty = DOM.Label.setHtmlFor
+  , V.eaValue = return txt
+  }
+
+class HasMultipleProperty el where
+  getMultiple :: el -> DOM.JSM Bool
+  setMultiple :: el -> Bool -> DOM.JSM ()
+
+instance HasMultipleProperty DOM.HTMLInputElement where
+  getMultiple = DOM.Input.getMultiple
+  setMultiple = DOM.Input.setMultiple
+
+instance HasMultipleProperty DOM.HTMLSelectElement where
+  getMultiple = DOM.Select.getMultiple
+  setMultiple = DOM.Select.setMultiple
+
+{-# INLINE multiple_ #-}
+multiple_ :: (HasMultipleProperty el) => Bool -> NamedElementProperty el write
+multiple_ txt = NamedElementProperty "multiple" $ V.ElementProperty
+  { V.eaGetProperty = getMultiple
+  , V.eaSetProperty = setMultiple
+  , V.eaValue = return txt
+  }
+
+{-# INLINE iframe_ #-}
+iframe_ :: (ConstructElement DOM.HTMLIFrameElement write a) => a
+iframe_ = el "iframe" DOM.HTMLIFrameElement
+
+class HasSrcProperty el where
+  getSrc :: el -> DOM.JSM Text
+  setSrc :: el -> Text -> DOM.JSM ()
+
+instance HasSrcProperty DOM.HTMLIFrameElement where
+  getSrc = DOM.IFrame.getSrc
+  setSrc = DOM.IFrame.setSrc
+
+{-# INLINE src_ #-}
+src_ :: (HasSrcProperty el) => Text -> NamedElementProperty el write
+src_ txt = NamedElementProperty "src" $ V.ElementProperty
+  { V.eaGetProperty = getSrc
+  , V.eaSetProperty = setSrc
+  , V.eaValue = return txt
+  }
+
+{-# INLINE onEvent #-}
+onEvent ::
+     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction write m, MonadUnliftIO m)
+  => t -> DOM.EventM.EventName t e -> (e -> m ()) -> m (DOM.JSM ())
+onEvent el_ evName f = do
+  u <- askUnliftIO
+  DOM.liftJSM $ DOM.EventM.on el_ evName $ do
+    ev <- ask
+    liftIO (unliftIO u (f ev))
 
 -- Events
 -- --------------------------------------------------------------------
