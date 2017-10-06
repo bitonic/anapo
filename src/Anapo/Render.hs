@@ -75,12 +75,19 @@ renderVirtualDom RenderOptions{..} doc = let
     -> Overlay
     -> V.Children
     -> DOM.JSM ()
-  removeDomNodeChildren domNode overlay children = case children of
-    V.CRawHtml{} -> if null overlay
-      then return ()
-      else fail "removeDomNodeChildren: expecting no overlay nodes with rawhtml, but got some"
-    V.CKeyed kvd -> removeDom domNode Nothing overlay (DList.toList (V.unkeyDom kvd))
-    V.CNormal vdom -> removeDom domNode Nothing overlay (DList.toList vdom)
+  removeDomNodeChildren domNode overlay children = if roErase
+    then case children of
+      V.CRawHtml{} -> if null overlay
+        then return ()
+        else fail "eraseDomNodeChildren: expecting no overlay nodes with rawhtml, but got some"
+      V.CKeyed kvd -> removeDom domNode Nothing overlay (DList.toList (V.unkeyDom kvd))
+      V.CNormal vdom -> removeDom domNode Nothing overlay (DList.toList vdom)
+    else case children of
+      V.CRawHtml{} -> if null overlay
+        then return ()
+        else fail "removeDomNodeChildren: expecting no overlay nodes with rawhtml, but got some"
+      V.CKeyed kvd -> removeDom domNode Nothing overlay (DList.toList (V.unkeyDom kvd))
+      V.CNormal vdom -> removeDom domNode Nothing overlay (DList.toList vdom)
 
   {-# INLINE removeDomNode #-}
   removeDomNode ::
@@ -109,28 +116,45 @@ renderVirtualDom RenderOptions{..} doc = let
     -> Overlay
     -> [V.SomeNode] -- ^ the virtual dom nodes describing what's in the node
     -> DOM.JSM ()
-  removeDom container mbCursor00 overlay00 nodes00 = do
-    let
-      go :: Maybe DOM.Node -> Overlay -> [V.SomeNode] -> DOM.JSM ()
-      go mbCursor overlay0 nodes0 = case (mbCursor, overlay0, nodes0) of
-        (Just{}, _, []) ->
-          fail  "removeDom: Expecting no cursor at the end of vdom, but got one!"
-        (Nothing, _:_, []) ->
-          fail  "removeDom: Expecting no overlay at the end of vdom, but got one!"
-        (Nothing, [], []) -> return ()
-        (Nothing, _, _:_) ->
-          fail "removeDom: Expecting cursor since I've still got vdom nodes, but got none!"
-        (Just{}, [], _:_) ->
-          fail "removeDom: Expeting overlay since i've still got vdom nodes, but got none"
-        (Just cursor, overlayNode : overlay, node : nodes) -> do
-          nextCursor <- DOM.getNextSibling cursor
-          removeDomNode cursor overlayNode node
-          DOM.removeChild_ container cursor
-          go nextCursor overlay nodes
-    mbCursor <- case mbCursor00 of
-      Nothing -> DOM.getFirstChild container
-      Just cursor -> return (Just cursor)
-    go mbCursor overlay00 nodes00
+  removeDom container mbCursor00 overlay00 nodes00 = if roErase
+    then do
+      -- first remove children, then release callbacks
+      let
+        erase :: Maybe DOM.Node -> DOM.JSM ()
+        erase = \case
+          Nothing -> return ()
+          Just cursor -> do
+            nextCursor <- DOM.getNextSibling cursor
+            DOM.removeChild_ container cursor
+            erase nextCursor
+      mbCursor <- case mbCursor00 of
+        Nothing -> DOM.getFirstChild container
+        Just cursor -> return (Just cursor)
+      erase mbCursor
+      releaseNodes nodes00
+      releaseOverlay overlay00
+    else do
+      let
+        go :: Maybe DOM.Node -> Overlay -> [V.SomeNode] -> DOM.JSM ()
+        go mbCursor overlay0 nodes0 = case (mbCursor, overlay0, nodes0) of
+          (Just{}, _, []) ->
+            fail  "removeDom: Expecting no cursor at the end of vdom, but got one!"
+          (Nothing, _:_, []) ->
+            fail  "removeDom: Expecting no overlay at the end of vdom, but got one!"
+          (Nothing, [], []) -> return ()
+          (Nothing, _, _:_) ->
+            fail "removeDom: Expecting cursor since I've still got vdom nodes, but got none!"
+          (Just{}, [], _:_) ->
+            fail "removeDom: Expeting overlay since i've still got vdom nodes, but got none"
+          (Just cursor, overlayNode : overlay, node : nodes) -> do
+            nextCursor <- DOM.getNextSibling cursor
+            removeDomNode cursor overlayNode node
+            DOM.removeChild_ container cursor
+            go nextCursor overlay nodes
+      mbCursor <- case mbCursor00 of
+        Nothing -> DOM.getFirstChild container
+        Just cursor -> return (Just cursor)
+      go mbCursor overlay00 nodes00
 
   {-# INLINE releaseOverlay #-}
   releaseOverlay :: Overlay -> DOM.JSM ()
@@ -156,48 +180,6 @@ renderVirtualDom RenderOptions{..} doc = let
   {-# INLINE releaseNodes #-}
   releaseNodes :: Foldable t => t V.SomeNode -> DOM.JSM ()
   releaseNodes = traverse_ releaseNode
-
-  {-# INLINE eraseDom #-}
-  eraseDom ::
-       (DOM.IsNode el1)
-    => el1
-    -- ^ the container node
-    -> Maybe DOM.Node
-    -- ^ the node to start removing from. if 'Nothing' will start from
-    -- first child of container
-    -> Overlay
-    -> [V.SomeNode]
-    -> DOM.JSM ()
-  eraseDom container mbCursor00 overlay nodes = do
-    -- first remove children, then release callbacks
-    let
-      erase :: Maybe DOM.Node -> DOM.JSM ()
-      erase = \case
-        Nothing -> return ()
-        Just cursor -> do
-          nextCursor <- DOM.getNextSibling cursor
-          DOM.removeChild_ container cursor
-          erase nextCursor
-    mbCursor <- case mbCursor00 of
-      Nothing -> DOM.getFirstChild container
-      Just cursor -> return (Just cursor)
-    erase mbCursor
-    releaseNodes nodes
-    releaseOverlay overlay
-
-  {-# INLINE eraseDomNodeChildren #-}
-  eraseDomNodeChildren ::
-       (DOM.IsNode el)
-    => el -- ^ the node
-    -> Overlay
-    -> V.Children
-    -> DOM.JSM ()
-  eraseDomNodeChildren domNode overlay children = case children of
-    V.CRawHtml{} -> if null overlay
-      then return ()
-      else fail "eraseDomNodeChildren: expecting no overlay nodes with rawhtml, but got some"
-    V.CKeyed kvd -> eraseDom domNode Nothing overlay (DList.toList (V.unkeyDom kvd))
-    V.CNormal vdom -> eraseDom domNode Nothing overlay (DList.toList vdom)
 
   {-# INLINE addEvents #-}
   addEvents ::
@@ -320,9 +302,7 @@ renderVirtualDom RenderOptions{..} doc = let
       (V.CNormal prevNChildren, evts, V.CNormal nchildren) ->
         patchDom container prevNChildren evts nchildren
       (prevChildren, evts, children) -> do
-        if roErase
-          then eraseDomNodeChildren container evts prevChildren
-          else removeDomNodeChildren container evts prevChildren
+        removeDomNodeChildren container evts prevChildren
         renderDomChildren container children
 
   -- | Note that the elements are already assumed to be of the same
@@ -442,9 +422,7 @@ renderVirtualDom RenderOptions{..} doc = let
             fail "patchDom: expecting no cursor at the end of previous nodes, but got one"
           renderDom container vnodes'
         (prevVnodes', prevVnodesEvents', []) -> do
-          if roErase
-            then eraseDom container mbCursor prevVnodesEvents' prevVnodes'
-            else removeDom container mbCursor prevVnodesEvents'  prevVnodes'
+          removeDom container mbCursor prevVnodesEvents'  prevVnodes'
           return mempty
         (prevVnode : prevVnodes', prevVnodeEvents : prevVnodesEvents', node : nodes') -> do
           case mbCursor of
@@ -466,9 +444,7 @@ renderVirtualDom RenderOptions{..} doc = let
         renderDom container (DList.toList vdom)
       Just (prevVdom, prevVdomEvents) -> if roAlwaysRerender
         then do
-          if roErase
-            then removeDom container Nothing prevVdomEvents (DList.toList prevVdom)
-            else eraseDom container Nothing prevVdomEvents (DList.toList prevVdom)
+          removeDom container Nothing prevVdomEvents (DList.toList prevVdom)
           renderDom container (DList.toList vdom)
         else do
           patchDom container prevVdom prevVdomEvents vdom
