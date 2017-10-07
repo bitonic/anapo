@@ -120,19 +120,17 @@ renderVirtualDom RenderOptions{..} doc = let
     then do
       -- first remove children, then release callbacks
       let
-        erase :: [V.SomeNode] -> Maybe DOM.Node -> DOM.JSM ()
-        erase nodes0 mbCursor = case nodes0 of
-          [] -> return ()
-          _ : nodes -> case mbCursor of
-            Nothing -> fail "removeDom.roErase: expecting cursor but got none"
-            Just cursor -> do
-              nextCursor <- DOM.getNextSibling cursor
-              DOM.removeChild_ container cursor
-              erase nodes nextCursor
+        erase :: Maybe DOM.Node -> DOM.JSM ()
+        erase = \case
+          Nothing -> return ()
+          Just cursor -> do
+            nextCursor <- DOM.getNextSibling cursor
+            DOM.removeChild_ container cursor
+            erase nextCursor
       mbCursor <- case mbCursor00 of
         Nothing -> DOM.getFirstChild container
         Just cursor -> return (Just cursor)
-      erase nodes00 mbCursor
+      erase mbCursor
       releaseNodes nodes00
       releaseOverlay overlay00
     else do
@@ -140,9 +138,7 @@ renderVirtualDom RenderOptions{..} doc = let
         go :: Maybe DOM.Node -> Overlay -> [V.SomeNode] -> DOM.JSM ()
         go mbCursor overlay0 nodes0 = case (mbCursor, overlay0, nodes0) of
           (Just{}, _, []) ->
-            -- fail  "removeDom: Expecting no cursor at the end of vdom, but got one!"
-            -- OK: we allow things after our vdom
-            return ()
+            fail  "removeDom: Expecting no cursor at the end of vdom, but got one!"
           (Nothing, _:_, []) ->
             fail  "removeDom: Expecting no overlay at the end of vdom, but got one!"
           (Nothing, [], []) -> return ()
@@ -250,8 +246,8 @@ renderVirtualDom RenderOptions{..} doc = let
     V.CKeyed kvd -> do
       -- TODO when we do implement keyed properly, check that the list
       -- size corresponds to the hasmap size
-      renderDom container Nothing (DList.toList (V.unkeyDom kvd))
-    V.CNormal vdom -> renderDom container Nothing (DList.toList vdom)
+      renderDom container (DList.toList (V.unkeyDom kvd))
+    V.CNormal vdom -> renderDom container (DList.toList vdom)
 
   {-# INLINE renderDomNode #-}
   renderDomNode ::
@@ -281,14 +277,12 @@ renderVirtualDom RenderOptions{..} doc = let
   renderDom ::
        (DOM.IsNode el)
     => el -- ^ the node that should contain the dom
-    -> Maybe DOM.Node -- ^ the node _before_ which we should insert the nodes
     -> [V.SomeNode]
     -> DOM.JSM [NodeOverlay]
-  renderDom container mbCursor =
-    mapM $ \node@(V.SomeNode V.Node{..}) -> do
-      renderDomNode node $ \el evts -> do
-        DOM.insertBefore_ container el mbCursor
-        return evts
+  renderDom container = mapM $ \node@(V.SomeNode V.Node{..}) -> do
+    renderDomNode node $ \el evts -> do
+      DOM.appendChild_ container el
+      return evts
 
   {-# INLINE patchDomChildren #-}
   patchDomChildren ::
@@ -420,15 +414,15 @@ renderVirtualDom RenderOptions{..} doc = let
     -> DOM.JSM Overlay
   patchDom container prevVnodes0 prevVnodesEvents0 vnodes0 = do
     let
-      -- we're as lenient as we can, so that stuff keeps working with things like
-      -- aframe
       go mbCursor prevVnodes prevVdomEvents vnodes = case (prevVnodes, prevVdomEvents, vnodes) of
         ([], _:_, _) -> fail "patchDom: empty prev nodes, but non-empty prev nodes events!"
         (_:_, [], _) -> fail "patchDom: empty prev nodes events, but non-empty prev nodes!"
         ([], [], vnodes') -> do
-          renderDom container mbCursor vnodes'
+          forM_ mbCursor $ \_ ->
+            fail "patchDom: expecting no cursor at the end of previous nodes, but got one"
+          renderDom container vnodes'
         (prevVnodes', prevVnodesEvents', []) -> do
-          removeDom container mbCursor prevVnodesEvents' prevVnodes'
+          removeDom container mbCursor prevVnodesEvents'  prevVnodes'
           return mempty
         (prevVnode : prevVnodes', prevVnodeEvents : prevVnodesEvents', node : nodes') -> do
           case mbCursor of
@@ -447,11 +441,11 @@ renderVirtualDom RenderOptions{..} doc = let
     x <- case mbPrevVdom of
       Nothing -> do
         eraseAllChildren container
-        renderDom container Nothing (DList.toList vdom)
+        renderDom container (DList.toList vdom)
       Just (prevVdom, prevVdomEvents) -> if roAlwaysRerender
         then do
           removeDom container Nothing prevVdomEvents (DList.toList prevVdom)
-          renderDom container Nothing (DList.toList vdom)
+          renderDom container (DList.toList vdom)
         else do
           patchDom container prevVdom prevVdomEvents vdom
     t1 <- liftIO getCurrentTime
