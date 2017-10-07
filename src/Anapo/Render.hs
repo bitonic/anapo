@@ -2,7 +2,7 @@
 module Anapo.Render (RenderOptions(..), Overlay, renderVirtualDom) where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Monad (forM_, when, forM)
+import Control.Monad (forM_, when, forM, unless)
 import qualified Data.DList as DList
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
@@ -12,6 +12,7 @@ import Unsafe.Coerce (unsafeCoerce)
 import Control.Monad.Trans.Reader (ask)
 import Control.Monad.Trans.Class (lift)
 import Data.Monoid ((<>))
+import GHC.Stack
 
 import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -51,6 +52,7 @@ emptyOverlay = NodeOverlay mempty mempty mempty mempty
 data RenderOptions = RenderOptions
   { roAlwaysRerender :: Bool
   , roErase :: Bool
+  , roSkipNode :: HasCallStack => DOM.Node -> DOM.JSM Bool
   }
 
 renderVirtualDom :: forall el0.
@@ -125,7 +127,8 @@ renderVirtualDom RenderOptions{..} doc = let
           Nothing -> return ()
           Just cursor -> do
             nextCursor <- DOM.getNextSibling cursor
-            DOM.removeChild_ container cursor
+            skip <- roSkipNode cursor
+            unless skip (DOM.removeChild_ container cursor)
             erase nextCursor
       mbCursor <- case mbCursor00 of
         Nothing -> DOM.getFirstChild container
@@ -137,8 +140,14 @@ renderVirtualDom RenderOptions{..} doc = let
       let
         go :: Maybe DOM.Node -> Overlay -> [V.SomeNode] -> DOM.JSM ()
         go mbCursor overlay0 nodes0 = case (mbCursor, overlay0, nodes0) of
-          (Just{}, _, []) ->
-            fail  "removeDom: Expecting no cursor at the end of vdom, but got one!"
+          (Just cursor, _, []) -> do
+            skip <- roSkipNode cursor
+            if skip
+              then do
+                nextCursor <- DOM.getNextSibling cursor
+                go nextCursor overlay0 []
+              else do
+                fail  "removeDom: Expecting no cursor at the end of vdom, but got one!"
           (Nothing, _:_, []) ->
             fail  "removeDom: Expecting no overlay at the end of vdom, but got one!"
           (Nothing, [], []) -> return ()
@@ -148,9 +157,12 @@ renderVirtualDom RenderOptions{..} doc = let
             fail "removeDom: Expeting overlay since i've still got vdom nodes, but got none"
           (Just cursor, overlayNode : overlay, node : nodes) -> do
             nextCursor <- DOM.getNextSibling cursor
-            removeDomNode cursor overlayNode node
-            DOM.removeChild_ container cursor
-            go nextCursor overlay nodes
+            skip <- roSkipNode cursor
+            if skip
+              then go nextCursor (overlayNode : overlay) (node : nodes)
+              else do
+                removeDomNode cursor overlayNode node
+                DOM.removeChild_ container cursor
       mbCursor <- case mbCursor00 of
         Nothing -> DOM.getFirstChild container
         Just cursor -> return (Just cursor)
@@ -417,10 +429,15 @@ renderVirtualDom RenderOptions{..} doc = let
       go mbCursor prevVnodes prevVdomEvents vnodes = case (prevVnodes, prevVdomEvents, vnodes) of
         ([], _:_, _) -> fail "patchDom: empty prev nodes, but non-empty prev nodes events!"
         (_:_, [], _) -> fail "patchDom: empty prev nodes events, but non-empty prev nodes!"
-        ([], [], vnodes') -> do
-          forM_ mbCursor $ \_ ->
-            fail "patchDom: expecting no cursor at the end of previous nodes, but got one"
-          renderDom container vnodes'
+        ([], [], vnodes') -> case mbCursor of
+          Nothing -> renderDom container vnodes'
+          Just cursor -> do
+            skip <- roSkipNode cursor
+            if skip
+              then do
+                nextCursor <- DOM.getNextSibling cursor
+                go nextCursor [] [] vnodes'
+              else fail "patchDom: expecting no cursor at the end of previous nodes, but got one"
         (prevVnodes', prevVnodesEvents', []) -> do
           removeDom container mbCursor prevVnodesEvents'  prevVnodes'
           return mempty
@@ -430,9 +447,13 @@ renderVirtualDom RenderOptions{..} doc = let
               fail "patchDom: expecting cursor since I have remaining previous nodes, but got none"
             Just cursor -> do
               nextCursor <- DOM.getNextSibling cursor
-              evt <- patchDomNode container cursor prevVnode prevVnodeEvents node
-              evts <- go nextCursor prevVnodes' prevVnodesEvents' nodes'
-              return (evt : evts)
+              skip <- roSkipNode cursor
+              if skip
+                then go nextCursor (prevVnode : prevVnodes') (prevVnodeEvents : prevVnodesEvents') (node : nodes')
+                else do
+                  evt <- patchDomNode container cursor prevVnode prevVnodeEvents node
+                  evts <- go nextCursor prevVnodes' prevVnodesEvents' nodes'
+                  return (evt : evts)
     mbCursor <- DOM.getFirstChild container
     go mbCursor (DList.toList prevVnodes0) prevVnodesEvents0 (DList.toList vnodes0)
 
