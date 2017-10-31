@@ -527,19 +527,43 @@ instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement 
   constructElement wrap tag attrs style evts (UnsafeRawHtml html) =
     constructElement_ wrap tag  attrs style evts  (V.CRawHtml html)
 
+instance (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => ConstructElement el write (Maybe UnsafeRawHtml -> Node el read write) where
+  {-# INLINE constructElement #-}
+  constructElement wrap tag attrs style evts = \case
+    Nothing -> constructElement wrap tag attrs style evts
+    Just html -> constructElement wrap tag attrs style evts html
+
 instance (ConstructElement el write a) => ConstructElement el write (NamedElementProperty el write -> a) where
   {-# INLINE constructElement #-}
   constructElement f tag attrs style evts attr =
     constructElement f tag (attr : attrs) style evts
+
+instance (ConstructElement el write a) => ConstructElement el write (Maybe (NamedElementProperty el write) -> a) where
+  {-# INLINE constructElement #-}
+  constructElement f tag attrs style evts = \case
+    Nothing -> constructElement f tag attrs style evts
+    Just attr -> constructElement f tag attrs style evts attr
 
 instance (ConstructElement el write a) => ConstructElement el write (StyleProperty el write -> a) where
   {-# INLINE constructElement #-}
   constructElement f tag attrs style evts stylep =
     constructElement f tag attrs (stylep : style) evts
 
+instance (ConstructElement el write a) => ConstructElement el write (Maybe (StyleProperty el write) -> a) where
+  {-# INLINE constructElement #-}
+  constructElement f tag attrs style evts = \case
+    Nothing -> constructElement f tag attrs style evts
+    Just stylep -> constructElement f tag attrs (stylep : style) evts
+
 instance (ConstructElement el write a) => ConstructElement el write (SomeEventAction el write -> a) where
   {-# INLINE constructElement #-}
   constructElement f tag attrs style evts evt = constructElement f tag attrs style (evt : evts)
+
+instance (ConstructElement el write a) => ConstructElement el write (Maybe (SomeEventAction el write) -> a) where
+  {-# INLINE constructElement #-}
+  constructElement f tag attrs style evts = \case
+    Nothing -> constructElement f tag attrs style evts
+    Just evt -> constructElement f tag attrs style evts evt
 
 {-# INLINE el #-}
 el :: (ConstructElement el write a) => V.ElementTag -> (DOM.JSVal -> el) -> a
