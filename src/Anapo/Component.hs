@@ -102,6 +102,7 @@ module Anapo.Component
     -- * attributes
   , NamedElementProperty(..)
   , StyleProperty(..)
+  , SomeEventAction(..)
   , style_
   , class_
   , id_
