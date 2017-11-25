@@ -39,7 +39,6 @@ library
   if !impl(ghcjs)
     build-depends:
       text,
-      jsaddle-warp,
       jsaddle
   else
     build-depends:
