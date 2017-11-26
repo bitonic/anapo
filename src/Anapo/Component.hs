@@ -320,6 +320,18 @@ forkAction m = liftAction (Action (\reg hdl d -> forkRegistered reg hdl (unActio
 dispatch :: MonadAction' write m => StateT write (Action' write) () -> m ()
 dispatch m = liftAction (Action (\reg hdl d -> liftIO (d (\st -> unAction (execStateT m st) reg hdl d))))
 
+{-# INLINE askDispatch #-}
+askDispatch :: (MonadAction in_ out m) => m (Dispatch in_ out)
+askDispatch = liftAction (Action (\_reg _hdl d -> return d))
+
+{-# INLINE askRegisterThread #-}
+askRegisterThread :: (MonadAction in_ out m) => m RegisterThread
+askRegisterThread = liftAction (Action (\reg _hdl _d -> return reg))
+
+{-# INLINE askHandleException #-}
+askHandleException :: (MonadAction in_ out m) => m HandleException
+askHandleException = liftAction (Action (\_reg hdl _d -> return hdl))
+
 -- Monad
 -- --------------------------------------------------------------------
 
@@ -400,25 +412,19 @@ instance (Monoid dom) => Monad (ComponentM dom read write) where
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
-{-# INLINE askDispatch #-}
-askDispatch :: (Monoid dom) => ComponentM dom read write (Dispatch' write)
-askDispatch = ComponentM (\_reg _hdl d _mbst _st -> return (mempty, d))
+instance (Monoid dom) => MonadAction write write (ComponentM dom read write) where
+  {-# INLINE liftAction #-}
+  liftAction (Action f) = ComponentM $ \reg hdl d _mbst _st -> do
+    x <- f reg hdl d
+    return (mempty, x)
 
 {-# INLINE localDispatch #-}
 localDispatch :: (Monoid dom) => Dispatch' write' -> Maybe write' -> ComponentM dom read write' a -> ComponentM dom read write a
 localDispatch d mbst comp = ComponentM (\reg hdl _d _mbst st -> unComponentM comp reg hdl d mbst st)
 
-{-# INLINE askRegisterThread #-}
-askRegisterThread :: (Monoid dom) => ComponentM dom read write RegisterThread
-askRegisterThread = ComponentM (\reg _hdl _d _mbst _st -> return (mempty, reg))
-
 {-# INLINE localRegisterThread #-}
 localRegisterThread :: (Monoid dom) => RegisterThread -> ComponentM dom read write a -> ComponentM dom read write a
 localRegisterThread reg comp = ComponentM (\_reg hdl d mbst st -> unComponentM comp reg hdl d mbst st)
-
-{-# INLINE askHandleException #-}
-askHandleException :: (Monoid dom) => ComponentM dom read write HandleException
-askHandleException = ComponentM (\_reg hdl _d _mbst _st -> return (mempty, hdl))
 
 {-# INLINE localHandleException #-}
 localHandleException :: (Monoid dom) => HandleException -> ComponentM dom read write a -> ComponentM dom read write a
