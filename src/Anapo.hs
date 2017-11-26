@@ -1,7 +1,4 @@
-module Anapo
-  ( module Anapo.Loop
-  , module Anapo.Component
-  ) where
+module Anapo (module X) where
 
-import Anapo.Component
-import Anapo.Loop
+import Anapo.Component as X hiding (el)
+import Anapo.Loop as X

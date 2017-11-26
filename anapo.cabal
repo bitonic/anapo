@@ -24,18 +24,19 @@ library
     Anapo.Text
     Anapo.Logging
     Anapo.Orphans
+    Anapo.CollectedThread
   build-depends:
     base >= 4.7 && < 5,
+    async,
     dlist,
     ghcjs-dom,
     hashable,
     lens,
-    time,
-    unordered-containers,
-    transformers,
     safe-exceptions,
+    time,
+    transformers,
     unliftio-core,
-    async
+    unordered-containers
   if !impl(ghcjs)
     build-depends:
       text,
