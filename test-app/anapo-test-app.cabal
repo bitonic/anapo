@@ -18,22 +18,20 @@ executable test-app
   main-is: Main.hs
   ghc-options: -Wall
   build-depends:
-    base,
+    aeson,
     anapo,
-    text,
-    lens,
+    base,
+    bytestring,
     containers,
     ghcjs-dom,
-    async,
-    time,
-    aeson,
-    vector,
-    bytestring,
-    safe-exceptions,
     hashable,
-    transformers,
-    ghcjs-base,
-    ghcjs-dom-jsffi
+    jsaddle,
+    lens,
+    safe-exceptions,
+    text,
+    time,
+    mtl,
+    vector
   other-modules:
     Anapo.TestApps
     Anapo.TestApps.Prelude

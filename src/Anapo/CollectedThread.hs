@@ -47,3 +47,4 @@ forkCollected m = liftAction $ do
     return (CollectedThreadId tid ref)
   logDebug ("Spawned linked thread " <> pack (show (collectedThreadId ctid)))
   return ctid
+
