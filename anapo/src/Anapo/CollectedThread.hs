@@ -6,6 +6,7 @@
 module Anapo.CollectedThread
   ( CollectedThreadId
   , forkCollected
+  , killCollected
   , collectedThreadId
   ) where
 
@@ -15,8 +16,8 @@ import Control.Concurrent (ThreadId, killThread)
 import Data.IORef (mkWeakIORef, IORef, newIORef)
 import Control.Monad (void)
 import Control.Monad.IO.Unlift (askUnliftIO, unliftIO)
-import Control.Monad.IO.Class (liftIO)
 import Data.Monoid ((<>))
+import Control.Monad.IO.Class (MonadIO, liftIO)
 
 import Anapo.Text (pack)
 import Anapo.Logging
@@ -48,3 +49,6 @@ forkCollected m = liftAction $ do
   logDebug ("Spawned linked thread " <> pack (show (collectedThreadId ctid)))
   return ctid
 
+{-# INLINE killCollected #-}
+killCollected :: (MonadIO m) => CollectedThreadId -> m ()
+killCollected ctid = liftIO (killThread (collectedThreadId ctid))

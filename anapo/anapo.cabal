@@ -23,7 +23,6 @@ library
     Anapo.Render
     Anapo.Text
     Anapo.Logging
-    Anapo.Orphans
     Anapo.CollectedThread
   build-depends:
     base >= 4.7 && < 5,
@@ -43,7 +42,8 @@ library
       jsaddle
   else
     build-depends:
-      ghcjs-base
+      ghcjs-base,
+      aeson
     js-sources: jsbits/fnv.js
   default-language: Haskell2010
   ghc-options: -Wall

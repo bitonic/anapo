@@ -1,7 +1,7 @@
 let pkgs = import <nixpkgs> {};
 in pkgs.fetchFromGitHub {
- owner = "ghcjs";
+ owner = "bitonic";
  repo = "jsaddle";
- rev = "37051d69103bd6406695324eb7788b1841879716";
- sha256 = "0cchg4fzyaj4mpxnm4lvjxlynaygh9r35zcr0sxvs2lcn5gk5hkr";
+ rev = "55a9e5af2573a2b0a26b09c2ac87aab3b6de1bc0";
+ sha256 = "18xqq657m01zlw0awz671rk56m11a1y3ay9crgfd7920nwc5pfs6";
 }

@@ -1,7 +1,5 @@
-{ ghcjs ? true
-, stdenv
+{ stdenv
 , mkDerivation
-# platform independent deps
 , async
 , base
 , dlist
@@ -13,14 +11,17 @@
 , transformers
 , unliftio-core
 , unordered-containers
-# all the packages for the  platform-dependent ones
-, haskellPackages
+, ghcjs-base
+, aeson
+, jsaddle
+, text
+, ghc
 }:
 
 let
-  platformHaskellDependencies = if ghcjs
-    then [ haskellPackages.ghcjs-base ]
-    else [ haskellPackages.jsaddle haskellPackages.text ];
+  platformHaskellDependencies = if ghc.isGhcjs or false
+    then [ ghcjs-base aeson ]
+    else [ jsaddle text ];
   haskellDependencies = [
     async
     base

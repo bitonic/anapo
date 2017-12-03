@@ -6,16 +6,13 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Vector as V
 import qualified Data.Aeson.TH as Aeson
 import qualified Data.Aeson as Aeson
-import qualified JavaScript.Web.XMLHttpRequest as XHR
-import Control.Concurrent.Async (Async, async)
 import Control.Exception.Safe (try)
 import Data.Monoid ((<>))
-import Data.Foldable (for_)
-import Data.JSString (JSString)
-import Data.JSString.Text (textToJSString)
-import Data.Text (Text)
+import qualified Data.Foldable as F
+import qualified GHCJS.DOM.XMLHttpRequest as DOM.XHR
 
 import Anapo
+import Anapo.CollectedThread
 import Anapo.TestApps.Prelude
 
 type Posts = V.Vector Post
@@ -30,18 +27,23 @@ Aeson.deriveJSON (aesonRecord "post") ''Post
 
 data SlowRequestState =
     SRSNotLoaded
-  | SRSLoading (Async ())
-  | SRSError JSString
+  | SRSLoading CollectedThreadId
+  | SRSError Text
   | SRSLoaded Posts
 
-slowRequestInit :: ClientM SlowRequestState
+slowRequestInit :: JSM SlowRequestState
 slowRequestInit = return SRSNotLoaded
 
 slowRequestComponent :: Component' SlowRequestState
 slowRequestComponent = do
   st <- askState
-  dispatch <- askDispatch
   let
+    startLoading = do
+      tid <- forkCollected $ do
+        xhr <- DOM.XHR.newXMLHttpRequest
+        error "TODO"
+      put (SRSLoading tid)
+    {-
     startLoading = do
       reqAsync <- async $ do
         mbResp :: Either XHR.XHRError (XHR.Response ByteString) <- try $ XHR.xhrByteString XHR.Request
@@ -53,16 +55,17 @@ slowRequestComponent = do
           , XHR.reqData = XHR.NoData
           }
         dispatch $ \_ -> return $ case mbResp of
-          Left err -> SRSError (jsshow err)
+          Left err -> SRSError (tshow err)
           Right resp -> do
             if XHR.status resp /= 200
-              then SRSError ("Bad status " <> jsshow (XHR.status resp))
+              then SRSError ("Bad status " <> tshow (XHR.status resp))
               else case XHR.contents resp of
                 Nothing -> SRSError "No contents"
                 Just bytes -> case Aeson.eitherDecode (BSL.fromStrict bytes) of
-                  Left err -> SRSError ("Could not decode: " <> jsshow err)
+                  Left err -> SRSError ("Could not decode: " <> tshow err)
                   Right posts -> SRSLoaded posts
       return (SRSLoading reqAsync)
+    -}
   n$ button_
     (type_ "button")
     (class_ "btn btn-primary")
@@ -73,8 +76,8 @@ slowRequestComponent = do
       SRSError{} -> False)
     (onclick_ $ \_ ev -> do
       preventDefault ev
-      dispatch $ \case
-        SRSLoading asy -> return (SRSLoading asy)
+      dispatch $ get >>= \case
+        SRSLoading{} -> return ()
         SRSError{} -> startLoading
         SRSNotLoaded{} -> startLoading
         SRSLoaded{} -> startLoading)
@@ -88,9 +91,9 @@ slowRequestComponent = do
     SRSLoading{} -> return ()
     SRSError err -> n$ div_ (class_ "alert alert-danger") (n$ text err)
     SRSLoaded posts ->
-      n$ ul_ (class_ "list-group mt-2") $ for_ posts $ \Post{..} ->
-        key (jsshow postId) $ li_
+      n$ ul_ (class_ "list-group mt-2") $ F.for_ posts $ \Post{..} ->
+        key (tshow postId) $ li_
           (class_ "list-group-item list-group-item-action flex-column align-items-start")
           (do
-            n$ h5_ (class_ "mb-1") (n$ text (textToJSString postTitle))
-            n$ p_ (class_ "mb-1") (n$ text (textToJSString postBody)))
+            n$ h5_ (class_ "mb-1") (n$ text postTitle)
+            n$ p_ (class_ "mb-1") (n$ text postBody))

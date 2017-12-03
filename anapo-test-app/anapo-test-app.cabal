@@ -31,14 +31,22 @@ executable test-app
     text,
     time,
     mtl,
-    vector
+    vector,
+    unliftio-core
+  if !impl(ghcjs)
+    build-depends:
+      jsaddle-warp
+  else
+    build-depends:
+      ghcjs-base
   other-modules:
     Anapo.TestApps
     Anapo.TestApps.Prelude
     Anapo.TestApps.TodoList
     Anapo.TestApps.Timer
     Anapo.TestApps.YouTube
-    Anapo.TestApps.SlowRequest
+    Anapo.TestApps.YouTubeBindings
+    -- Anapo.TestApps.SlowRequest
   default-language: Haskell2010
   default-extensions:
     BangPatterns

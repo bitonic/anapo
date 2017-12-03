@@ -199,7 +199,7 @@ renderVirtualDom RenderOptions{..} doc = let
     => el
     -> V.ElementEvents el
     -> DOM.JSM [SomeSaferEventListener]
-  addEvents el evts = forM evts $ \(V.SomeEvent evtName evt) -> do
+  addEvents el evts = forM (DList.toList evts) $ \(V.SomeEvent evtName evt) -> do
     safel <- DOM.newListener (do ev <- ask; lift (evt el ev))
     DOM.addListener el evtName safel False
     return (SomeSaferEventListener evtName safel)

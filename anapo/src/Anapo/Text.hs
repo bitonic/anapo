@@ -6,8 +6,10 @@
 module Anapo.Text (Text, module Data.JSString) where
 
 import Data.JSString
+import Data.JSString.Text
 import Data.Hashable (Hashable(..))
 import System.IO.Unsafe (unsafePerformIO)
+import qualified Data.Aeson as Aeson
 
 foreign import javascript unsafe "$r = h$stringFnvHash($1, $2)"
   js_stringFnvHash :: Int -> JSString -> IO Int
@@ -16,6 +18,12 @@ foreign import javascript unsafe "$r = h$stringFnvHash($1, $2)"
 instance Hashable JSString where
   {-# INLINE hashWithSalt #-}
   hashWithSalt salt str = unsafePerformIO (js_stringFnvHash salt str)
+
+instance Aeson.ToJSON JSString where
+  toJSON = Aeson.String . textFromJSString
+
+instance Aeson.FromJSON JSString where
+  parseJSON = Aeson.withText "JSString" (return . textToJSString)
 
 type Text = JSString
 
