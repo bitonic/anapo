@@ -1,7 +1,0 @@
-#!/bin/bash
-set -eux -o pipefail
-
-stack build --ghc-options '-O0' anapo-test-app
-# dist_dir=$(stack path test-app --dist-dir)
-bin_dir="./test-app/.stack-work/dist/x86_64-linux/Cabal-1.24.2.0_ghcjs/build/test-app/test-app.jsexe/"
-./serve-test-app.hs "$bin_dir" "test-app.html"
