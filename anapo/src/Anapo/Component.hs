@@ -510,17 +510,21 @@ text txt = return $ V.Node
   }
 
 {-# INLINE rawNode #-}
-rawNode :: (DOM.IsNode el) => (DOM.JSVal -> el) -> el -> Node el read write
-rawNode wrap x = return $ V.Node
+rawNode ::
+     (DOM.IsNode el)
+  => (DOM.JSVal -> el) -> el
+  -> [NodePatch el write]
+  -> Node el read write
+rawNode wrap x = patchNode V.Node
   { V.nodeMark = Nothing
   , V.nodeBody = V.NBRawNode x
   , V.nodeCallbacks = mempty
   , V.nodeWrap = wrap
   }
 
--- TODO this causes linking errors, sometimes. bizzarely,
--- the linking errors seem to happen only if a closure is
--- formed -- e.g. if we define the function as
+-- TODO this causes linking errors, sometimes. bizzarely, the linking
+-- errors seem to happen only if a closure is formed -- e.g. if we
+-- define the function as
 --
 -- @
 -- marked shouldRerender ptr = deRefStaticPtr ptr

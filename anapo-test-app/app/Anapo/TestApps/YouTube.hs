@@ -14,11 +14,13 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Foldable as F
 
 import qualified GHCJS.DOM.Types as DOM
+import qualified GHCJS.DOM.Document as DOM.Document
+import qualified GHCJS.DOM as DOM
 
 import Anapo
+import Anapo.Logging
 import Anapo.TestApps.Prelude
 import Anapo.TestApps.YouTubeBindings
-
 
 -- YT api
 -- --------------------------------------------------------------------
@@ -50,19 +52,21 @@ youTubeInit videoId = liftJSM $ do
     , _ytsLastPosition = Nothing
     }
 
--- it's important to have this as a generic element since we'll replace it
--- with a iframe
-youTubeNode :: Node' DOM.HTMLDivElement YouTubeState
+-- it's important to have this as a generic element since we'll replace
+-- it with a iframe
+youTubeNode :: Node' DOM.Element YouTubeState
 youTubeNode = do
   st <- askState
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
   let
     didMount el = void $ forkAction $ liftJSM $ do
+      logInfo "Creating new YouTube object"
       ytp <- youTubeNew el YouTubeNew
         { ytnHeight = 390
         , ytnWidth = 640
         , ytnVideoId = st^.ytsVideoId
         }
+      logInfo "Created new YouTube object"
       F.for_ (st^.ytsLastPosition) $ \t -> do
         youTubeSeekTo ytp t
         youTubePauseVideo ytp
@@ -75,19 +79,25 @@ youTubeNode = do
         Just ytp -> do
           t <- liftJSM (youTubeGetCurrentTime ytp)
           dispatch (ytsLastPosition .= Just t)
-  div_
-    [ class_ "row"
-    , unsafeDidMount didMount
+  -- we insert the to-be-replaced node as a raw node since otherwise the
+  -- patching algorithm might try to patch it and fail because the YT
+  -- library turns whatever we have into an iframe.
+  el <- liftJSM $ do
+    doc <- DOM.currentDocumentUnchecked
+    container <- DOM.unsafeCastTo DOM.Element =<< DOM.Document.createElement doc ("div" :: Text)
+    simpleRenderComponent container () $
+      n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
+        n$ text "YouTube player not ready"
+    return container
+  rawNode DOM.Element el
+    [ unsafeDidMount didMount
     , unsafeWillRemove willRemove
     ]
-    (n$ div_ [class_ "col"] $
-      n$ "YouTube player not ready")
 
 -- | Never rerender the node
 youTubeComponent :: Component' YouTubeState
 youTubeComponent = do
-  -- TODO this causes a linking error with GHC! see TODO
-  -- on 'marked'
+  -- TODO this causes a linking error with GHC! see TODO on 'marked'
   n$ marked
     (\mbPrevSt st -> case mbPrevSt of
       Just prevSt -> if prevSt^.ytsToken == st^.ytsToken

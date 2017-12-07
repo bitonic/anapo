@@ -62,7 +62,7 @@ youTubeNew container ytn = do
     (\cback -> do
       (ytnJS JS.<# "events") =<< JS.obj
       (ytnJS ^. JS.js "events" JS.<# "onReady") cback
-      ytp <- JS.new (JS.jsg "YT" ^. JS.js ".Player") [containerJS, ytnJS]
+      ytp <- JS.new (JS.jsg "YT" ^. JS.js "Player") [containerJS, ytnJS]
       liftIO (readMVar isPlayerReady)
       return ytp)
 

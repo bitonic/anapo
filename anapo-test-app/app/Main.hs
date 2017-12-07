@@ -5,6 +5,7 @@ module Main (main) where
 import Anapo
 import Anapo.Render
 import Anapo.TestApps
+import Anapo.TestApps.YouTube
 import Anapo.TestApps.Prelude
 
 #if defined(ghcjs_HOST_OS)
@@ -18,6 +19,7 @@ run = Warp.run 8000
 
 mainJSM :: JSM ()
 mainJSM = do
+  youTubeSetup
   installComponentBootstrap
     RenderOptions
       { roAlwaysRerender = False
