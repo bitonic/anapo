@@ -1,5 +1,4 @@
-{-# LANGUAGE JavaScriptFFI #-}
-{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Anapo.TestApps.YouTubeBindings where
 
 import System.IO.Unsafe (unsafePerformIO)

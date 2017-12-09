@@ -47,6 +47,9 @@ library
     js-sources: jsbits/fnv.js
   default-language: Haskell2010
   ghc-options: -Wall
+  -- DO NOT put TemplateHaskell here, currently it triggers -dynamic-too
+  -- which in turns makes everything recompile every time. I am not
+  -- entirely sure why.
   default-extensions:
     BangPatterns
     ConstraintKinds
@@ -63,7 +66,6 @@ library
     ScopedTypeVariables
     StaticPointers
     StrictData
-    TemplateHaskell
     TupleSections
     TypeFamilies
     NamedFieldPuns

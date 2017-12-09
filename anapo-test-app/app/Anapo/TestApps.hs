@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Anapo.TestApps (TestAppsStateOrError, testAppsComponent, testAppsWith) where
 
 import Control.Lens (makeLenses, set, (^.), makePrisms)

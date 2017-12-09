@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Anapo.TestApps.TodoList
   ( TodoState
   , todoComponent

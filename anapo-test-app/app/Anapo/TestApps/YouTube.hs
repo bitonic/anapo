@@ -1,13 +1,12 @@
-{-# LANGUAGE JavaScriptFFI #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Anapo.TestApps.YouTube
   ( YouTubeState
   , youTubeComponent
   , youTubeInit
   , youTubeSetup
   ) where
+
 
 import Data.IORef
 import System.IO.Unsafe (unsafePerformIO)

@@ -48,6 +48,9 @@ executable test-app
     Anapo.TestApps.YouTubeBindings
     -- Anapo.TestApps.SlowRequest
   default-language: Haskell2010
+  -- DO NOT put TemplateHaskell here, currently it triggers -dynamic-too
+  -- which in turns makes everything recompile every time. I am not
+  -- entirely sure why.
   default-extensions:
     BangPatterns
     ConstraintKinds
@@ -59,17 +62,17 @@ executable test-app
     GeneralizedNewtypeDeriving
     LambdaCase
     MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
     RankNTypes
     RecordWildCards
     ScopedTypeVariables
+    StandaloneDeriving
     StaticPointers
     StrictData
-    TemplateHaskell
     TupleSections
-    TypeFamilies
-    NamedFieldPuns
-    StandaloneDeriving
     TypeApplications
+    TypeFamilies
 
 source-repository head
   type:     git
