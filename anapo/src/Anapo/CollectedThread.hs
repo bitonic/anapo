@@ -29,7 +29,7 @@ data CollectedThreadId = CollectedThreadId
   }
 
 {-# INLINE forkCollected #-}
-forkCollected :: MonadAction in_ out m => Action in_ out () -> m CollectedThreadId
+forkCollected :: MonadAction state m => Action state () -> m CollectedThreadId
 forkCollected m = liftAction $ do
   -- we use an IORef because we do not have a function that attaches
   -- a finalizer on the primitive ThreadId#, and when i attach it

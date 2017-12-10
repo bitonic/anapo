@@ -42,7 +42,7 @@ timeIt m = do
 
 {-# INLINE componentLoop #-}
 componentLoop :: forall state acc.
-     (forall a. (state -> DOM.JSM a) -> Action' state a)
+     (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Component (Either SomeException state) state
   -> acc -> (acc -> V.Dom -> DOM.JSM acc)
   -> DOM.JSM acc
@@ -108,7 +108,7 @@ componentLoop withState vdom !acc0 useDom = do
 
 {-# INLINE installComponentBody #-}
 installComponentBody ::
-     (forall a. (state -> DOM.JSM a) -> Action' state a)
+     (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Component (Either SomeException state) state
   -> DOM.JSM ()
 installComponentBody getSt vdom0 = do
@@ -120,7 +120,7 @@ installComponentBody getSt vdom0 = do
 
 {-# INLINE installComponentBootstrap #-}
 installComponentBootstrap ::
-     (forall a. (state -> DOM.JSM a) -> Action' state a)
+     (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Component (Either SomeException state) state
   -> DOM.JSM ()
 installComponentBootstrap getSt vdom0 = do

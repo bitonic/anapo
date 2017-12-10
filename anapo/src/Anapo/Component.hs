@@ -17,7 +17,6 @@ module Anapo.Component
 
     -- * Dispatch
   , Dispatch
-  , Dispatch'
   , runDispatchT
   , runDispatch
 
@@ -26,13 +25,11 @@ module Anapo.Component
   , HandleException
   , forkRegistered
   , Action(..)
-  , Action'
   , runAction
   , dispatch
   , forkAction
   , zoomAction
   , MonadAction(..)
-  , MonadAction'
 
     -- * ComponentM
   , ComponentM(..)
@@ -185,9 +182,9 @@ import qualified Language.Javascript.JSaddle as JSaddle
 -- affine traversals
 -- --------------------------------------------------------------------
 
--- | for the components we want affine traversals -- traversals which
--- point either to one or to zero elements. however lens currently
--- does not provide them, see
+-- | for the components we want affine traversals --
+-- traversals which point either to one or to zero elements.
+-- however lens currently does not provide them, see
 -- <https://www.reddit.com/r/haskell/comments/60fha5/affine_traversal/>.
 -- therefore we provide a type synonym for clarity.
 type AffineTraversal a b c d = Lens.Traversal a b c d
@@ -203,15 +200,14 @@ toMaybeOf l x = case Lens.toListOf l x of
 -- Dispatching and handling
 -- --------------------------------------------------------------------
 
-type Dispatch in_ out = (in_ -> DOM.JSM out) -> IO ()
-type Dispatch' state = Dispatch state state
+type Dispatch state = (state -> DOM.JSM state) -> IO ()
 
 {-# INLINE runDispatchT #-}
-runDispatchT :: MonadIO m => Dispatch' state -> StateT state DOM.JSM () -> m ()
+runDispatchT :: MonadIO m => Dispatch state -> StateT state DOM.JSM () -> m ()
 runDispatchT disp st = liftIO (disp (execStateT st))
 
 {-# INLINE runDispatch #-}
-runDispatch :: MonadIO m => Dispatch' state -> State state () -> m ()
+runDispatch :: MonadIO m => Dispatch state -> State state () -> m ()
 runDispatch disp st = liftIO (disp (return . execState st))
 
 -- Register / handle
@@ -227,34 +223,33 @@ type HandleException = SomeException -> IO ()
 -- Action
 -- --------------------------------------------------------------------
 
--- | An action we'll spawn from a component -- for example when an
--- event fires or as a fork in an event
-newtype Action in_ out a = Action
+-- | An action we'll spawn from a component -- for example when an event
+-- fires or as a fork in an event
+newtype Action state a = Action
   { unAction ::
          RegisterThread
       -> HandleException
-      -> Dispatch in_ out
+      -> Dispatch state
       -> DOM.JSM a
   }
-type Action' state = Action state state
 
 {-# INLINE runAction #-}
-runAction :: Action in_ out a -> RegisterThread -> HandleException -> Dispatch in_ out -> DOM.JSM a
+runAction :: Action state a -> RegisterThread -> HandleException -> Dispatch state -> DOM.JSM a
 runAction vdom = unAction vdom
 
-instance Functor (Action in_ out) where
+instance Functor (Action state) where
   {-# INLINE fmap #-}
   fmap f (Action g) = Action $ \reg hdl d -> do
     x <- g reg hdl d
     return (f x)
 
-instance Applicative (Action in_ out) where
+instance Applicative (Action state) where
   {-# INLINE pure #-}
   pure = return
   {-# INLINE (<*>) #-}
   (<*>) = ap
 
-instance Monad (Action in_ out) where
+instance Monad (Action state) where
   {-# INLINE return #-}
   return x = Action (\_reg _hdl _d -> return x)
   {-# INLINE (>>=) #-}
@@ -262,37 +257,37 @@ instance Monad (Action in_ out) where
     x <- unAction ma reg hdl d
     unAction (mf x) reg hdl d
 
-instance MonadIO (Action in_ out) where
+instance MonadIO (Action state) where
   {-# INLINE liftIO #-}
   liftIO m = Action (\_reg _hdl _d -> liftIO m)
 
 #if !defined(ghcjs_HOST_OS)
-instance  JSaddle.MonadJSM (Action in_ out) where
+instance  JSaddle.MonadJSM (Action state) where
   {-# INLINE liftJSM' #-}
   liftJSM' m = Action (\_reg _hdl _d -> m)
 #endif
 
-instance MonadUnliftIO (Action in_ out) where
+instance MonadUnliftIO (Action state) where
   {-# INLINE askUnliftIO #-}
   askUnliftIO = Action $ \reg hdl d -> do
     u <- askUnliftIO
     return (UnliftIO (\(Action m) -> unliftIO u (m reg hdl d)))
 
-class (DOM.MonadJSM m) => MonadAction in_ out m | m -> in_, m -> out where
-  liftAction :: Action in_ out a -> m a
-type MonadAction' state = MonadAction state state
+class (DOM.MonadJSM m) => MonadAction state m | m -> state where
+  liftAction :: Action state a -> m a
 
-instance MonadAction in_ out (Action in_ out) where
+instance MonadAction state (Action state) where
   {-# INLINE liftAction #-}
   liftAction = id
 
-instance MonadAction in_ out (StateT s (Action in_ out)) where
+instance MonadAction state (StateT s (Action state)) where
   {-# INLINE liftAction #-}
   liftAction = lift
 
 {-# INLINE zoomAction #-}
-zoomAction :: MonadAction' writeOut m => LensLike' DOM.JSM writeOut writeIn -> Action' writeIn a -> m a
-zoomAction l m = liftAction (Action (\reg hdl disp -> runAction m reg hdl (disp . l)))
+zoomAction :: MonadAction writeOut m => LensLike' DOM.JSM writeOut writeIn -> Action writeIn a -> m a
+zoomAction l m =
+  liftAction (Action (\reg hdl disp -> runAction m reg hdl (disp . l)))
 
 {-# INLINE forkRegistered #-}
 forkRegistered :: MonadUnliftIO m => RegisterThread -> HandleException -> m () -> m ThreadId
@@ -308,23 +303,23 @@ forkRegistered register handler m = do
       Right _ -> return ()
 
 {-# INLINE forkAction #-}
-forkAction :: MonadAction in_ out m => Action in_ out () -> m ThreadId
+forkAction :: MonadAction state m => Action state () -> m ThreadId
 forkAction m = liftAction (Action (\reg hdl d -> forkRegistered reg hdl (unAction m reg hdl d)))
 
 {-# INLINE dispatch #-}
-dispatch :: MonadAction' write m => StateT write (Action' write) () -> m ()
+dispatch :: MonadAction write m => StateT write (Action write) () -> m ()
 dispatch m = liftAction (Action (\reg hdl d -> liftIO (d (\st -> unAction (execStateT m st) reg hdl d))))
 
 {-# INLINE askDispatch #-}
-askDispatch :: (MonadAction in_ out m) => m (Dispatch in_ out)
+askDispatch :: (MonadAction state m) => m (Dispatch state)
 askDispatch = liftAction (Action (\_reg _hdl d -> return d))
 
 {-# INLINE askRegisterThread #-}
-askRegisterThread :: (MonadAction in_ out m) => m RegisterThread
+askRegisterThread :: (MonadAction state m) => m RegisterThread
 askRegisterThread = liftAction (Action (\reg _hdl _d -> return reg))
 
 {-# INLINE askHandleException #-}
-askHandleException :: (MonadAction in_ out m) => m HandleException
+askHandleException :: (MonadAction state m) => m HandleException
 askHandleException = liftAction (Action (\_reg hdl _d -> return hdl))
 
 -- Monad
@@ -336,7 +331,7 @@ newtype ComponentM dom read write a = ComponentM
       -- how to register threads resulting from events / forks
       -> HandleException
       -- how to handle exceptions that happen in events / forks
-      -> Dispatch' write
+      -> Dispatch write
       -- how to dispatch updates to the state
       -> Maybe write
       -- the previous state
@@ -378,11 +373,11 @@ instance (el ~ DOM.Text) => IsString (Node el read write) where
   fromString = text . T.pack
 
 {-# INLINE runComponentM #-}
-runComponentM :: ComponentM dom read write a -> RegisterThread -> HandleException -> Dispatch' write -> Maybe write -> read -> DOM.JSM (dom, a)
+runComponentM :: ComponentM dom read write a -> RegisterThread -> HandleException -> Dispatch write -> Maybe write -> read -> DOM.JSM (dom, a)
 runComponentM vdom = unComponentM vdom
 
 {-# INLINE runComponent #-}
-runComponent :: Component read write -> RegisterThread -> HandleException -> Dispatch' write -> Maybe write -> read -> DOM.JSM V.Dom
+runComponent :: Component read write -> RegisterThread -> HandleException -> Dispatch write -> Maybe write -> read -> DOM.JSM V.Dom
 runComponent vdom reg hdl d mbst st = fst <$> unComponentM vdom reg hdl d mbst st
 
 instance Functor (ComponentM dom read write) where
@@ -407,14 +402,14 @@ instance (Monoid dom) => Monad (ComponentM dom read write) where
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
-instance (Monoid dom) => MonadAction write write (ComponentM dom read write) where
+instance (Monoid dom) => MonadAction write (ComponentM dom read write) where
   {-# INLINE liftAction #-}
   liftAction (Action f) = ComponentM $ \reg hdl d _mbst _st -> do
     x <- f reg hdl d
     return (mempty, x)
 
 {-# INLINE localDispatch #-}
-localDispatch :: (Monoid dom) => Dispatch' write' -> Maybe write' -> ComponentM dom read write' a -> ComponentM dom read write a
+localDispatch :: (Monoid dom) => Dispatch write' -> Maybe write' -> ComponentM dom read write' a -> ComponentM dom read write a
 localDispatch d mbst comp = ComponentM (\reg hdl _d _mbst st -> unComponentM comp reg hdl d mbst st)
 
 {-# INLINE localRegisterThread #-}
@@ -466,23 +461,23 @@ zoomT st l = zoom st (toMaybeOf l) l
 -- --------------------------------------------------------------------
 
 {-# INLINE unsafeWillMount #-}
-unsafeWillMount :: (el -> Action' state ()) -> NodePatch el state
+unsafeWillMount :: (el -> Action state ()) -> NodePatch el state
 unsafeWillMount = NPUnsafeWillMount
 
 {-# INLINE unsafeDidMount #-}
-unsafeDidMount :: (el -> Action' state ()) -> NodePatch el state
+unsafeDidMount :: (el -> Action state ()) -> NodePatch el state
 unsafeDidMount = NPUnsafeDidMount
 
 {-# INLINE unsafeWillPatch #-}
-unsafeWillPatch :: (el -> Action' state ()) -> NodePatch el state
+unsafeWillPatch :: (el -> Action state ()) -> NodePatch el state
 unsafeWillPatch = NPUnsafeWillPatch
 
 {-# INLINE unsafeDidPatch #-}
-unsafeDidPatch :: (el -> Action' state ()) -> NodePatch el state
+unsafeDidPatch :: (el -> Action state ()) -> NodePatch el state
 unsafeDidPatch = NPUnsafeDidPatch
 
 {-# INLINE unsafeWillRemove #-}
-unsafeWillRemove :: (el -> Action' state ()) -> NodePatch el state
+unsafeWillRemove :: (el -> Action state ()) -> NodePatch el state
 unsafeWillRemove = NPUnsafeWillRemove
 
 -- useful shorthands
@@ -560,15 +555,15 @@ marked shouldRerender ptr = ComponentM $ \reg hdl d mbst st -> do
 -- --------------------------------------------------------------------
 
 data SomeEventAction el write = forall e. (DOM.IsEvent e) =>
-  SomeEventAction (DOM.EventM.EventName el e) (el -> e -> Action' write ())
+  SomeEventAction (DOM.EventM.EventName el e) (el -> e -> Action write ())
 newtype UnsafeRawHtml = UnsafeRawHtml Text
 
 data NodePatch el state =
-    NPUnsafeWillMount (el -> Action' state ())
-  | NPUnsafeDidMount (el -> Action' state ())
-  | NPUnsafeWillPatch (el -> Action' state ())
-  | NPUnsafeDidPatch (el -> Action' state ())
-  | NPUnsafeWillRemove (el -> Action' state ())
+    NPUnsafeWillMount (el -> Action state ())
+  | NPUnsafeDidMount (el -> Action state ())
+  | NPUnsafeWillPatch (el -> Action state ())
+  | NPUnsafeDidPatch (el -> Action state ())
+  | NPUnsafeWillRemove (el -> Action state ())
   | NPStyle V.StylePropertyName V.StyleProperty
   | NPProperty V.ElementPropertyName (V.ElementProperty el)
   | NPEvent (SomeEventAction el state)
@@ -1005,7 +1000,7 @@ src_ txt = NPProperty "src" $ V.ElementProperty
 
 {-# INLINE onEvent #-}
 onEvent ::
-     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction' write m, MonadUnliftIO m)
+     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction write m, MonadUnliftIO m)
   => t -> DOM.EventM.EventName t e -> (e -> m ()) -> m (DOM.JSM ())
 onEvent el_ evName f = do
   u <- askUnliftIO
@@ -1018,27 +1013,27 @@ onEvent el_ evName f = do
 
 onclick_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.MouseEvent -> Action' write ()) -> NodePatch el write
+  => (el -> DOM.MouseEvent -> Action write ()) -> NodePatch el write
 onclick_ = NPEvent . SomeEventAction DOM.click
 
 onchange_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action' write ()) -> NodePatch el write
+  => (el -> DOM.Event -> Action write ()) -> NodePatch el write
 onchange_ = NPEvent . SomeEventAction DOM.change
 
 oninput_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action' write ()) -> NodePatch el write
+  => (el -> DOM.Event -> Action write ()) -> NodePatch el write
 oninput_ = NPEvent . SomeEventAction DOM.input
 
 onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action' write ()) -> NodePatch el write
+  => (el -> DOM.Event -> Action write ()) -> NodePatch el write
 onsubmit_ = NPEvent . SomeEventAction DOM.submit
 
 onselect_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.UIEvent -> Action' write ()) -> NodePatch el write
+  => (el -> DOM.UIEvent -> Action write ()) -> NodePatch el write
 onselect_ = NPEvent . SomeEventAction DOM.select
 
 -- simple rendering
