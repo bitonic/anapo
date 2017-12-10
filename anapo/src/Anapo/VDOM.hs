@@ -35,6 +35,8 @@ data Mark = Mark
   }
 
 {-
+we should probably do something like this:
+
 -- | When patching an element, unsafeWillPatch will be called on the
 -- _previous_ element, then unsafeDidPatch will be called on the next
 -- element.
