@@ -1,0 +1,4 @@
+language: nix
+script:
+- nix-build -A anapo-test-app --arg ghcjs true
+- nix-build -A anapo-test-app --arg ghcjs false
