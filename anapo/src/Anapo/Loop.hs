@@ -44,16 +44,16 @@ timeIt m = do
 componentLoop :: forall state acc.
      (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Component (Either SomeException state) state
-  -> acc -> (acc -> V.Dom -> DOM.JSM acc)
-  -> DOM.JSM acc
-  -- ^ returns the final accumulator, when there is nothing left to do.
+  -> DOM.JSM (V.Dom, V.DomOverlay)
+  -- ^ returns the dom and overlay, when there is nothing left to do.
   -- might never terminate
-componentLoop withState vdom !acc0 useDom = do
+componentLoop withState vdom !acc0 = do
   -- dispatch channel
   dispatchChan :: Chan (state -> DOM.JSM state) <- liftIO newChan
   let
     get = do
-      mbF :: Either BlockedIndefinitelyOnMVar (state -> DOM.JSM state) <- liftIO (tryAsync (readChan dispatchChan))
+      mbF :: Either BlockedIndefinitelyOnMVar (state -> DOM.JSM state) <-
+        liftIO (tryAsync (readChan dispatchChan))
       case mbF of
         Left{} -> do
           logInfo "got undefinitedly blocked on mvar on dispatch channel, will stop"
@@ -88,8 +88,8 @@ componentLoop withState vdom !acc0 useDom = do
               logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
               liftIO (throwIO err)
             Right st -> do
-              -- we are biased towards exceptions since we want
-              -- to exit immediately when there is a failure
+              -- we are biased towards exceptions since we want to exit
+              -- immediately when there is a failure
               fOrErr :: Either SomeException (Maybe (state -> DOM.JSM state)) <- liftIO (Async.race (readMVar excVar) get)
               case fOrErr of
                 Left err -> go Nothing (Left err) acc'

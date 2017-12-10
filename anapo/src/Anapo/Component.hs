@@ -200,7 +200,15 @@ toMaybeOf l x = case Lens.toListOf l x of
 -- Dispatching and handling
 -- --------------------------------------------------------------------
 
-type Dispatch state = (state -> DOM.JSM state) -> IO ()
+type DispatchStateRef state = IORef (DispatchState state)
+
+data DispatchState state = DispatchState
+  { dispatchStateState :: state
+  , dispatchStateDom :: Maybe (V.Dom, V.DomOverlay)
+  }
+
+type Dispatch state =
+  DOM.Element -> DispatchStateRef state -> (state -> DOM.JSM state) -> IO ()
 
 {-# INLINE runDispatchT #-}
 runDispatchT :: MonadIO m => Dispatch state -> StateT state DOM.JSM () -> m ()
