@@ -1,5 +1,5 @@
 .PHONY: all
-all: ghcjs-build
+all: ghcjs-test-app-build
 
 .PHONY: ghc-anapo-configure
 ghc-anapo-configure:

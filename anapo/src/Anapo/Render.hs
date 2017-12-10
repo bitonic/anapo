@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Anapo.Render (Overlay, renderVirtualDom) where
+module Anapo.Render (DomOverlay, renderVirtualDom) where
 
 import qualified Data.HashMap.Strict as HMS
 import Control.Monad (forM_, when, forM)
@@ -25,39 +25,40 @@ import qualified Anapo.VDOM as V
 import Anapo.Text (Text, pack)
 import Anapo.Logging
 
-type Overlay = [NodeOverlay]
+type DomOverlay = [NodeOverlay]
 
 newtype ResetProperty = ResetProperty
-  { resetProperty :: forall el. (DOM.IsElement el) => el -> DOM.JSM ()
+  { unResetProperty :: forall el. (DOM.IsElement el) => el -> DOM.JSM ()
   }
 
-data SomeSaferEventListener = forall t e. (DOM.IsEventTarget t, DOM.IsEvent e) => SomeSaferEventListener
-  { _sselName :: DOM.EventName t e
-  , _sselEv :: DOM.SaferEventListener t e
-  }
+data SomeSaferEventListener =
+  forall t e. (DOM.IsEventTarget t, DOM.IsEvent e) => SomeSaferEventListener
+    { _sselName :: DOM.EventName t e
+    , _sselEv :: DOM.SaferEventListener t e
+    }
 
 data NodeOverlay = NodeOverlay
-  { noEvents :: [SomeSaferEventListener]
-  , noResetProperties :: HMS.HashMap V.ElementPropertyName ResetProperty
-  -- ^ holds functions that can reset all the properties that
-  -- have been set.
-  , noStyle :: V.ElementStyle
-  , noChildren :: Overlay
-  , noNode :: DOM.Node
+  { nodeOverlayNode :: DOM.Node
+  , nodeOverlayEvents :: [SomeSaferEventListener]
+  , nodeOverlayResetProperties :: HMS.HashMap V.ElementPropertyName ResetProperty
+  -- ^ holds functions that can reset all the properties that have been
+  -- set.
+  , nodeOverlayStyle :: V.ElementStyle
+  , nodeOverlayChildren :: DomOverlay
   }
 
 {-# INLINE emptyOverlay #-}
 emptyOverlay :: DOM.Node -> NodeOverlay
-emptyOverlay = NodeOverlay mempty mempty mempty mempty
+emptyOverlay el = NodeOverlay el mempty mempty mempty mempty
 
 {-# INLINE renderVirtualDom #-}
 renderVirtualDom :: forall el0.
      (DOM.IsElement el0)
   => DOM.Document
   -> el0
-  -> Maybe (V.Dom, Overlay)
+  -> Maybe (V.Dom, DomOverlay)
   -> V.Dom
-  -> DOM.JSM Overlay
+  -> DOM.JSM DomOverlay
 renderVirtualDom doc = let
   {-# INLINE eraseAllChildren #-}
   eraseAllChildren :: (DOM.IsNode el) => el -> DOM.JSM ()
@@ -72,7 +73,7 @@ renderVirtualDom doc = let
   {-# INLINE removeDomNodeChildren #-}
   removeDomNodeChildren ::
        DOM.Node
-    -> Overlay
+    -> DomOverlay
     -> V.Children
     -> DOM.JSM ()
   removeDomNodeChildren container overlay children = case children of
@@ -83,7 +84,7 @@ renderVirtualDom doc = let
     V.CNormal vdom -> removeDom container overlay (DList.toList vdom)
 
   {-# INLINE removeDom #-}
-  removeDom :: DOM.Node -> Overlay -> [V.SomeNode] -> DOM.JSM ()
+  removeDom :: DOM.Node -> DomOverlay -> [V.SomeNode] -> DOM.JSM ()
   removeDom container00 overlayNodes00 nodes00 = do
     let
       go container overlayNodes0 nodes0 = case (overlayNodes0, nodes0) of
@@ -109,16 +110,16 @@ renderVirtualDom doc = let
     -> DOM.JSM ()
   removeNode container removeChild NodeOverlay{..} (V.SomeNode V.Node{..}) = do
     -- first call the will remove
-    V.callbacksUnsafeWillRemove nodeCallbacks =<< DOM.unsafeCastTo nodeWrap noNode
+    V.callbacksUnsafeWillRemove nodeCallbacks =<< DOM.unsafeCastTo nodeWrap nodeOverlayNode
     -- then recurse down...
     case nodeBody of
-      V.NBElement el -> removeDomNodeChildren noNode noChildren (V.elementChildren el)
-      -- TODO consider asserting that noChildren is null
+      V.NBElement el -> removeDomNodeChildren nodeOverlayNode nodeOverlayChildren (V.elementChildren el)
+      -- TODO consider asserting that nodeOverlayChildren is null
       V.NBText{} -> return ()
       V.NBRawNode{} -> return ()
     -- then remove the DOM thing and remove the children
-    removeChild container noNode
-    for_ noEvents (\(SomeSaferEventListener _ ev) -> DOM.releaseListener ev)
+    removeChild container nodeOverlayNode
+    for_ nodeOverlayEvents (\(SomeSaferEventListener _ ev) -> DOM.releaseListener ev)
 
   {-# INLINE addEvents #-}
   addEvents ::
@@ -177,7 +178,7 @@ renderVirtualDom doc = let
        (DOM.IsElement el)
     => el -- ^ container
     -> V.Children
-    -> DOM.JSM Overlay
+    -> DOM.JSM DomOverlay
   renderDomChildren container = \case
     V.CRawHtml html -> do
       DOM.setInnerHTML container html
@@ -210,7 +211,7 @@ renderVirtualDom doc = let
         style <- addStyle el elementStyle mempty
         evts <- addEvents el elementEvents
         childrenEvents <- renderDomChildren el elementChildren
-        cont el nodeCallbacks (NodeOverlay evts defProps style childrenEvents (DOM.toNode el))
+        cont el nodeCallbacks (NodeOverlay (DOM.toNode el) evts defProps style childrenEvents)
 
   {-# INLINE renderDom #-}
   renderDom ::
@@ -228,9 +229,9 @@ renderVirtualDom doc = let
        (DOM.IsElement el)
     => el -- ^ the containing node
     -> V.Children -- ^ previous children
-    -> Overlay -- ^ the overlay for previous children
+    -> DomOverlay -- ^ the overlay for previous children
     -> V.Children -- ^ current children
-    -> DOM.JSM Overlay
+    -> DOM.JSM DomOverlay
   patchDomChildren container prevChildren0 prevChildrenEvts0 children0 =
     case (prevChildren0, prevChildrenEvts0, children0) of
       -- TODO consider ref equality for HTML
@@ -260,26 +261,26 @@ renderVirtualDom doc = let
     -- TODO we could remove the default properties at this point, but i'm
     -- not sure it's even worth it
     forM_ (HMS.keys removedProps) $ \prop ->
-      resetProperty (noResetProperties prevElOverlay HMS.! prop) node
+      unResetProperty (nodeOverlayResetProperties prevElOverlay HMS.! prop) node
     -- insert new properties, and augment the property resetters
-    newResetProperties <- addProperties node wrap (V.elementProperties el) (noResetProperties prevElOverlay)
+    newResetProperties <- addProperties node wrap (V.elementProperties el) (nodeOverlayResetProperties prevElOverlay)
     -- remove all events
     -- TODO we should probably have an option to be able to have stable events, so
     -- that we do not have to delete everything each time
     -- TODO can it be that changing the attributes triggers some events? we should
     -- check
-    forM_ (noEvents prevElOverlay) $ \(SomeSaferEventListener evtName evt) -> do
+    forM_ (nodeOverlayEvents prevElOverlay) $ \(SomeSaferEventListener evtName evt) -> do
       -- TODO maybe do something safer here...
       DOM.removeListener (unsafeCoerce node) evtName evt False
       DOM.releaseListener evt
     -- add style
-    newStyle <- addStyle node (V.elementStyle el) (noStyle prevElOverlay)
+    newStyle <- addStyle node (V.elementStyle el) (nodeOverlayStyle prevElOverlay)
     -- add all events
     evts <- addEvents node (V.elementEvents el)
     -- patch children
     childrenEvts <-
-      patchDomChildren node (V.elementChildren prevEl) (noChildren prevElOverlay) (V.elementChildren el)
-    return (NodeOverlay evts newResetProperties newStyle childrenEvts (noNode prevElOverlay))
+      patchDomChildren node (V.elementChildren prevEl) (nodeOverlayChildren prevElOverlay) (V.elementChildren el)
+    return (NodeOverlay (nodeOverlayNode prevElOverlay) evts newResetProperties newStyle childrenEvts)
 
   {-# INLINE patchDomNode #-}
   patchDomNode ::
@@ -312,7 +313,7 @@ renderVirtualDom doc = let
           return prevVdomEvents
         -- Element
         (V.NBElement prevElement, V.NBElement element) | V.elementTag prevElement == V.elementTag element -> do
-          node' <- DOM.unsafeCastTo wrap (noNode prevVdomEvents)
+          node' <- DOM.unsafeCastTo wrap (nodeOverlayNode prevVdomEvents)
           V.callbacksUnsafeWillPatch callbacks node'
           x <- patchDomElement node' wrap prevElement prevVdomEvents element
           V.callbacksUnsafeDidPatch callbacks node'
@@ -331,9 +332,9 @@ renderVirtualDom doc = let
   patchKeyedDom ::
        DOM.Node
     -> V.KeyedDom
-    -> Overlay
+    -> DomOverlay
     -> V.KeyedDom
-    -> DOM.JSM Overlay
+    -> DOM.JSM DomOverlay
   patchKeyedDom container prevkdom prevVdomEvents kdom = do
     -- TODO implement this properly
     patchDom container (V.unkeyDom prevkdom) prevVdomEvents (V.unkeyDom kdom)
@@ -342,9 +343,9 @@ renderVirtualDom doc = let
   patchDom ::
        DOM.Node -- ^ the container
     -> V.Dom -- ^ the previous vdom
-    -> Overlay -- ^ the previous vdom events
+    -> DomOverlay -- ^ the previous vdom events
     -> V.Dom -- ^ the current vdom
-    -> DOM.JSM Overlay
+    -> DOM.JSM DomOverlay
   patchDom container prevVnodes0 prevVnodesEvents0 vnodes0 = do
     let
       go prevVnodes prevVdomEvents vnodes = case (prevVnodes, prevVdomEvents, vnodes) of
@@ -359,6 +360,7 @@ renderVirtualDom doc = let
           evts <- go prevVnodes' prevVnodesEvents' nodes'
           return (evt : evts)
     go (DList.toList prevVnodes0) prevVnodesEvents0 (DList.toList vnodes0)
+
   in \container mbPrevVdom vdom -> do
     t0 <- liftIO getCurrentTime
     x <- case mbPrevVdom of

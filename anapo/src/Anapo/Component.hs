@@ -1052,6 +1052,6 @@ simpleRenderComponent ::
   => el -> read -> Component read () -> DOM.JSM ()
 simpleRenderComponent container st comp = do
   doc <- DOM.currentDocumentUnchecked
-  vdom <- runComponent comp id throwIO (\_ -> return ()) Nothing st
+  vdom <- runComponent comp id throwIO (\_ -> fail "simpleRenderComponent: trying to dispatch an update!") Nothing st
   void (renderVirtualDom doc container Nothing vdom)
 
