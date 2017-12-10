@@ -11,10 +11,12 @@ module Anapo.TestApps.YouTube
 import Data.IORef
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Foldable as F
+import Data.Monoid ((<>))
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Document as DOM.Document
 import qualified GHCJS.DOM as DOM
+import qualified GHCJS.DOM.Node as DOM.Node
 
 import Anapo
 import Anapo.Logging
@@ -60,13 +62,18 @@ youTubeNode = do
   let
     didMount el = void $ forkAction $ liftJSM $ do
       logInfo "Creating new YouTube object"
-      ytp <- youTubeNew el YouTubeNew
+      -- We create the you tube element in the div _inside_ the
+      -- top-level element otherwise anapo will choke on the fact that
+      -- the element we inserted is gone.
+      child <- DOM.Node.getFirstChildUnsafe =<< DOM.Node.getFirstChildUnsafe el
+      ytp <- youTubeNew child YouTubeNew
         { ytnHeight = 390
         , ytnWidth = 640
         , ytnVideoId = st^.ytsVideoId
         }
       logInfo "Created new YouTube object"
       F.for_ (st^.ytsLastPosition) $ \t -> do
+        logInfo ("Seeking video at " <> tshow t)
         youTubeSeekTo ytp t
         youTubePauseVideo ytp
       liftIO (writeIORef mbYtpRef (Just ytp))
@@ -74,8 +81,11 @@ youTubeNode = do
     willRemove _el = do
       mbYtp <- liftIO (readIORef mbYtpRef)
       case mbYtp of
-        Nothing -> return ()
+        Nothing -> do
+          logInfo "Note getting latest time -- no YT object"
+          return ()
         Just ytp -> do
+          logInfo "Getting latest time"
           t <- liftJSM (youTubeGetCurrentTime ytp)
           dispatch (ytsLastPosition .= Just t)
   -- we insert the to-be-replaced node as a raw node since otherwise the

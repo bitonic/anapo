@@ -16,7 +16,7 @@ cabal-version:       >=1.10
 executable test-app
   hs-source-dirs: app
   main-is: Main.hs
-  ghc-options: -Wall
+  ghc-options: -Wall -fsimpl-tick-factor=1000
   build-depends:
     aeson,
     anapo,

@@ -34,6 +34,19 @@ data Mark = Mark
   , markRerender :: Rerender
   }
 
+{-
+-- | When patching an element, unsafeWillPatch will be called on the
+-- _previous_ element, then unsafeDidPatch will be called on the next
+-- element.
+data Callbacks = Callbacks
+  { callbacksUnsafeWillMount :: DOM.Node -> DOM.JSM ()
+  , callbacksUnsafeDidMount :: DOM.Node -> DOM.JSM ()
+  , callbacksUnsafeWillPatch :: DOM.Node -> DOM.JSM ()
+  , callbacksUnsafeDidPatch :: DOM.Node -> DOM.JSM ()
+  , callbacksUnsafeWillRemove :: DOM.Node -> DOM.JSM ()
+  }
+-}
+
 data Callbacks el = Callbacks
   { callbacksUnsafeWillMount :: el -> DOM.JSM ()
   , callbacksUnsafeDidMount :: el -> DOM.JSM ()

@@ -108,30 +108,28 @@ componentLoop withState vdom !acc0 useDom = do
 
 {-# INLINE installComponentBody #-}
 installComponentBody ::
-     RenderOptions
-  -> (forall a. (state -> DOM.JSM a) -> Action' state a)
+     (forall a. (state -> DOM.JSM a) -> Action' state a)
   -> Component (Either SomeException state) state
   -> DOM.JSM ()
-installComponentBody ro getSt vdom0 = do
+installComponentBody getSt vdom0 = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.getBodyUnchecked doc
   void $ componentLoop getSt vdom0 Nothing $ \mbVdom vdom -> do
-    evts <- renderVirtualDom ro doc body mbVdom vdom
+    evts <- renderVirtualDom doc body mbVdom vdom
     return (Just (vdom, evts))
 
 {-# INLINE installComponentBootstrap #-}
 installComponentBootstrap ::
-     RenderOptions
-  -> (forall a. (state -> DOM.JSM a) -> Action' state a)
+     (forall a. (state -> DOM.JSM a) -> Action' state a)
   -> Component (Either SomeException state) state
   -> DOM.JSM ()
-installComponentBootstrap ro getSt vdom0 = do
+installComponentBootstrap getSt vdom0 = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.getBodyUnchecked doc
   container <- DOM.unsafeCastTo DOM.HTMLDivElement =<< DOM.createElement doc ("div" :: Text)
   DOM.setClassName container ("container" :: Text)
   DOM.appendChild_ body container
   void $ componentLoop getSt vdom0 Nothing $ \mbVdom vdom -> do
-    evts <- renderVirtualDom ro doc container mbVdom vdom
+    evts <- renderVirtualDom doc container mbVdom vdom
     return (Just (vdom, evts))
 

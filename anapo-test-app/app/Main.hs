@@ -3,7 +3,6 @@
 module Main (main) where
 
 import Anapo
-import Anapo.Render
 import Anapo.TestApps
 import Anapo.TestApps.YouTube
 import Anapo.TestApps.Prelude
@@ -21,11 +20,6 @@ mainJSM :: JSM ()
 mainJSM = do
   youTubeSetup
   installComponentBootstrap
-    RenderOptions
-      { roAlwaysRerender = False
-      , roErase = True
-      , roSkipNode = \_ -> return False
-      }
     (\cont -> testAppsWith (liftJSM . cont))
     testAppsComponent
 

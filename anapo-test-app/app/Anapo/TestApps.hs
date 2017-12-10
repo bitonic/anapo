@@ -147,5 +147,5 @@ testAppsWith cont = do
               <*> todoInit
               <*> timerInit
               <*> pure False
-              <*> youTubeInit "Hah4iGqh7GY"
+              <*> youTubeInit "3yQObSCXyoo"
             cont (TASOEOk st))
