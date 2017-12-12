@@ -79,6 +79,10 @@ data NodeBody el where
   NBElement :: (DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => Element el -> NodeBody el
   NBText :: Text -> NodeBody DOM.Text
   NBRawNode :: el -> NodeBody el
+  -- ^ NOTE: When using 'NBRawNode', make sure to _not_ remove / replace
+  -- it, otherwise anapo will break. If you have foreign code manipulate
+  -- it create a container node and then pass a child node to the
+  -- foreign code.
 
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
   SomeEvent (DOM.EventName el e) (el -> e -> DOM.JSM ())
