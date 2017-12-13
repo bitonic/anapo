@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Anapo.Loop
-  ( componentLoop
-  , installComponentBody
+  ( nodeLoop
+  , installNodeBody
   ) where
 
 import Control.Concurrent.Chan (Chan, writeChan, readChan, newChan)
@@ -30,7 +30,6 @@ import Anapo.Render
 import Anapo.Text (pack)
 import Anapo.Logging
 
-{-# INLINE timeIt #-}
 timeIt :: DOM.JSM a -> DOM.JSM (a, NominalDiffTime)
 timeIt m = do
   t0 <- liftIO getCurrentTime
@@ -38,8 +37,7 @@ timeIt m = do
   t1 <- liftIO getCurrentTime
   return (x, diffUTCTime t1 t0)
 
-{-# INLINE componentLoop #-}
-componentLoop :: forall state.
+nodeLoop :: forall state.
      (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Node (Either SomeException state) state
   -> DOM.Node
@@ -47,7 +45,7 @@ componentLoop :: forall state.
   -> DOM.JSM (V.Node RenderedVDomNode)
   -- ^ returns the final rendered node, when there is nothing left to
   -- do. might never terminate
-componentLoop withState comp root = do
+nodeLoop withState comp root = do
   -- dispatch channel
   dispatchChan :: Chan (state -> DOM.JSM state) <- liftIO newChan
   let
@@ -73,7 +71,7 @@ componentLoop withState comp root = do
         (\_ -> m)
   -- helper to run the component
   let runComp mbPrevSt stOrErr = do
-        ((_, vdom), vdomDt) <- timeIt (runComponentM comp register handler disp mbPrevSt stOrErr)
+        ((_, vdom), vdomDt) <- timeIt (runAnapoM comp register handler disp mbPrevSt stOrErr)
         DOM.syncPoint
         logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
         return vdom
@@ -123,12 +121,11 @@ componentLoop withState comp root = do
         (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid')))))
     register handler disp
 
-{-# INLINE installComponentBody #-}
-installComponentBody ::
+installNodeBody ::
      (forall a. (state -> DOM.JSM a) -> Action state a)
   -> Node (Either SomeException state) state
   -> DOM.JSM ()
-installComponentBody getSt vdom0 = do
+installNodeBody getSt vdom0 = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.Document.getBodyUnchecked doc
-  void $ componentLoop getSt vdom0 (DOM.toNode body)
+  void (nodeLoop getSt vdom0 (DOM.toNode body))

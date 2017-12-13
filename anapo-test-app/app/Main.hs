@@ -19,7 +19,7 @@ run = Warp.run 8000
 mainJSM :: JSM ()
 mainJSM = do
   youTubeSetup
-  installComponentBody
+  installNodeBody
     (\cont -> testAppsWith (liftJSM . cont))
     testAppsComponent
 

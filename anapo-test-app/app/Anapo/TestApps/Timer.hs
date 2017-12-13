@@ -27,7 +27,7 @@ data TimerState = TimerState
   }
 makeLenses ''TimerState
 
-timerComponent :: Component' TimerState
+timerComponent :: Dom' TimerState
 timerComponent = do
   st <- askState
   let timePassed =

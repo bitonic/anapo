@@ -90,7 +90,7 @@ youTubeNode = do
   -- patching algorithm might try to patch it and fail because the YT
   -- library turns whatever we have into an iframe.
   node <- liftJSM $ do
-    simpleRenderComponent () $
+    simpleRenderNode () $
       div_ [class_ "row"] $ n$ div_ [class_ "col"] $
         n$ text "YouTube player not ready"
   el <- DOM.unsafeCastTo DOM.Element node
@@ -100,7 +100,7 @@ youTubeNode = do
     ]
 
 -- | Never rerender the node
-youTubeComponent :: Component' YouTubeState
+youTubeComponent :: Dom' YouTubeState
 youTubeComponent = do
   -- TODO this causes a linking error with GHC! see TODO on 'marked'
   n$ marked

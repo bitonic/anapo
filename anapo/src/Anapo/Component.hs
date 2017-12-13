@@ -31,13 +31,13 @@ module Anapo.Component
   , zoomAction
   , MonadAction(..)
 
-    -- * ComponentM
-  , ComponentM(..)
-  , Component
-  , Component'
+    -- * AnapoM
+  , AnapoM(..)
+  , Dom
+  , Dom'
   , Node
   , Node'
-  , runComponentM
+  , runAnapoM
   , askDispatch
   , localDispatch
   , askRegisterThread
@@ -128,7 +128,7 @@ module Anapo.Component
   , DOM.preventDefault
 
     -- * simple rendering
-  , simpleRenderComponent
+  , simpleRenderNode
   ) where
 
 import qualified Data.HashMap.Strict as HMS
@@ -322,8 +322,8 @@ askHandleException = liftAction (Action (\_reg hdl _d -> return hdl))
 -- Monad
 -- --------------------------------------------------------------------
 
-newtype ComponentM dom read write a = ComponentM
-  { unComponentM ::
+newtype AnapoM dom read write a = AnapoM
+  { unAnapoM ::
          RegisterThread
       -- how to register threads resulting from events / forks
       -> HandleException
@@ -337,102 +337,102 @@ newtype ComponentM dom read write a = ComponentM
       -> DOM.JSM (dom, a)
   }
 
-instance (Monoid dom, a ~ ()) => Monoid (ComponentM dom read write a) where
+instance (Monoid dom, a ~ ()) => Monoid (AnapoM dom read write a) where
   {-# INLINE mempty #-}
   mempty = return ()
   {-# INLINE mappend #-}
   a `mappend` b = a >> b
 
-type ComponentM' dom state = ComponentM dom state state
-type Component' state = ComponentM (DList (V.Node V.SomeVDomNode)) state state ()
-type Component read write = ComponentM (DList (V.Node V.SomeVDomNode)) read write ()
-type Node read write = ComponentM () read write (V.Node V.SomeVDomNode)
-type Node' state = ComponentM () state state (V.Node V.SomeVDomNode)
+type AnapoM' dom state = AnapoM dom state state
+type Dom' state = AnapoM (DList (V.Node V.SomeVDomNode)) state state ()
+type Dom read write = AnapoM (DList (V.Node V.SomeVDomNode)) read write ()
+type Node read write = AnapoM () read write (V.Node V.SomeVDomNode)
+type Node' state = AnapoM () state state (V.Node V.SomeVDomNode)
 
-instance Monoid dom => MonadIO (ComponentM dom read write) where
+instance Monoid dom => MonadIO (AnapoM dom read write) where
   {-# INLINE liftIO #-}
-  liftIO m = ComponentM $ \_reg _hdl _d _mbst _st -> do
+  liftIO m = AnapoM $ \_reg _hdl _d _mbst _st -> do
     x <- liftIO m
     return (mempty, x)
 
 #if !defined(ghcjs_HOST_OS)
-instance Monoid dom => JSaddle.MonadJSM (ComponentM dom read write) where
+instance Monoid dom => JSaddle.MonadJSM (AnapoM dom read write) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = ComponentM $ \_reg _hdl _d _mbst _st -> do
+  liftJSM' m = AnapoM $ \_reg _hdl _d _mbst _st -> do
     x <- m
     return (mempty, x)
 #endif
 
-{-# INLINE runComponentM #-}
-runComponentM :: ComponentM dom read write a -> RegisterThread -> HandleException -> Dispatch write -> Maybe write -> read -> DOM.JSM (dom, a)
-runComponentM vdom = unComponentM vdom
+{-# INLINE runAnapoM #-}
+runAnapoM :: AnapoM dom read write a -> RegisterThread -> HandleException -> Dispatch write -> Maybe write -> read -> DOM.JSM (dom, a)
+runAnapoM vdom = unAnapoM vdom
 
-instance Functor (ComponentM dom read write) where
+instance Functor (AnapoM dom read write) where
   {-# INLINE fmap #-}
-  fmap f (ComponentM g) = ComponentM $ \reg hdl d mbst st -> do
+  fmap f (AnapoM g) = AnapoM $ \reg hdl d mbst st -> do
     (dom, x) <- g reg hdl d mbst st
     return (dom, f x)
 
-instance (Monoid dom) => Applicative (ComponentM dom read write) where
+instance (Monoid dom) => Applicative (AnapoM dom read write) where
   {-# INLINE pure #-}
   pure = return
   {-# INLINE (<*>) #-}
   (<*>) = ap
 
-instance (Monoid dom) => Monad (ComponentM dom read write) where
+instance (Monoid dom) => Monad (AnapoM dom read write) where
   {-# INLINE return #-}
-  return x = ComponentM (\_reg _hdl _d _mbst _st -> return (mempty, x))
+  return x = AnapoM (\_reg _hdl _d _mbst _st -> return (mempty, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = ComponentM $ \reg hdl d mbst st -> do
-    (vdom1, x) <- unComponentM ma reg hdl d mbst st
-    (vdom2, y) <- unComponentM (mf x) reg hdl d mbst st
+  ma >>= mf = AnapoM $ \reg hdl d mbst st -> do
+    (vdom1, x) <- unAnapoM ma reg hdl d mbst st
+    (vdom2, y) <- unAnapoM (mf x) reg hdl d mbst st
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
-instance (Monoid dom) => MonadAction write (ComponentM dom read write) where
+instance (Monoid dom) => MonadAction write (AnapoM dom read write) where
   {-# INLINE liftAction #-}
-  liftAction (Action f) = ComponentM $ \reg hdl d _mbst _st -> do
+  liftAction (Action f) = AnapoM $ \reg hdl d _mbst _st -> do
     x <- f reg hdl d
     return (mempty, x)
 
 {-# INLINE localDispatch #-}
-localDispatch :: (Monoid dom) => Dispatch write' -> Maybe write' -> ComponentM dom read write' a -> ComponentM dom read write a
-localDispatch d mbst comp = ComponentM (\reg hdl _d _mbst st -> unComponentM comp reg hdl d mbst st)
+localDispatch :: (Monoid dom) => Dispatch write' -> Maybe write' -> AnapoM dom read write' a -> AnapoM dom read write a
+localDispatch d mbst comp = AnapoM (\reg hdl _d _mbst st -> unAnapoM comp reg hdl d mbst st)
 
 {-# INLINE localRegisterThread #-}
-localRegisterThread :: (Monoid dom) => RegisterThread -> ComponentM dom read write a -> ComponentM dom read write a
-localRegisterThread reg comp = ComponentM (\_reg hdl d mbst st -> unComponentM comp reg hdl d mbst st)
+localRegisterThread :: (Monoid dom) => RegisterThread -> AnapoM dom read write a -> AnapoM dom read write a
+localRegisterThread reg comp = AnapoM (\_reg hdl d mbst st -> unAnapoM comp reg hdl d mbst st)
 
 {-# INLINE localHandleException #-}
-localHandleException :: (Monoid dom) => HandleException -> ComponentM dom read write a -> ComponentM dom read write a
-localHandleException hdl comp = ComponentM (\reg _hdl d mbst st -> unComponentM comp reg hdl d mbst st)
+localHandleException :: (Monoid dom) => HandleException -> AnapoM dom read write a -> AnapoM dom read write a
+localHandleException hdl comp = AnapoM (\reg _hdl d mbst st -> unAnapoM comp reg hdl d mbst st)
 
 {-# INLINE askState #-}
-askState :: (Monoid dom) => ComponentM dom read write read
-askState = ComponentM (\_reg _hdl _d _mbst st -> return (mempty, st))
+askState :: (Monoid dom) => AnapoM dom read write read
+askState = AnapoM (\_reg _hdl _d _mbst st -> return (mempty, st))
 
 {-# INLINE localState #-}
-localState :: (Monoid dom) => read' -> ComponentM dom read' write a -> ComponentM dom read write a
-localState st comp = ComponentM (\reg hdl d mbst _st -> runComponentM comp reg hdl d mbst st)
+localState :: (Monoid dom) => read' -> AnapoM dom read' write a -> AnapoM dom read write a
+localState st comp = AnapoM (\reg hdl d mbst _st -> runAnapoM comp reg hdl d mbst st)
 
 {-# INLINE askPreviousState #-}
-askPreviousState :: (Monoid dom) => ComponentM dom read write (Maybe write)
-askPreviousState = ComponentM (\_reg _hdl _d mbst _st -> return (mempty, mbst))
+askPreviousState :: (Monoid dom) => AnapoM dom read write (Maybe write)
+askPreviousState = AnapoM (\_reg _hdl _d mbst _st -> return (mempty, mbst))
 
 {-# INLINE zoom #-}
 zoom ::
      readIn
   -> (writeOut -> Maybe writeIn)
   -> LensLike' DOM.JSM writeOut writeIn
-  -> ComponentM dom readIn writeIn a
-  -> ComponentM dom readOut writeOut a
-zoom st' get write' dom = ComponentM $ \reg hdl d mbst _st ->
-  unComponentM dom reg hdl (d . write') (mbst >>= get) st'
+  -> AnapoM dom readIn writeIn a
+  -> AnapoM dom readOut writeOut a
+zoom st' get write' dom = AnapoM $ \reg hdl d mbst _st ->
+  unAnapoM dom reg hdl (d . write') (mbst >>= get) st'
 
 {-# INLINE zoomL #-}
-zoomL :: Lens' out in_ -> ComponentM' dom in_ a -> ComponentM' dom out a
-zoomL l dom = ComponentM $ \reg hdl d mbst st ->
-  unComponentM dom reg hdl (d . l) (view l <$> mbst) (view l st)
+zoomL :: Lens' out in_ -> AnapoM' dom in_ a -> AnapoM' dom out a
+zoomL l dom = AnapoM $ \reg hdl d mbst st ->
+  unAnapoM dom reg hdl (d . l) (view l <$> mbst) (view l st)
 
 {-# INLINE zoomT #-}
 zoomT ::
@@ -440,8 +440,8 @@ zoomT ::
   => readIn
   -> AffineTraversal' writeOut writeIn
   -- ^ note: if the traversal is not affine you'll get crashes.
-  -> ComponentM dom readIn writeIn a
-  -> ComponentM dom readOut writeOut a
+  -> AnapoM dom readIn writeIn a
+  -> AnapoM dom readOut writeOut a
 zoomT st l = zoom st (toMaybeOf l) l
 
 -- to manipulate nodes
@@ -471,15 +471,15 @@ unsafeWillRemove = NPUnsafeWillRemove
 -- --------------------------------------------------------------------
 
 {-# INLINE n #-}
-n :: Node read write -> Component read write
-n getNode = ComponentM $ \reg hdl d mbst st -> do
-  (_, nod) <- unComponentM getNode reg hdl d mbst st
+n :: Node read write -> Dom read write
+n getNode = AnapoM $ \reg hdl d mbst st -> do
+  (_, nod) <- unAnapoM getNode reg hdl d mbst st
   return (DList.singleton nod, ())
 
 -- TODO right now this it not implemented, but we will implement it in
 -- the future.
 {-# INLINE key #-}
-key :: Text -> Node read write -> Component read write
+key :: Text -> Node read write -> Dom read write
 key _k = n
 
 {-# INLINE text #-}
@@ -546,10 +546,10 @@ rawNode wrap x patches = do
 marked ::
      (Maybe write -> read -> V.Rerender)
   -> StaticPtr (Node read write) -> Node read write
-marked shouldRerender ptr = ComponentM $ \reg hdl d mbst st -> do
+marked shouldRerender ptr = AnapoM $ \reg hdl d mbst st -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender mbst st
-  (_, V.Node (V.SomeVDomNode nod) children) <- unComponentM (deRefStaticPtr ptr) reg hdl d mbst st
+  (_, V.Node (V.SomeVDomNode nod) children) <- unAnapoM (deRefStaticPtr ptr) reg hdl d mbst st
   return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
 
 -- Utilities to quickly create nodes
@@ -570,13 +570,13 @@ data NodePatch el state =
   | NPEvent (SomeEventAction el state)
 
 class IsElementChildren a read write where
-  elementChildren :: a -> ComponentM () read write (V.Children V.SomeVDomNode)
+  elementChildren :: a -> AnapoM () read write (V.Children V.SomeVDomNode)
 instance IsElementChildren () read write where
   {-# INLINE elementChildren #-}
   elementChildren _ = return (V.CNormal mempty)
-instance (a ~ (), read1 ~ read2, write1 ~ write2) => IsElementChildren (ComponentM (DList (V.Node V.SomeVDomNode)) read1 write1 a) read2 write2 where
+instance (a ~ (), read1 ~ read2, write1 ~ write2) => IsElementChildren (AnapoM (DList (V.Node V.SomeVDomNode)) read1 write1 a) read2 write2 where
   {-# INLINE elementChildren #-}
-  elementChildren (ComponentM f) = ComponentM $ \reg hdl disp mbSt st -> do
+  elementChildren (AnapoM f) = AnapoM $ \reg hdl disp mbSt st -> do
     (dom, _) <- f reg hdl disp mbSt st
     return ((), V.CNormal (Vec.fromList (DList.toList dom)))
 instance (a ~ ()) => IsElementChildren UnsafeRawHtml read2 write2 where
@@ -586,7 +586,7 @@ instance (a ~ ()) => IsElementChildren UnsafeRawHtml read2 write2 where
 {-# INLINE patchNode #-}
 patchNode ::
      (HasCallStack, DOM.IsNode el)
-  => V.VDomNode el -> [NodePatch el write] -> ComponentM () read write (V.VDomNode el)
+  => V.VDomNode el -> [NodePatch el write] -> AnapoM () read write (V.VDomNode el)
 patchNode node00 patches00 = do
   u <- liftAction askUnliftIO
   let
@@ -1027,13 +1027,13 @@ onselect_ = NPEvent . SomeEventAction DOM.select
 -- when we want a quick render of a component, e.g. inside a raw node.
 -- any attempt to use dispatch will result in an exception; e.g. this
 -- will never redraw anything, it's just to quickly draw some elements
-simpleRenderComponent :: read -> Node read () -> DOM.JSM DOM.Node
-simpleRenderComponent st comp = do
-  (_, vdom) <- runComponentM
+simpleRenderNode :: read -> Node read () -> DOM.JSM DOM.Node
+simpleRenderNode st comp = do
+  (_, vdom) <- runAnapoM
     comp
-    (\_ -> fail "Trying to registering a thread from simpleRenderComponent")
+    (\_ -> fail "Trying to registering a thread from simpleRenderNode")
     throwIO
-    (\_ -> fail "Trying to dispatch from simpleRenderComponent!")
+    (\_ -> fail "Trying to dispatch from simpleRenderNode!")
     Nothing
     st
   renderVirtualDom vdom (return . renderedVDomNodeDom . V.nodeBody)

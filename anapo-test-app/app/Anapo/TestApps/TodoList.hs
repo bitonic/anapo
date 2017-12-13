@@ -43,7 +43,7 @@ data TodoState = TodoState
   } deriving (Eq, Show)
 makeLenses ''TodoState
 
-todoComponent :: Component' TodoState
+todoComponent :: Dom' TodoState
 todoComponent = do
   st <- askState
   n$ div_ [class_ "row align-items-center"] $ do

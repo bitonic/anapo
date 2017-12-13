@@ -46,7 +46,7 @@ simpleTextInput ::
   -- ^ what to do when the new text is submitted
   -> Text
   -- ^ what to show in the button
-  -> Component' state
+  -> Dom' state
 simpleTextInput lbl l cback buttonTxt = do
   currentTxt <- (^.l) <$> askState
   n$ form_
