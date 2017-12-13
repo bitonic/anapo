@@ -1,5 +1,9 @@
 .PHONY: all
-all: ghcjs-test-app-build
+all:
+	nix-build -A anapo
+	nix-build -A anapo-test-app
+	nix-build -A anapo --arg ghcjs false
+	nix-build -A anapo-test-app --arg ghcjs false
 
 .PHONY: ghc-anapo-configure
 ghc-anapo-configure:
