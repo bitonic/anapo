@@ -21,7 +21,7 @@ data TodoItemState = TodoItemState
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
-todoItemNode :: Node' TodoItemState
+todoItemNode :: Node TodoItemState
 todoItemNode = do
   st <- askState
   let aClass = if st^.tisCompleted
@@ -43,7 +43,7 @@ data TodoState = TodoState
   } deriving (Eq, Show)
 makeLenses ''TodoState
 
-todoComponent :: Dom' TodoState
+todoComponent :: Dom TodoState
 todoComponent = do
   st <- askState
   n$ div_ [class_ "row align-items-center"] $ do

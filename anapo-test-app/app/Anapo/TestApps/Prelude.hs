@@ -25,7 +25,7 @@ import qualified Anapo.Text as T
 tshow :: (Show a) => a -> Text
 tshow = T.pack . show
 
-booleanCheckbox :: Node' Bool
+booleanCheckbox :: Node Bool
 booleanCheckbox = do
   st <- askState
   input_
@@ -46,7 +46,7 @@ simpleTextInput ::
   -- ^ what to do when the new text is submitted
   -> Text
   -- ^ what to show in the button
-  -> Dom' state
+  -> Dom state
 simpleTextInput lbl l cback buttonTxt = do
   currentTxt <- (^.l) <$> askState
   n$ form_

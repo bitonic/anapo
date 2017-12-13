@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Anapo.Render
   ( RenderedVDomNode
+  , VDomPath
+  , VDomPathSegment(..)
   , renderedVDomNodeDom
   , renderVirtualDom
   , reconciliateVirtualDom

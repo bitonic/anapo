@@ -53,7 +53,7 @@ youTubeInit videoId = liftJSM $ do
 
 -- it's important to have this as a generic element since we'll replace
 -- it with a iframe
-youTubeNode :: Node' YouTubeState
+youTubeNode :: Node YouTubeState
 youTubeNode = do
   st <- askState
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
@@ -100,7 +100,7 @@ youTubeNode = do
     ]
 
 -- | Never rerender the node
-youTubeComponent :: Dom' YouTubeState
+youTubeComponent :: Dom YouTubeState
 youTubeComponent = do
   -- TODO this causes a linking error with GHC! see TODO on 'marked'
   n$ marked

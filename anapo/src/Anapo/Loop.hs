@@ -39,13 +39,16 @@ timeIt m = do
 
 nodeLoop :: forall state.
      (forall a. (state -> DOM.JSM a) -> Action state a)
-  -> Node (Either SomeException state) state
+  -> Node state
+  -- ^ how to render the state
+  -> (SomeException -> Node ())
+  -- ^ how to render exceptions
   -> DOM.Node
   -- ^ where to place the node
   -> DOM.JSM (V.Node RenderedVDomNode)
   -- ^ returns the final rendered node, when there is nothing left to
   -- do. might never terminate
-nodeLoop withState comp root = do
+nodeLoop withState comp excComp root = do
   -- dispatch channel
   dispatchChan :: Chan (state -> DOM.JSM state) <- liftIO newChan
   let
@@ -95,7 +98,13 @@ nodeLoop withState comp root = do
             Left err -> do
               -- if we got an exception, render one last time and shut down
               logError ("Got exception, will render it and rethrow: " <> pack (show err))
-              vdom <- runComp (Just st) (Left err)
+              (_, vdom) <- runAnapoM
+                (excComp err)
+                (\_ -> fail "Trying to register a thread from the exception handler in nodeLoop")
+                (\_ -> fail "Trying to handle an exception from the exception handler in nodeLoop")
+                (\_ -> fail "Trying to dispatch from the exception handler in nodeLoop")
+                Nothing
+                ()
               void (reconciliateVirtualDom rendered [] vdom)
               logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
               liftIO (throwIO err)
@@ -105,14 +114,14 @@ nodeLoop withState comp root = do
             Right (Just f) -> do
               (st', updateDt) <- timeIt (f st)
               logDebug ("State updated (" <> pack (show updateDt) <> "), will re render")
-              vdom <- runComp (Just st) (Right st')
+              vdom <- runComp (Just st) st'
               rendered' <- reconciliateVirtualDom rendered [] vdom
               go st' rendered'
       tid <- liftIO myThreadId
       finally
         (do
           -- run for the first time
-          vdom <- runComp Nothing (Right st0)
+          vdom <- runComp Nothing st0
           rendered0 <- renderVirtualDom vdom $ \rendered -> do
             DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
             return rendered
@@ -123,9 +132,10 @@ nodeLoop withState comp root = do
 
 installNodeBody ::
      (forall a. (state -> DOM.JSM a) -> Action state a)
-  -> Node (Either SomeException state) state
+  -> Node state
+  -> (SomeException -> Node ())
   -> DOM.JSM ()
-installNodeBody getSt vdom0 = do
+installNodeBody getSt vdom0 excVdom = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.Document.getBodyUnchecked doc
-  void (nodeLoop getSt vdom0 (DOM.toNode body))
+  void (nodeLoop getSt vdom0 excVdom (DOM.toNode body))

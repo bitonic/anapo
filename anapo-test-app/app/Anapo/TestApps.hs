@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Anapo.TestApps (TestAppsStateOrError, testAppsComponent, testAppsWith) where
+module Anapo.TestApps (TestAppsStateOrError, testAppsError, testAppsComponent, testAppsWith) where
 
 import Control.Lens (makeLenses, set, (^.), makePrisms)
 import Control.Monad (forM_, when)
@@ -10,7 +10,6 @@ import GHCJS.Marshal (fromJSVal)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Control.Monad.Reader (ask)
-import Control.Exception (SomeException)
 
 import Anapo
 import Anapo.Text (Text)
@@ -86,15 +85,18 @@ changeToApp pushHistory mbApp =
       else return st'
     put (set tasApp app st'')
 
+testAppsError :: Text -> Node state
+testAppsError err =
+  div_ [class_ "container"] $ do
+    n$ div_ [class_ "m-2 alert alert-danger"] (n$ text err)
+
 testAppsComponent ::
-  Node (Either SomeException TestAppsStateOrError) TestAppsStateOrError
-testAppsComponent = div_ [class_ "container"] $ do
+  Node TestAppsStateOrError
+testAppsComponent = do
   stoe <- askState
-  let showErr err = n$ div_ [class_ "m-2 alert alert-danger"] (n$ text err)
   case stoe of
-    Left exc -> showErr (tshow exc)
-    Right (TASOEError err) -> showErr err
-    Right (TASOEOk st) -> zoomT st _TASOEOk $ do
+    TASOEError err -> testAppsError err
+    TASOEOk st -> div_ [class_ "container"] $ zoomT st _TASOEOk $ do
       n$ div_ [class_ "row m-2 align-items-center"] $ do
         n$ div_ [class_ "col col-md-auto"] $ do
           n$ ul_ [class_ "nav nav-pills"] $ forM_ allTestApps $ \app -> do

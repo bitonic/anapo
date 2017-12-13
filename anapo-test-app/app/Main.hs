@@ -22,6 +22,7 @@ mainJSM = do
   installNodeBody
     (\cont -> testAppsWith (liftJSM . cont))
     testAppsComponent
+    (\exc -> testAppsError (tshow exc))
 
 main :: IO ()
 main = run mainJSM

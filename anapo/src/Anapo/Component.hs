@@ -34,20 +34,15 @@ module Anapo.Component
     -- * AnapoM
   , AnapoM(..)
   , Dom
-  , Dom'
   , Node
-  , Node'
   , runAnapoM
   , askDispatch
-  , localDispatch
   , askRegisterThread
   , localRegisterThread
   , askHandleException
   , localHandleException
   , askState
-  , localState
   , askPreviousState
-  , zoom
   , zoomL
   , zoomT
 
@@ -149,6 +144,8 @@ import Control.Monad.Trans.Class (lift)
 import Data.Maybe (fromMaybe)
 import Control.Monad.Trans.Reader (ask)
 import Data.DList (DList)
+import Data.Word (Word64)
+import Data.IORef (IORef)
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Event as DOM
@@ -322,41 +319,38 @@ askHandleException = liftAction (Action (\_reg hdl _d -> return hdl))
 -- Monad
 -- --------------------------------------------------------------------
 
-newtype AnapoM dom read write a = AnapoM
+newtype AnapoM dom state a = AnapoM
   { unAnapoM ::
          RegisterThread
       -- how to register threads resulting from events / forks
       -> HandleException
       -- how to handle exceptions that happen in events / forks
-      -> Dispatch write
+      -> Dispatch state
       -- how to dispatch updates to the state
-      -> Maybe write
+      -> Maybe state
       -- the previous state
-      -> read
+      -> state
       -- the current state
       -> DOM.JSM (dom, a)
   }
 
-instance (Monoid dom, a ~ ()) => Monoid (AnapoM dom read write a) where
+instance (Monoid dom, a ~ ()) => Monoid (AnapoM dom state a) where
   {-# INLINE mempty #-}
   mempty = return ()
   {-# INLINE mappend #-}
   a `mappend` b = a >> b
 
-type AnapoM' dom state = AnapoM dom state state
-type Dom' state = AnapoM (DList (V.Node V.SomeVDomNode)) state state ()
-type Dom read write = AnapoM (DList (V.Node V.SomeVDomNode)) read write ()
-type Node read write = AnapoM () read write (V.Node V.SomeVDomNode)
-type Node' state = AnapoM () state state (V.Node V.SomeVDomNode)
+type Dom state = AnapoM (DList (V.Node V.SomeVDomNode)) state ()
+type Node state = AnapoM () state (V.Node V.SomeVDomNode)
 
-instance Monoid dom => MonadIO (AnapoM dom read write) where
+instance Monoid dom => MonadIO (AnapoM dom state) where
   {-# INLINE liftIO #-}
   liftIO m = AnapoM $ \_reg _hdl _d _mbst _st -> do
     x <- liftIO m
     return (mempty, x)
 
 #if !defined(ghcjs_HOST_OS)
-instance Monoid dom => JSaddle.MonadJSM (AnapoM dom read write) where
+instance Monoid dom => JSaddle.MonadJSM (AnapoM dom state) where
   {-# INLINE liftJSM' #-}
   liftJSM' m = AnapoM $ \_reg _hdl _d _mbst _st -> do
     x <- m
@@ -364,22 +358,22 @@ instance Monoid dom => JSaddle.MonadJSM (AnapoM dom read write) where
 #endif
 
 {-# INLINE runAnapoM #-}
-runAnapoM :: AnapoM dom read write a -> RegisterThread -> HandleException -> Dispatch write -> Maybe write -> read -> DOM.JSM (dom, a)
+runAnapoM :: AnapoM dom state a -> RegisterThread -> HandleException -> Dispatch state -> Maybe state -> state -> DOM.JSM (dom, a)
 runAnapoM vdom = unAnapoM vdom
 
-instance Functor (AnapoM dom read write) where
+instance Functor (AnapoM dom state) where
   {-# INLINE fmap #-}
   fmap f (AnapoM g) = AnapoM $ \reg hdl d mbst st -> do
     (dom, x) <- g reg hdl d mbst st
     return (dom, f x)
 
-instance (Monoid dom) => Applicative (AnapoM dom read write) where
+instance (Monoid dom) => Applicative (AnapoM dom state) where
   {-# INLINE pure #-}
   pure = return
   {-# INLINE (<*>) #-}
   (<*>) = ap
 
-instance (Monoid dom) => Monad (AnapoM dom read write) where
+instance (Monoid dom) => Monad (AnapoM dom state) where
   {-# INLINE return #-}
   return x = AnapoM (\_reg _hdl _d _mbst _st -> return (mempty, x))
   {-# INLINE (>>=) #-}
@@ -389,60 +383,43 @@ instance (Monoid dom) => Monad (AnapoM dom read write) where
     let !vdom = vdom1 <> vdom2
     return (vdom, y)
 
-instance (Monoid dom) => MonadAction write (AnapoM dom read write) where
+instance (Monoid dom) => MonadAction state (AnapoM dom state) where
   {-# INLINE liftAction #-}
   liftAction (Action f) = AnapoM $ \reg hdl d _mbst _st -> do
     x <- f reg hdl d
     return (mempty, x)
 
-{-# INLINE localDispatch #-}
-localDispatch :: (Monoid dom) => Dispatch write' -> Maybe write' -> AnapoM dom read write' a -> AnapoM dom read write a
-localDispatch d mbst comp = AnapoM (\reg hdl _d _mbst st -> unAnapoM comp reg hdl d mbst st)
-
 {-# INLINE localRegisterThread #-}
-localRegisterThread :: (Monoid dom) => RegisterThread -> AnapoM dom read write a -> AnapoM dom read write a
+localRegisterThread :: (Monoid dom) => RegisterThread -> AnapoM dom state a -> AnapoM dom state a
 localRegisterThread reg comp = AnapoM (\_reg hdl d mbst st -> unAnapoM comp reg hdl d mbst st)
 
 {-# INLINE localHandleException #-}
-localHandleException :: (Monoid dom) => HandleException -> AnapoM dom read write a -> AnapoM dom read write a
+localHandleException :: (Monoid dom) => HandleException -> AnapoM dom state a -> AnapoM dom state a
 localHandleException hdl comp = AnapoM (\reg _hdl d mbst st -> unAnapoM comp reg hdl d mbst st)
 
 {-# INLINE askState #-}
-askState :: (Monoid dom) => AnapoM dom read write read
+askState :: (Monoid dom) => AnapoM dom state state
 askState = AnapoM (\_reg _hdl _d _mbst st -> return (mempty, st))
 
-{-# INLINE localState #-}
-localState :: (Monoid dom) => read' -> AnapoM dom read' write a -> AnapoM dom read write a
-localState st comp = AnapoM (\reg hdl d mbst _st -> runAnapoM comp reg hdl d mbst st)
-
 {-# INLINE askPreviousState #-}
-askPreviousState :: (Monoid dom) => AnapoM dom read write (Maybe write)
+askPreviousState :: (Monoid dom) => AnapoM dom state (Maybe state)
 askPreviousState = AnapoM (\_reg _hdl _d mbst _st -> return (mempty, mbst))
 
-{-# INLINE zoom #-}
-zoom ::
-     readIn
-  -> (writeOut -> Maybe writeIn)
-  -> LensLike' DOM.JSM writeOut writeIn
-  -> AnapoM dom readIn writeIn a
-  -> AnapoM dom readOut writeOut a
-zoom st' get write' dom = AnapoM $ \reg hdl d mbst _st ->
-  unAnapoM dom reg hdl (d . write') (mbst >>= get) st'
-
 {-# INLINE zoomL #-}
-zoomL :: Lens' out in_ -> AnapoM' dom in_ a -> AnapoM' dom out a
+zoomL :: Lens' out in_ -> AnapoM dom in_ a -> AnapoM dom out a
 zoomL l dom = AnapoM $ \reg hdl d mbst st ->
   unAnapoM dom reg hdl (d . l) (view l <$> mbst) (view l st)
 
 {-# INLINE zoomT #-}
 zoomT ::
      HasCallStack
-  => readIn
-  -> AffineTraversal' writeOut writeIn
+  => in_
+  -> AffineTraversal' out in_
   -- ^ note: if the traversal is not affine you'll get crashes.
-  -> AnapoM dom readIn writeIn a
-  -> AnapoM dom readOut writeOut a
-zoomT st l = zoom st (toMaybeOf l) l
+  -> AnapoM dom in_ a
+  -> AnapoM dom out a
+zoomT st l dom = AnapoM $ \reg hdl d mbst _st ->
+  unAnapoM dom reg hdl (d . l) (mbst >>= toMaybeOf l) st
 
 -- to manipulate nodes
 -- --------------------------------------------------------------------
@@ -471,7 +448,7 @@ unsafeWillRemove = NPUnsafeWillRemove
 -- --------------------------------------------------------------------
 
 {-# INLINE n #-}
-n :: Node read write -> Dom read write
+n :: Node state -> Dom state
 n getNode = AnapoM $ \reg hdl d mbst st -> do
   (_, nod) <- unAnapoM getNode reg hdl d mbst st
   return (DList.singleton nod, ())
@@ -479,11 +456,11 @@ n getNode = AnapoM $ \reg hdl d mbst st -> do
 -- TODO right now this it not implemented, but we will implement it in
 -- the future.
 {-# INLINE key #-}
-key :: Text -> Node read write -> Dom read write
+key :: Text -> Node state -> Dom state
 key _k = n
 
 {-# INLINE text #-}
-text :: Text -> Node read write
+text :: Text -> Node state
 text txt = return $ V.Node
   { V.nodeBody = V.SomeVDomNode $ V.VDomNode
       { V.vdomMark = Nothing
@@ -494,7 +471,7 @@ text txt = return $ V.Node
   , V.nodeChildren = Nothing
   }
 
-instance (el ~ DOM.Text) => IsString (Node read write) where
+instance (el ~ DOM.Text) => IsString (Node state) where
   {-# INLINE fromString #-}
   fromString = text . T.pack
 
@@ -502,8 +479,8 @@ instance (el ~ DOM.Text) => IsString (Node read write) where
 rawNode ::
      (DOM.IsNode el)
   => (DOM.JSVal -> el) -> el
-  -> [NodePatch el write]
-  -> Node read write
+  -> [NodePatch el state]
+  -> Node state
 rawNode wrap x patches = do
   node <- patchNode
     V.VDomNode
@@ -544,8 +521,8 @@ rawNode wrap x patches = do
 -- at call site (see for example Anapo.TestApps.YouTube)
 {-# INLINE marked #-}
 marked ::
-     (Maybe write -> read -> V.Rerender)
-  -> StaticPtr (Node read write) -> Node read write
+     (Maybe state -> state -> V.Rerender)
+  -> StaticPtr (Node state) -> Node state
 marked shouldRerender ptr = AnapoM $ \reg hdl d mbst st -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender mbst st
@@ -569,24 +546,24 @@ data NodePatch el state =
   | NPProperty V.ElementPropertyName (V.ElementProperty el)
   | NPEvent (SomeEventAction el state)
 
-class IsElementChildren a read write where
-  elementChildren :: a -> AnapoM () read write (V.Children V.SomeVDomNode)
-instance IsElementChildren () read write where
+class IsElementChildren a state where
+  elementChildren :: a -> AnapoM () state (V.Children V.SomeVDomNode)
+instance IsElementChildren () state where
   {-# INLINE elementChildren #-}
   elementChildren _ = return (V.CNormal mempty)
-instance (a ~ (), read1 ~ read2, write1 ~ write2) => IsElementChildren (AnapoM (DList (V.Node V.SomeVDomNode)) read1 write1 a) read2 write2 where
+instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM (DList (V.Node V.SomeVDomNode)) state1 a) state2 where
   {-# INLINE elementChildren #-}
   elementChildren (AnapoM f) = AnapoM $ \reg hdl disp mbSt st -> do
     (dom, _) <- f reg hdl disp mbSt st
     return ((), V.CNormal (Vec.fromList (DList.toList dom)))
-instance (a ~ ()) => IsElementChildren UnsafeRawHtml read2 write2 where
+instance (a ~ ()) => IsElementChildren UnsafeRawHtml state2 where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)
 
 {-# INLINE patchNode #-}
 patchNode ::
      (HasCallStack, DOM.IsNode el)
-  => V.VDomNode el -> [NodePatch el write] -> AnapoM () read write (V.VDomNode el)
+  => V.VDomNode el -> [NodePatch el state] -> AnapoM () state (V.VDomNode el)
 patchNode node00 patches00 = do
   u <- liftAction askUnliftIO
   let
@@ -654,15 +631,15 @@ patchNode node00 patches00 = do
 
 {-# INLINE el #-}
 el ::
-     ( IsElementChildren a read write
+     ( IsElementChildren a state
      , DOM.IsElement el, DOM.IsElementCSSInlineStyle el
      , HasCallStack
      )
   => V.ElementTag
   -> (DOM.JSVal -> el)
-  -> [NodePatch el write]
+  -> [NodePatch el state]
   -> a
-  -> Node read write
+  -> Node state
 el tag wrap patches isChildren = do
   children <- elementChildren isChildren
   vdom <- patchNode
@@ -687,108 +664,108 @@ el tag wrap patches isChildren = do
 -- --------------------------------------------------------------------
 
 {-# INLINE div_ #-}
-div_ :: IsElementChildren a read write => [NodePatch DOM.HTMLDivElement write] -> a -> Node read write
+div_ :: IsElementChildren a state => [NodePatch DOM.HTMLDivElement state] -> a -> Node state
 div_ = el "div" DOM.HTMLDivElement
 
 {-# INLINE span_ #-}
-span_ :: IsElementChildren a read write => [NodePatch DOM.HTMLSpanElement write] -> a -> Node read write
+span_ :: IsElementChildren a state => [NodePatch DOM.HTMLSpanElement state] -> a -> Node state
 span_ = el "span" DOM.HTMLSpanElement
 
 {-# INLINE a_ #-}
-a_ :: IsElementChildren a read write => [NodePatch DOM.HTMLAnchorElement write] -> a -> Node read write
+a_ :: IsElementChildren a state => [NodePatch DOM.HTMLAnchorElement state] -> a -> Node state
 a_ = el "a" DOM.HTMLAnchorElement
 
 {-# INLINE p_ #-}
-p_ :: IsElementChildren a read write => [NodePatch DOM.HTMLParagraphElement write] -> a -> Node read write
+p_ :: IsElementChildren a state => [NodePatch DOM.HTMLParagraphElement state] -> a -> Node state
 p_ = el "p" DOM.HTMLParagraphElement
 
 {-# INLINE input_ #-}
-input_ :: IsElementChildren a read write => [NodePatch DOM.HTMLInputElement write] -> a -> Node read write
+input_ :: IsElementChildren a state => [NodePatch DOM.HTMLInputElement state] -> a -> Node state
 input_ = el "input" DOM.HTMLInputElement
 
 {-# INLINE form_ #-}
-form_ :: IsElementChildren a read write => [NodePatch DOM.HTMLFormElement write] -> a -> Node read write
+form_ :: IsElementChildren a state => [NodePatch DOM.HTMLFormElement state] -> a -> Node state
 form_ = el "form" DOM.HTMLFormElement
 
 {-# INLINE button_ #-}
-button_ :: IsElementChildren a read write => [NodePatch DOM.HTMLButtonElement write] -> a -> Node read write
+button_ :: IsElementChildren a state => [NodePatch DOM.HTMLButtonElement state] -> a -> Node state
 button_ = el "button" DOM.HTMLButtonElement
 
 {-# INLINE ul_ #-}
-ul_ :: IsElementChildren a read write => [NodePatch DOM.HTMLUListElement write] -> a -> Node read write
+ul_ :: IsElementChildren a state => [NodePatch DOM.HTMLUListElement state] -> a -> Node state
 ul_ = el "ul" DOM.HTMLUListElement
 
 {-# INLINE li_ #-}
-li_ :: IsElementChildren a read write => [NodePatch DOM.HTMLLIElement write] -> a -> Node read write
+li_ :: IsElementChildren a state => [NodePatch DOM.HTMLLIElement state] -> a -> Node state
 li_ = el "li" DOM.HTMLLIElement
 
 {-# INLINE h2_ #-}
-h2_ :: IsElementChildren a read write => [NodePatch DOM.HTMLHeadingElement write] -> a -> Node read write
+h2_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
 h2_ = el "h2" DOM.HTMLHeadingElement
 
 {-# INLINE h5_ #-}
-h5_ :: IsElementChildren a read write => [NodePatch DOM.HTMLHeadingElement write] -> a -> Node read write
+h5_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
 h5_ = el "h5" DOM.HTMLHeadingElement
 
 {-# INLINE select_ #-}
-select_ :: IsElementChildren a read write => [NodePatch DOM.HTMLSelectElement write] -> a -> Node read write
+select_ :: IsElementChildren a state => [NodePatch DOM.HTMLSelectElement state] -> a -> Node state
 select_ = el "select" DOM.HTMLSelectElement
 
 {-# INLINE option_ #-}
-option_ :: IsElementChildren a read write => [NodePatch DOM.HTMLOptionElement write] -> a -> Node read write
+option_ :: IsElementChildren a state => [NodePatch DOM.HTMLOptionElement state] -> a -> Node state
 option_ = el "option" DOM.HTMLOptionElement
 
 {-# INLINE label_ #-}
-label_ :: IsElementChildren a read write => [NodePatch DOM.HTMLLabelElement write] -> a -> Node read write
+label_ :: IsElementChildren a state => [NodePatch DOM.HTMLLabelElement state] -> a -> Node state
 label_ = el "label" DOM.HTMLLabelElement
 
 {-# INLINE nav_ #-}
-nav_ :: IsElementChildren a read write => [NodePatch DOM.HTMLElement write] -> a -> Node read write
+nav_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
 nav_ = el "nav" DOM.HTMLElement
 
 {-# INLINE h1_ #-}
-h1_ :: IsElementChildren a read write => [NodePatch DOM.HTMLHeadingElement write] -> a -> Node read write
+h1_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
 h1_ = el "h1" DOM.HTMLHeadingElement
 
 {-# INLINE h4_ #-}
-h4_ :: IsElementChildren a read write => [NodePatch DOM.HTMLHeadingElement write] -> a -> Node read write
+h4_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
 h4_ = el "h4" DOM.HTMLHeadingElement
 
 {-# INLINE h6_ #-}
-h6_ :: IsElementChildren a read write => [NodePatch DOM.HTMLHeadingElement write] -> a -> Node read write
+h6_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
 h6_ = el "h6" DOM.HTMLHeadingElement
 
 {-# INLINE small_ #-}
-small_ :: IsElementChildren a read write => [NodePatch DOM.HTMLElement write] -> a -> Node read write
+small_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
 small_ = el "small" DOM.HTMLElement
 
 {-# INLINE pre_ #-}
-pre_ :: IsElementChildren a read write => [NodePatch DOM.HTMLElement write] -> a -> Node read write
+pre_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
 pre_ = el "pre" DOM.HTMLElement
 
 {-# INLINE code_ #-}
-code_ :: IsElementChildren a read write => [NodePatch DOM.HTMLElement write] -> a -> Node read write
+code_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
 code_ = el "code" DOM.HTMLElement
 
 {-# INLINE iframe_ #-}
-iframe_ :: IsElementChildren a read write => [NodePatch DOM.HTMLIFrameElement write] -> a -> Node read write
+iframe_ :: IsElementChildren a state => [NodePatch DOM.HTMLIFrameElement state] -> a -> Node state
 iframe_ = el "iframe" DOM.HTMLIFrameElement
 
 -- Properties
 -- --------------------------------------------------------------------
 
 {-# INLINE style #-}
-style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el write
+style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el state
 style = NPStyle
 
-class_ :: (DOM.IsElement el) => Text -> NodePatch el write
+class_ :: (DOM.IsElement el) => Text -> NodePatch el state
 class_ txt = NPProperty "class" $ V.ElementProperty
   { V.eaGetProperty = DOM.getClassName
   , V.eaSetProperty = DOM.setClassName
   , V.eaValue = return txt
   }
 
-id_ :: (DOM.IsElement el) => Text -> NodePatch el write
+id_ :: (DOM.IsElement el) => Text -> NodePatch el state
 id_ txt = NPProperty "id" $ V.ElementProperty
   { V.eaGetProperty = DOM.getId
   , V.eaSetProperty = DOM.setId
@@ -807,7 +784,7 @@ instance HasTypeProperty DOM.HTMLButtonElement where
   htpGetType = DOM.Button.getType
   htpSetType = DOM.Button.setType
 
-type_ :: (HasTypeProperty el) => Text -> NodePatch el write
+type_ :: (HasTypeProperty el) => Text -> NodePatch el state
 type_ txt = NPProperty "type" $ V.ElementProperty
   { V.eaGetProperty = htpGetType
   , V.eaSetProperty = htpSetType
@@ -822,7 +799,7 @@ instance HasHrefProperty DOM.HTMLAnchorElement where
   htpGetHref = DOM.HyperlinkElementUtils.getHref
   htpSetHref = DOM.HyperlinkElementUtils.setHref
 
-href_ :: (HasHrefProperty el) => Text -> NodePatch el write
+href_ :: (HasHrefProperty el) => Text -> NodePatch el state
 href_ txt = NPProperty "href" $ V.ElementProperty
   { V.eaGetProperty = htpGetHref
   , V.eaSetProperty = htpSetHref
@@ -841,7 +818,7 @@ instance HasValueProperty DOM.HTMLOptionElement where
   hvpGetValue = DOM.Option.getValue
   hvpSetValue = DOM.Option.setValue
 
-value_ :: (HasValueProperty el) => Text -> NodePatch el write
+value_ :: (HasValueProperty el) => Text -> NodePatch el state
 value_ txt = NPProperty "value" $ V.ElementProperty
   { V.eaGetProperty = hvpGetValue
   , V.eaSetProperty = hvpSetValue
@@ -856,14 +833,14 @@ instance HasCheckedProperty DOM.HTMLInputElement where
   hcpGetChecked = DOM.Input.getChecked
   hcpSetChecked = DOM.Input.setChecked
 
-checked_ :: (HasCheckedProperty el) => Bool -> NodePatch el write
+checked_ :: (HasCheckedProperty el) => Bool -> NodePatch el state
 checked_ b = NPProperty "checked" $ V.ElementProperty
   { V.eaGetProperty = hcpGetChecked
   , V.eaSetProperty = hcpSetChecked
   , V.eaValue = return b
   }
 
-selected_ :: Bool -> NodePatch DOM.HTMLOptionElement write
+selected_ :: Bool -> NodePatch DOM.HTMLOptionElement state
 selected_ b = NPProperty "selected" $ V.ElementProperty
   { V.eaGetProperty = DOM.Option.getSelected
   , V.eaSetProperty = DOM.Option.setSelected
@@ -878,7 +855,7 @@ instance HasDisabledProperty DOM.HTMLButtonElement where
   hdpGetDisabled = DOM.Button.getDisabled
   hdpSetDisabled = DOM.Button.setDisabled
 
-disabled_ :: HasDisabledProperty el => Bool -> NodePatch el write
+disabled_ :: HasDisabledProperty el => Bool -> NodePatch el state
 disabled_ b = NPProperty "disabled" $ V.ElementProperty
   { V.eaGetProperty = hdpGetDisabled
   , V.eaSetProperty = hdpSetDisabled
@@ -896,7 +873,7 @@ foreign import javascript unsafe
   "$2[$1] = $3"
   js_setProperty :: Text -> JSVal -> JSVal -> IO ()
 
-rawProperty :: (DOM.PToJSVal el, DOM.ToJSVal a) => Text -> a -> NodePatch el write
+rawProperty :: (DOM.PToJSVal el, DOM.ToJSVal a) => Text -> a -> NodePatch el state
 rawProperty k x = NPProperty k $ V.ElementProperty
   { V.eaGetProperty = \el_ -> js_getProperty k (DOM.pToJSVal el_)
   , V.eaSetProperty = \el_ y -> do
@@ -904,7 +881,7 @@ rawProperty k x = NPProperty k $ V.ElementProperty
   , V.eaValue = DOM.toJSVal x
   }
 #else
-rawProperty :: (JSaddle.MakeObject el, DOM.ToJSVal a) => Text -> a -> NodePatch el write
+rawProperty :: (JSaddle.MakeObject el, DOM.ToJSVal a) => Text -> a -> NodePatch el state
 rawProperty k x = NPProperty k $ V.ElementProperty
   { V.eaGetProperty = \el_ -> el_ JSaddle.! k
   , V.eaSetProperty = \el_ y -> (el_ JSaddle.<# k) y
@@ -913,7 +890,7 @@ rawProperty k x = NPProperty k $ V.ElementProperty
 #endif
 
 {-# INLINE rawAttribute #-}
-rawAttribute :: (DOM.IsElement el) => Text -> Text -> NodePatch el write
+rawAttribute :: (DOM.IsElement el) => Text -> Text -> NodePatch el state
 rawAttribute k x = NPProperty k $ V.ElementProperty
   { V.eaGetProperty = \el_ -> fromMaybe "" <$> DOM.getAttribute el_ k
   , V.eaSetProperty = \el_ y -> DOM.setAttribute el_ k y
@@ -932,7 +909,7 @@ instance HasPlaceholderProperty DOM.HTMLTextAreaElement where
   getPlaceholder = DOM.TextArea.getPlaceholder
   setPlaceholder = DOM.TextArea.setPlaceholder
 
-placeholder_ :: (HasPlaceholderProperty el) => Text -> NodePatch el write
+placeholder_ :: (HasPlaceholderProperty el) => Text -> NodePatch el state
 placeholder_ txt = NPProperty "placeholder" $ V.ElementProperty
   { V.eaGetProperty = getPlaceholder
   , V.eaSetProperty = setPlaceholder
@@ -940,7 +917,7 @@ placeholder_ txt = NPProperty "placeholder" $ V.ElementProperty
   }
 
 {-# INLINE for_ #-}
-for_ :: Text -> NodePatch DOM.HTMLLabelElement write
+for_ :: Text -> NodePatch DOM.HTMLLabelElement state
 for_ txt = NPProperty "for" $ V.ElementProperty
   { V.eaGetProperty = DOM.Label.getHtmlFor
   , V.eaSetProperty = DOM.Label.setHtmlFor
@@ -960,7 +937,7 @@ instance HasMultipleProperty DOM.HTMLSelectElement where
   setMultiple = DOM.Select.setMultiple
 
 {-# INLINE multiple_ #-}
-multiple_ :: (HasMultipleProperty el) => Bool -> NodePatch el write
+multiple_ :: (HasMultipleProperty el) => Bool -> NodePatch el state
 multiple_ txt = NPProperty "multiple" $ V.ElementProperty
   { V.eaGetProperty = getMultiple
   , V.eaSetProperty = setMultiple
@@ -976,7 +953,7 @@ instance HasSrcProperty DOM.HTMLIFrameElement where
   setSrc = DOM.IFrame.setSrc
 
 {-# INLINE src_ #-}
-src_ :: (HasSrcProperty el) => Text -> NodePatch el write
+src_ :: (HasSrcProperty el) => Text -> NodePatch el state
 src_ txt = NPProperty "src" $ V.ElementProperty
   { V.eaGetProperty = getSrc
   , V.eaSetProperty = setSrc
@@ -985,7 +962,7 @@ src_ txt = NPProperty "src" $ V.ElementProperty
 
 {-# INLINE onEvent #-}
 onEvent ::
-     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction write m, MonadUnliftIO m)
+     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction state m, MonadUnliftIO m)
   => t -> DOM.EventM.EventName t e -> (e -> m ()) -> m (DOM.JSM ())
 onEvent el_ evName f = do
   u <- askUnliftIO
@@ -998,27 +975,27 @@ onEvent el_ evName f = do
 
 onclick_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.MouseEvent -> Action write ()) -> NodePatch el write
+  => (el -> DOM.MouseEvent -> Action state ()) -> NodePatch el state
 onclick_ = NPEvent . SomeEventAction DOM.click
 
 onchange_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action write ()) -> NodePatch el write
+  => (el -> DOM.Event -> Action state ()) -> NodePatch el state
 onchange_ = NPEvent . SomeEventAction DOM.change
 
 oninput_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action write ()) -> NodePatch el write
+  => (el -> DOM.Event -> Action state ()) -> NodePatch el state
 oninput_ = NPEvent . SomeEventAction DOM.input
 
 onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action write ()) -> NodePatch el write
+  => (el -> DOM.Event -> Action state ()) -> NodePatch el state
 onsubmit_ = NPEvent . SomeEventAction DOM.submit
 
 onselect_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.UIEvent -> Action write ()) -> NodePatch el write
+  => (el -> DOM.UIEvent -> Action state ()) -> NodePatch el state
 onselect_ = NPEvent . SomeEventAction DOM.select
 
 -- simple rendering
@@ -1027,13 +1004,13 @@ onselect_ = NPEvent . SomeEventAction DOM.select
 -- when we want a quick render of a component, e.g. inside a raw node.
 -- any attempt to use dispatch will result in an exception; e.g. this
 -- will never redraw anything, it's just to quickly draw some elements
-simpleRenderNode :: read -> Node read () -> DOM.JSM DOM.Node
+simpleRenderNode :: state -> Node state -> DOM.JSM DOM.Node
 simpleRenderNode st comp = do
   (_, vdom) <- runAnapoM
     comp
-    (\_ -> fail "Trying to registering a thread from simpleRenderNode")
-    throwIO
-    (\_ -> fail "Trying to dispatch from simpleRenderNode!")
+    (\_ -> fail "Trying to register a thread from the simpleRenderNode")
+    (\_ -> fail "Trying to handle an exception from the simpleRenderNode")
+    (\_ -> fail "Trying to dispatch from the simpleRenderNode")
     Nothing
     st
   renderVirtualDom vdom (return . renderedVDomNodeDom . V.nodeBody)
