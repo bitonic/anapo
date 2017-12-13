@@ -25,7 +25,7 @@ import qualified Anapo.Text as T
 tshow :: (Show a) => a -> Text
 tshow = T.pack . show
 
-booleanCheckbox :: Node' DOM.HTMLInputElement Bool
+booleanCheckbox :: Node' Bool
 booleanCheckbox = do
   st <- askState
   input_
@@ -42,7 +42,7 @@ simpleTextInput ::
      Text
   -- ^ the label for the input
   -> Lens' state Text
-  -> Action' state ()
+  -> Action state ()
   -- ^ what to do when the new text is submitted
   -> Text
   -- ^ what to show in the button

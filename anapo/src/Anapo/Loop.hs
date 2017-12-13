@@ -2,7 +2,6 @@
 module Anapo.Loop
   ( componentLoop
   , installComponentBody
-  , installComponentBootstrap
   ) where
 
 import Control.Concurrent.Chan (Chan, writeChan, readChan, newChan)
@@ -21,15 +20,14 @@ import qualified Data.HashSet as HS
 import Control.Concurrent (ThreadId, killThread, myThreadId)
 
 import qualified GHCJS.DOM as DOM
-import qualified GHCJS.DOM.Document as DOM
 import qualified GHCJS.DOM.Types as DOM
-import qualified GHCJS.DOM.Element as DOM
-import qualified GHCJS.DOM.Node as DOM
+import qualified GHCJS.DOM.Node as DOM.Node
+import qualified GHCJS.DOM.Document as DOM.Document
 
 import qualified Anapo.VDOM as V
 import Anapo.Component
 import Anapo.Render
-import Anapo.Text (Text, pack)
+import Anapo.Text (pack)
 import Anapo.Logging
 
 {-# INLINE timeIt #-}
@@ -41,19 +39,20 @@ timeIt m = do
   return (x, diffUTCTime t1 t0)
 
 {-# INLINE componentLoop #-}
-componentLoop :: forall state acc.
+componentLoop :: forall state.
      (forall a. (state -> DOM.JSM a) -> Action state a)
-  -> Component (Either SomeException state) state
-  -> acc -> (acc -> V.Dom -> DOM.JSM acc)
-  -> DOM.JSM acc
-  -- ^ returns the final accumulator, when there is nothing left to do.
-  -- might never terminate
-componentLoop withState vdom !acc0 useDom = do
+  -> Node (Either SomeException state) state
+  -> DOM.Node
+  -- ^ where to place the node
+  -> DOM.JSM (V.Node RenderedVDomNode)
+  -- ^ returns the final rendered node, when there is nothing left to
+  -- do. might never terminate
+componentLoop withState comp root = do
   -- dispatch channel
   dispatchChan :: Chan (state -> DOM.JSM state) <- liftIO newChan
   let
     get = do
-      mbF :: Either BlockedIndefinitelyOnMVar (state -> DOM.JSM state) <- liftIO (tryAsync (readChan dispatchChan))
+      mbF :: Either BlockedIndefinitelyOnMVar (state -> DOM.JSM state) <- tryAsync (readChan dispatchChan)
       case mbF of
         Left{} -> do
           logInfo "got undefinitedly blocked on mvar on dispatch channel, will stop"
@@ -72,64 +71,64 @@ componentLoop withState vdom !acc0 useDom = do
         (atomicModifyIORef' tidsRef (\tids -> (HS.insert tid tids, ())))
         (\_ -> atomicModifyIORef' tidsRef (\tids -> (HS.delete tid tids, ())))
         (\_ -> m)
+  -- helper to run the component
+  let runComp mbPrevSt stOrErr = do
+        ((_, vdom), vdomDt) <- timeIt (runComponentM comp register handler disp mbPrevSt stOrErr)
+        DOM.syncPoint
+        logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
+        return vdom
   -- compute state
   runAction
     (withState $ \st0 -> do
       -- main loop
       let
-        go :: Maybe state -> Either SomeException state -> acc -> DOM.JSM acc
-        go mbPrevSt !stOrErr !acc = do
-          (nodes, vdomDt) <- timeIt (runComponent vdom register handler disp mbPrevSt stOrErr)
-          DOM.syncPoint
-          logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
-          acc' <- useDom acc nodes
-          case stOrErr of
+        go ::
+             state
+          -- ^ the previous state
+          -> V.Node RenderedVDomNode
+          -- ^ the previous rendered node
+          -> DOM.JSM (V.Node RenderedVDomNode)
+        go st !rendered = do
+          -- get the next update or the next exception. we are biased
+          -- towards exceptions since we want to exit immediately when
+          -- there is a failure.
+          fOrErr :: Either SomeException (Maybe (state -> DOM.JSM state)) <- liftIO (Async.race (readMVar excVar) get)
+          case fOrErr of
             Left err -> do
+              -- if we got an exception, render one last time and shut down
+              logError ("Got exception, will render it and rethrow: " <> pack (show err))
+              vdom <- runComp (Just st) (Left err)
+              void (reconciliateVirtualDom rendered [] vdom)
               logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
               liftIO (throwIO err)
-            Right st -> do
-              -- we are biased towards exceptions since we want
-              -- to exit immediately when there is a failure
-              fOrErr :: Either SomeException (Maybe (state -> DOM.JSM state)) <- liftIO (Async.race (readMVar excVar) get)
-              case fOrErr of
-                Left err -> go Nothing (Left err) acc'
-                Right Nothing -> do
-                  logInfo "No state update received, terminating component loop"
-                  return acc'
-                Right (Just f) -> do
-                  (st', updateDt) <- timeIt (f st)
-                  logDebug ("State updated (" <> pack (show updateDt) <> "), will re render")
-                  go (Just st) (Right st') acc'
+            Right Nothing -> do
+              logInfo "No state update received, terminating component loop"
+              return rendered
+            Right (Just f) -> do
+              (st', updateDt) <- timeIt (f st)
+              logDebug ("State updated (" <> pack (show updateDt) <> "), will re render")
+              vdom <- runComp (Just st) (Right st')
+              rendered' <- reconciliateVirtualDom rendered [] vdom
+              go st' rendered'
       tid <- liftIO myThreadId
       finally
-        (go Nothing (Right st0) acc0)
+        (do
+          -- run for the first time
+          vdom <- runComp Nothing (Right st0)
+          rendered0 <- renderVirtualDom vdom $ \rendered -> do
+            DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
+            return rendered
+          -- now loop
+          go st0 rendered0)
         (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid')))))
     register handler disp
 
 {-# INLINE installComponentBody #-}
 installComponentBody ::
      (forall a. (state -> DOM.JSM a) -> Action state a)
-  -> Component (Either SomeException state) state
+  -> Node (Either SomeException state) state
   -> DOM.JSM ()
 installComponentBody getSt vdom0 = do
   doc <- DOM.currentDocumentUnchecked
-  body <- DOM.getBodyUnchecked doc
-  void $ componentLoop getSt vdom0 Nothing $ \mbVdom vdom -> do
-    evts <- renderVirtualDom doc body mbVdom vdom
-    return (Just (vdom, evts))
-
-{-# INLINE installComponentBootstrap #-}
-installComponentBootstrap ::
-     (forall a. (state -> DOM.JSM a) -> Action state a)
-  -> Component (Either SomeException state) state
-  -> DOM.JSM ()
-installComponentBootstrap getSt vdom0 = do
-  doc <- DOM.currentDocumentUnchecked
-  body <- DOM.getBodyUnchecked doc
-  container <- DOM.unsafeCastTo DOM.HTMLDivElement =<< DOM.createElement doc ("div" :: Text)
-  DOM.setClassName container ("container" :: Text)
-  DOM.appendChild_ body container
-  void $ componentLoop getSt vdom0 Nothing $ \mbVdom vdom -> do
-    evts <- renderVirtualDom doc container mbVdom vdom
-    return (Just (vdom, evts))
-
+  body <- DOM.Document.getBodyUnchecked doc
+  void $ componentLoop getSt vdom0 (DOM.toNode body)

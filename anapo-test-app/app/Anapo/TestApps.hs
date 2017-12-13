@@ -71,7 +71,7 @@ data TestAppsStateOrError =
   | TASOEOk TestAppsState
 makePrisms ''TestAppsStateOrError
 
-changeToApp :: MonadAction' TestAppsState m => Bool -> Maybe WhichTestApp -> m ()
+changeToApp :: MonadAction TestAppsState m => Bool -> Maybe WhichTestApp -> m ()
 changeToApp pushHistory mbApp =
   dispatch $ do
     st' <- get
@@ -87,8 +87,8 @@ changeToApp pushHistory mbApp =
     put (set tasApp app st'')
 
 testAppsComponent ::
-  Component (Either SomeException TestAppsStateOrError) TestAppsStateOrError
-testAppsComponent = do
+  Node (Either SomeException TestAppsStateOrError) TestAppsStateOrError
+testAppsComponent = div_ [class_ "container"] $ do
   stoe <- askState
   let showErr err = n$ div_ [class_ "m-2 alert alert-danger"] (n$ text err)
   case stoe of
@@ -121,8 +121,8 @@ testAppsComponent = do
         YouTube -> zoomL tasYouTube youTubeComponent
 
 testAppsWith ::
-     (TestAppsStateOrError -> Action' TestAppsStateOrError a)
-  -> Action' TestAppsStateOrError a
+     (TestAppsStateOrError -> Action TestAppsStateOrError a)
+  -> Action TestAppsStateOrError a
 testAppsWith cont = do
   path <- liftJSM (DOM.getPathname =<< DOM.getLocation =<< DOM.currentWindowUnchecked)
   case testAppFromPath path of

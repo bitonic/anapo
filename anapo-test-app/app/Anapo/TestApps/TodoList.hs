@@ -10,7 +10,6 @@ import qualified Data.Map.Strict as Map
 import Control.Monad (forM_, when)
 import Data.List (partition)
 import Data.Monoid ((<>))
-import qualified GHCJS.DOM.Types as DOM
 
 import Anapo
 import Anapo.Text (Text)
@@ -22,7 +21,7 @@ data TodoItemState = TodoItemState
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
-todoItemNode :: Node' DOM.HTMLAnchorElement TodoItemState
+todoItemNode :: Node' TodoItemState
 todoItemNode = do
   st <- askState
   let aClass = if st^.tisCompleted

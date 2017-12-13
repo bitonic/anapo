@@ -35,7 +35,8 @@ library
     time,
     transformers,
     unliftio-core,
-    unordered-containers
+    unordered-containers,
+    vector
   if !impl(ghcjs)
     build-depends:
       text,

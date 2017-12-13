@@ -14,8 +14,6 @@ import qualified Data.Foldable as F
 import Data.Monoid ((<>))
 
 import qualified GHCJS.DOM.Types as DOM
-import qualified GHCJS.DOM.Document as DOM.Document
-import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Node as DOM.Node
 
 import Anapo
@@ -55,7 +53,7 @@ youTubeInit videoId = liftJSM $ do
 
 -- it's important to have this as a generic element since we'll replace
 -- it with a iframe
-youTubeNode :: Node' DOM.Element YouTubeState
+youTubeNode :: Node' YouTubeState
 youTubeNode = do
   st <- askState
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
@@ -91,13 +89,11 @@ youTubeNode = do
   -- we insert the to-be-replaced node as a raw node since otherwise the
   -- patching algorithm might try to patch it and fail because the YT
   -- library turns whatever we have into an iframe.
-  el <- liftJSM $ do
-    doc <- DOM.currentDocumentUnchecked
-    container <- DOM.unsafeCastTo DOM.Element =<< DOM.Document.createElement doc ("div" :: Text)
-    simpleRenderComponent container () $
-      n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
+  node <- liftJSM $ do
+    simpleRenderComponent () $
+      div_ [class_ "row"] $ n$ div_ [class_ "col"] $
         n$ text "YouTube player not ready"
-    return container
+  el <- DOM.unsafeCastTo DOM.Element node
   rawNode DOM.Element el
     [ unsafeDidMount didMount
     , unsafeWillRemove willRemove
