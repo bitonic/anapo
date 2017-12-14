@@ -16,12 +16,13 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.Maybe (catMaybes)
 import Data.Foldable (for_)
 import Unsafe.Coerce (unsafeCoerce)
-import Control.Monad.Trans.Reader (ask)
-import Control.Monad.Trans.Class (lift)
+import Control.Monad.Reader (ask)
+import Control.Monad.Trans (lift)
 import Data.Monoid ((<>))
 import Data.Traversable (for)
 import qualified Data.Vector as V
 import Data.Vector (Vector)
+import Data.Hashable (Hashable(..))
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Document as DOM.Document
@@ -69,6 +70,10 @@ type VDomPath = [VDomPathSegment]
 
 newtype VDomPathSegment =
     VDPSNormal Int
+  deriving (Eq, Show)
+instance Hashable VDomPathSegment where
+  {-# INLINE hashWithSalt #-}
+  hashWithSalt salt (VDPSNormal i) = hashWithSalt salt i
 
 {-# INLINE addEvents #-}
 addEvents ::
@@ -306,7 +311,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           -- Element
           (V.VDBElement prevElement, V.VDBElement element) | V.elementTag prevElement == V.elementTag element -> do
             -- callback before patch
-            V.callbacksUnsafeWillPatch (V.vdomCallbacks vdom) (rvdnDom prevRendered)
+            V.callbacksUnsafeWillPatch (V.vdomCallbacks prevVDom) (rvdnDom prevRendered)
             dom' <- DOM.unsafeCastTo (V.vdomWrap vdom)  (rvdnDom prevRendered)
             -- reset properties that are gone to their default
             let removedProps = V.elementProperties prevElement `HMS.difference` V.elementProperties element
@@ -321,10 +326,11 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
               (V.elementProperties element)
               (rvdnResetProperties prevRendered)
             -- remove all events
-            -- TODO we should probably have an option to be able to have stable events, so
-            -- that we do not have to delete everything each time
-            -- TODO can it be that changing the attributes triggers some events? we should
-            -- check
+            -- TODO we should probably have an option to be able to
+            -- have stable events, so that we do not have to delete
+            -- everything each time
+            -- TODO can it be that changing the attributes triggers some
+            -- events? we should check
             forM_ (rvdnEvents prevRendered) $ \(SomeSaferEventListener evtName evt) -> do
               -- TODO maybe do something safer here...
               DOM.EventM.removeListener (unsafeCoerce dom') evtName evt False
@@ -362,21 +368,23 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
 
     followPath ::
          V.Node RenderedVDomNode
+      -> (V.Node RenderedVDomNode -> DOM.JSM (V.Node RenderedVDomNode))
       -> VDomPath
       -> DOM.JSM (V.Node RenderedVDomNode)
-    followPath node = \case
-      [] -> return node
+    followPath node f = \case
+      [] -> f node
       VDPSNormal ix : path -> case V.nodeChildren node of
-        Nothing -> fail "renderVirtualDom: no children when following non-empty path"
+        Nothing -> fail ("renderVirtualDom: no children when following non-empty path: " <> show path)
         Just ch -> case ch of
           V.CRawHtml{} -> fail "renderVirtualDom: CRawHtml when following non-empty path"
           V.CNormal children -> case children V.!? ix of
             Nothing -> fail ("renderVirtualDom: did not find index " <> show ix <> " when following path")
-            Just n -> followPath n path
+            Just n -> do
+              n' <- followPath n f path
+              return node{ V.nodeChildren = Just (V.CNormal (children V.// [(ix, n')])) }
 
   t0 <- liftIO getCurrentTime
-  pathVdom <- followPath prevVdom000 path000
-  x <- patchNode pathVdom vdom000
+  x <- followPath prevVdom000 (\pathVdom -> patchNode pathVdom vdom000) path000
   t1 <- liftIO getCurrentTime
   logDebug ("Vdom reconciled (" <> pack (show (diffUTCTime t1 t0)) <> ")")
   return x

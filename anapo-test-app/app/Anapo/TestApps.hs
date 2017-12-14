@@ -58,7 +58,7 @@ allTestApps = [minBound..maxBound]
 data TestAppsState = TestAppsState
   { _tasApp :: WhichTestApp
   , _tasFirstApp :: WhichTestApp
-  , _tasTodo :: TodoState
+  , _tasTodo :: Component () TodoState
   , _tasTimer :: TimerState
   , _tasStopTimerOnAppChange :: Bool
   , _tasYouTube :: YouTubeState
@@ -93,7 +93,7 @@ testAppsError err =
 testAppsComponent ::
   Node TestAppsStateOrError
 testAppsComponent = do
-  stoe <- askState
+  stoe <- ask
   case stoe of
     TASOEError err -> testAppsError err
     TASOEOk st -> div_ [class_ "container"] $ zoomT st _TASOEOk $ do
@@ -118,7 +118,7 @@ testAppsComponent = do
               n$ "Stop timer app when changing app"
       n$ div_ [class_ "row m-2"] $ n$ div_ [class_ "col"] $ case st^.tasApp of
         Blank -> return ()
-        Todo -> zoomL tasTodo todoComponent
+        Todo -> n$ componentL tasTodo ()
         Timer -> zoomL tasTimer timerComponent
         YouTube -> zoomL tasYouTube youTubeComponent
 
@@ -143,10 +143,11 @@ testAppsWith cont = do
           return listener)
         (\listener -> unliftIO u (liftJSM (DOM.removeListener window DOM.popState listener False)))
         (\_ -> unliftIO u $ do
+            todo <- zoomAction (_TASOEOk.tasTodo.componentState) todoInit
             st <- TestAppsState
               <$> pure app
               <*> pure app
-              <*> todoInit
+              <*> newComponent todo (\() -> todoComponent)
               <*> timerInit
               <*> pure False
               <*> youTubeInit "3yQObSCXyoo"

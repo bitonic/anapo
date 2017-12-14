@@ -23,7 +23,7 @@ makeLenses ''TodoItemState
 
 todoItemNode :: Node TodoItemState
 todoItemNode = do
-  st <- askState
+  st <- ask
   let aClass = if st^.tisCompleted
         then "list-group-item active"
         else "list-group-item"
@@ -39,29 +39,29 @@ todoItemNode = do
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
   , _tsTodoElements :: Map.Map Int TodoItemState
-  , _tsCurrentText :: Text
-  } deriving (Eq, Show)
+  , _tsInput :: Component SimpleTextInputProps Text
+  }
 makeLenses ''TodoState
 
-todoComponent :: Dom TodoState
-todoComponent = do
-  st <- askState
+todoComponent :: Node TodoState
+todoComponent = div_ [] $ do
+  st <- ask
+  u <- liftAction askUnliftJSM
   n$ div_ [class_ "row align-items-center"] $ do
     n$ div_ [class_ "col-md-auto"] $ do
-      -- submit new item
-      simpleTextInput "todo item"
-        tsCurrentText
-        (dispatch $ do
-          curText <- use tsCurrentText
-          when (curText /= "") $ do
-            let newTodoItem = TodoItemState False curText
-            todoEls <- use tsTodoElements
-            let itemKey = if Map.null todoEls
-                  then 0
-                  else fst (Map.findMax todoEls) + 1
-            tsCurrentText .= ""
-            tsTodoElements.at itemKey .= Just newTodoItem)
-        ("Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1))
+      n$ componentL tsInput STIP
+        { stipButtonText = "Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)
+        , stipOnSubmit = unliftJSM u $ dispatch $ do
+            curText <- use (tsInput.componentState)
+            when (curText /= "") $ do
+              let newTodoItem = TodoItemState False curText
+              todoEls <- use tsTodoElements
+              let itemKey = if Map.null todoEls
+                    then 0
+                    else fst (Map.findMax todoEls) + 1
+              tsInput.componentState .= ""
+              tsTodoElements.at itemKey .= Just newTodoItem
+        }
     -- toggle completed tasks
     n$ div_ [class_ "col"] $ do
       n$ a_
@@ -88,12 +88,14 @@ todoComponent = do
       n$ h2_ [class_ "mx-1 my-2"] (n$"Things already done")
       renderItems done
 
-todoInit :: Monad m => m TodoState
-todoInit = return $ TodoState
-  { _tsShowCompleted = True
-  , _tsTodoElements = Map.fromList
-      [ (1, TodoItemState{_tisCompleted = True, _tisBody = "Buy milk"})
-      , (2, TodoItemState{_tisCompleted = False, _tisBody = "Learn CT"})
-      ]
-  , _tsCurrentText = ""
-  }
+todoInit :: Action TodoState TodoState
+todoInit = do
+  inp <- newComponent "" simpleTextInput
+  return TodoState
+    { _tsShowCompleted = True
+    , _tsTodoElements = Map.fromList
+        [ (1, TodoItemState{_tisCompleted = True, _tisBody = "Buy milk"})
+        , (2, TodoItemState{_tisCompleted = False, _tisBody = "Learn CT"})
+        ]
+    , _tsInput = inp
+    }

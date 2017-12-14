@@ -55,7 +55,7 @@ youTubeInit videoId = liftJSM $ do
 -- it with a iframe
 youTubeNode :: Node YouTubeState
 youTubeNode = do
-  st <- askState
+  st <- ask
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
   let
     didMount el = void $ forkAction $ liftJSM $ do
@@ -91,7 +91,7 @@ youTubeNode = do
   -- library turns whatever we have into an iframe.
   node <- liftJSM $ do
     simpleRenderNode () $
-      div_ [class_ "row"] $ n$ div_ [class_ "col"] $
+      div_ [class_ "row"] $ n$ div_ [class_ "col"] $ n$ div_ [] $ do
         n$ text "YouTube player not ready"
   el <- DOM.unsafeCastTo DOM.Element node
   rawNode DOM.Element el
@@ -110,9 +110,12 @@ youTubeComponent = do
         else Rerender
       Nothing -> Rerender)
     (static youTubeNode)
-  n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
-    simpleTextInput "video id" ytsVideoId
-      (dispatch $ do
-        vid <- use ytsVideoId
-        put =<< liftJSM (youTubeInit vid))
-      "Choose video"
+  u <- liftAction askUnliftJSM
+  zoomL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
+    n$ simpleTextInput
+      STIP
+        { stipButtonText = "Choose video"
+        , stipOnSubmit = unliftJSM u $ dispatch $ do
+            vid <- use ytsVideoId
+            put =<< liftJSM (youTubeInit vid)
+        }

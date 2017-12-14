@@ -9,10 +9,11 @@ module Anapo.TestApps.Prelude
 import Control.Monad.IO.Class as X (liftIO)
 import Control.Monad as X (void)
 import Control.Concurrent as X (killThread)
-import Control.Lens as X (makePrisms, makeLenses, over, (^.), set, ix, (%=), use, (.=), at, Lens')
-import GHCJS.DOM.Types as X (JSM, liftJSM)
+import Control.Lens as X (makePrisms, makeLenses, over, (^.), set, ix, (%=), use, (.=), at, Lens', view)
+import GHCJS.DOM.Types as X (JSM, liftJSM, MonadJSM)
 import Anapo.Text as X (Text)
 import Control.Monad.State as X (put, get)
+import Control.Monad.Reader as X (ask)
 import Control.Monad.IO.Unlift as X (unliftIO, askUnliftIO)
 
 import qualified Data.Aeson.TH as Aeson
@@ -27,7 +28,7 @@ tshow = T.pack . show
 
 booleanCheckbox :: Node Bool
 booleanCheckbox = do
-  st <- askState
+  st <- ask
   input_
     [ class_ "form-check-input mr-1"
     , type_ "checkbox"
@@ -38,38 +39,36 @@ booleanCheckbox = do
         dispatch (put checked)
     ]()
 
+data SimpleTextInputProps = STIP
+  { stipButtonText :: Text
+  , stipOnSubmit :: JSM ()
+  }
+
 simpleTextInput ::
-     Text
-  -- ^ the label for the input
-  -> Lens' state Text
-  -> Action state ()
-  -- ^ what to do when the new text is submitted
-  -> Text
-  -- ^ what to show in the button
-  -> Dom state
-simpleTextInput lbl l cback buttonTxt = do
-  currentTxt <- (^.l) <$> askState
-  n$ form_
+     SimpleTextInputProps
+  -> Node Text
+simpleTextInput STIP{..} = do
+  currentTxt <- ask
+  form_
     [ class_ "form-inline mx-1 my-2"
-    , onsubmit_ $ \_ ev -> do
-        liftJSM (preventDefault ev)
-        cback
+    , onsubmit_ $ \_ ev -> liftJSM $ do
+        preventDefault ev
+        stipOnSubmit
     ]
     (do
       n$ input_
         [ type_ "text"
         , class_ "form-control mb-2 mr-sm-2 mb-sm-0"
         , value_ currentTxt
-        , rawProperty "aria-label" lbl
         , oninput_ $ \inp _ -> do
             txt <- DOM.getValue inp
-            dispatch (l .= txt)
+            dispatch (put txt)
         ]()
       n$ button_
         [ type_ "submit"
         , class_ "btn btn-primary"
         ]
-        (n$ text buttonTxt))
+        (n$ text stipButtonText))
 
 aesonRecord :: String -> Aeson.Options
 aesonRecord prefix = Aeson.defaultOptions
