@@ -15,9 +15,6 @@ module Anapo.Component
   , AffineTraversal'
   , toMaybeOf
 
-    -- * Dispatch
-  , Dispatch(..)
-
     -- * Register / handler
   , RegisterThread
   , HandleException
@@ -32,12 +29,26 @@ module Anapo.Component
     -- * AnapoM
   , AnapoM
   , Dom
+  , DomState
   , Node
   , askRegisterThread
   , askHandleException
   , askPreviousState
   , zoomL
   , zoomT
+  , UnliftJSM
+  , askUnliftJSM
+  , unliftJSM
+  , actionUnliftJSM
+
+    -- * Component
+  , Component
+  , componentState
+  , componentNode
+  , newComponent
+  , component
+  , componentT
+  , componentL
 
     -- * basic combinators
   , n
@@ -56,7 +67,12 @@ module Anapo.Component
     -- * raw html
   , UnsafeRawHtml(..)
 
+    -- * node patching
+  , patchNode
+  , NodePatch(..)
+
     -- * elements
+  , IsElementChildren(..)
   , el
   , div_
   , span_
@@ -118,19 +134,6 @@ module Anapo.Component
     -- * simple rendering
   , simpleNode
   , simpleRenderNode
-
-    -- * component
-  , Component
-  , componentState
-  , componentNode
-  , newComponent
-  , component
-  , componentT
-  , componentL
-
-  , UnliftJSM
-  , askUnliftJSM
-  , unliftJSM
   ) where
 
 import qualified GHCJS.DOM.Event as DOM.Event

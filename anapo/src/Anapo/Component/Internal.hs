@@ -942,6 +942,10 @@ askUnliftJSM = askUnliftIO
 unliftJSM :: UnliftJSM m -> m a -> DOM.JSM a
 unliftJSM u m = liftIO (unliftIO u m)
 
+{-# INLINE actionUnliftJSM #-}
+actionUnliftJSM :: (MonadAction state m) => m (UnliftJSM (Action state))
+actionUnliftJSM = liftAction askUnliftJSM
+
 -- Components
 -- --------------------------------------------------------------------
 
