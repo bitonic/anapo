@@ -23,7 +23,7 @@ makeLenses ''TodoItemState
 
 todoItemNode :: Node TodoItemState
 todoItemNode = do
-  st <- askState
+  st <- ask
   let aClass = if st^.tisCompleted
         then "list-group-item active"
         else "list-group-item"
@@ -45,7 +45,7 @@ makeLenses ''TodoState
 
 todoComponent :: Dom TodoState
 todoComponent = do
-  st <- askState
+  st <- ask
   n$ div_ [class_ "row align-items-center"] $ do
     n$ div_ [class_ "col-md-auto"] $ do
       -- submit new item

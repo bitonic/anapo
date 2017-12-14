@@ -24,6 +24,8 @@ library
     Anapo.Text
     Anapo.Logging
     Anapo.CollectedThread
+  other-modules:
+    Anapo.Component.Internal
   build-depends:
     base >= 4.7 && < 5,
     async,
@@ -33,7 +35,7 @@ library
     lens,
     safe-exceptions,
     time,
-    transformers,
+    mtl,
     unliftio-core,
     unordered-containers,
     vector

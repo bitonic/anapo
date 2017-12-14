@@ -93,7 +93,7 @@ testAppsError err =
 testAppsComponent ::
   Node TestAppsStateOrError
 testAppsComponent = do
-  stoe <- askState
+  stoe <- ask
   case stoe of
     TASOEError err -> testAppsError err
     TASOEOk st -> div_ [class_ "container"] $ zoomT st _TASOEOk $ do

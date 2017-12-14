@@ -29,7 +29,7 @@ makeLenses ''TimerState
 
 timerComponent :: Dom TimerState
 timerComponent = do
-  st <- askState
+  st <- ask
   let timePassed =
         st ^. tsTimePassed +
         (case st ^. tsRunning of

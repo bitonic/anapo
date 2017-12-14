@@ -9,10 +9,11 @@ module Anapo.TestApps.Prelude
 import Control.Monad.IO.Class as X (liftIO)
 import Control.Monad as X (void)
 import Control.Concurrent as X (killThread)
-import Control.Lens as X (makePrisms, makeLenses, over, (^.), set, ix, (%=), use, (.=), at, Lens')
+import Control.Lens as X (makePrisms, makeLenses, over, (^.), set, ix, (%=), use, (.=), at, Lens', view)
 import GHCJS.DOM.Types as X (JSM, liftJSM)
 import Anapo.Text as X (Text)
 import Control.Monad.State as X (put, get)
+import Control.Monad.Reader as X (ask)
 import Control.Monad.IO.Unlift as X (unliftIO, askUnliftIO)
 
 import qualified Data.Aeson.TH as Aeson
@@ -27,7 +28,7 @@ tshow = T.pack . show
 
 booleanCheckbox :: Node Bool
 booleanCheckbox = do
-  st <- askState
+  st <- ask
   input_
     [ class_ "form-check-input mr-1"
     , type_ "checkbox"
@@ -48,7 +49,7 @@ simpleTextInput ::
   -- ^ what to show in the button
   -> Dom state
 simpleTextInput lbl l cback buttonTxt = do
-  currentTxt <- (^.l) <$> askState
+  currentTxt <- view l
   n$ form_
     [ class_ "form-inline mx-1 my-2"
     , onsubmit_ $ \_ ev -> do
