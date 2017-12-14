@@ -22,6 +22,7 @@ import Data.Monoid ((<>))
 import Data.Traversable (for)
 import qualified Data.Vector as V
 import Data.Vector (Vector)
+import Data.Hashable (Hashable(..))
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Document as DOM.Document
@@ -70,6 +71,9 @@ type VDomPath = [VDomPathSegment]
 newtype VDomPathSegment =
     VDPSNormal Int
   deriving (Eq, Show)
+instance Hashable VDomPathSegment where
+  {-# INLINE hashWithSalt #-}
+  hashWithSalt salt (VDPSNormal i) = hashWithSalt salt i
 
 {-# INLINE addEvents #-}
 addEvents ::
@@ -307,7 +311,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           -- Element
           (V.VDBElement prevElement, V.VDBElement element) | V.elementTag prevElement == V.elementTag element -> do
             -- callback before patch
-            V.callbacksUnsafeWillPatch (V.vdomCallbacks vdom) (rvdnDom prevRendered)
+            V.callbacksUnsafeWillPatch (V.vdomCallbacks prevVDom) (rvdnDom prevRendered)
             dom' <- DOM.unsafeCastTo (V.vdomWrap vdom)  (rvdnDom prevRendered)
             -- reset properties that are gone to their default
             let removedProps = V.elementProperties prevElement `HMS.difference` V.elementProperties element

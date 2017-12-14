@@ -6,7 +6,7 @@ module Anapo.Loop
 
 import Control.Concurrent.Chan (Chan, writeChan, readChan, newChan)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (void, when)
+import Control.Monad (void, when, foldM)
 import Data.Foldable (traverse_)
 import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
 import Data.Monoid ((<>))
@@ -18,10 +18,8 @@ import qualified Control.Concurrent.Async as Async
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 import Control.Concurrent (ThreadId, killThread, myThreadId)
-import qualified Data.Foldable as F
-import Control.Monad.State (runStateT)
-import Control.Lens (use, _1, _2, (.=))
-import Data.Foldable (sequenceA_)
+import Control.Monad.State (runStateT, put, get)
+import qualified Data.HashMap.Strict as HMS
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -61,7 +59,7 @@ nodeLoop withState node excComp root = do
   -- dispatch channel
   dispatchChan :: Chan (DispatchMsg state) <- liftIO newChan
   let
-    get = do
+    getMsg = do
       mbF :: Either BlockedIndefinitelyOnMVar (DispatchMsg state) <- tryAsync (readChan dispatchChan)
       case mbF of
         Left{} -> do
@@ -99,22 +97,24 @@ nodeLoop withState node excComp root = do
      -> AffineTraversal' (Component () state) (Component props state')
      -> Component props state'
      -> props
-     -> DOM.JSM (ClearPlacedComponents, V.Node V.SomeVDomNode)
+     -> DOM.JSM (V.Node V.SomeVDomNode)
     runComp mbPrevComp path trav comp props = do
-      ((comps, _, vdom), vdomDt) <- timeIt $ unAnapoM
+      ((_, vdom), vdomDt) <- timeIt $ unAnapoM
         (do
-          registerComponent comp props
-          _componentNode comp props)
+          node0 <- _componentNode comp props
+          forSomeNodeBody node0 $ \node' -> do
+            patches <- registerComponent (_componentPositions comp) props
+            patchNode patches node')
         (actionEnv trav)
         AnapoEnv
           { aeReversePath = reverse path
           , aePrevState = mbPrevComp
           , aeState = _componentState comp
           }
-        [] ()
+        ()
       DOM.syncPoint
       logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
-      return (comps, vdom)
+      return vdom
   -- compute state
   unAction
     (withState $ \st0 -> do
@@ -123,16 +123,14 @@ nodeLoop withState node excComp root = do
         go ::
              Component () state
           -- ^ the previous state
-          -> ClearPlacedComponents
-          -- ^ the previous placed components
           -> V.Node RenderedVDomNode
           -- ^ the previous rendered node
           -> DOM.JSM (V.Node RenderedVDomNode)
-        go compRoot !compsPoss !rendered = do
+        go compRoot !rendered = do
           -- get the next update or the next exception. we are biased
           -- towards exceptions since we want to exit immediately when
           -- there is a failure.
-          fOrErr :: Either SomeException (Maybe (DispatchMsg state)) <- liftIO (Async.race (readMVar excVar) get)
+          fOrErr :: Either SomeException (Maybe (DispatchMsg state)) <- liftIO (Async.race (readMVar excVar) getMsg)
           case fOrErr of
             Left err -> do
               -- if we got an exception, render one last time and shut down
@@ -148,55 +146,47 @@ nodeLoop withState node excComp root = do
               -- traverse to the component using StateT, failing
               -- if we reach anything twice (it'd mean it's not an
               -- AffineTraversal)
-              ((compRoot', (_, mbToRender)), updateDt) <- timeIt $ runStateT
+              ((compRoot', mbComp), updateDt) <- timeIt $ runStateT
                 (trav
                   (\comp -> do
-                      -- fail if we already visited
-                      alreadyVisited <- use _1
-                      when alreadyVisited $
-                        fail "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
-                      -- remember that we have already visited
-                      _1 .= True
-                      -- perform the update
-                      st <- DOM.liftJSM (modif (_componentState comp))
-                      let comp' = comp{ _componentState = st }
-                      -- check if the component is present in the
-                      -- vdom at all. if it's not, we won't need to
-                      -- render.
-                      mbPos <- liftIO (readIORef (_componentPlaced comp))
-                      F.for_ mbPos $ \(props, pos) ->
-                        -- signal which component we need to render,
-                        -- and at which position. note that we
-                        -- need to grab the position now before
-                        -- rendering, since it might be reset while
-                        -- rendering.
-                        _2 .= Just (comp', props, pos)
-                      return comp')
+                      mbComp <- get
+                      case mbComp of
+                        Just{} -> do
+                          -- fail if we already visited
+                          fail "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
+                        Nothing -> do
+                          st <- DOM.liftJSM (modif (_componentState comp))
+                          let comp' = comp{ _componentState = st }
+                          put (Just comp')
+                          return comp')
                   compRoot)
-                (False, Nothing)
+                Nothing
               logDebug ("State updated (" <> pack (show updateDt) <> "), might re render")
-              -- reset all the components
-              liftIO (sequenceA_ compsPoss)
-              case mbToRender of
+              case mbComp of
                 Nothing -> do
-                  logInfo "Did not get anything to render, either because the component was not found or because it was not placed."
-                  go compRoot' [] rendered
-                Just (comp, props, pos) -> do
-                  logInfo ("POSITION: " <> pack (show pos))
-                  (compsPoss', vdom) <- runComp (Just compRoot) pos trav comp props
-                  rendered' <- reconciliateVirtualDom rendered pos vdom
-                  go compRoot' compsPoss' rendered'
+                  logInfo "The component was not found, not rerendering"
+                  go compRoot' rendered
+                Just comp -> do
+                  positions <- liftIO (readIORef (_componentPositions comp))
+                  logDebug ("Rendering at " <> pack (show (HMS.size positions)) <> " positions")
+                  rendered' <- foldM
+                    (\rendered' (pos, props) -> do
+                        vdom <- runComp (Just compRoot) pos trav comp props
+                        reconciliateVirtualDom rendered' pos vdom)
+                    rendered
+                    (HMS.toList positions)
+                  go compRoot' rendered'
       tid <- liftIO myThreadId
       finally
         (do
           -- run for the first time
           comp <- newComponent st0 (\() -> node)
-          (comps0, vdom) <- runComp Nothing [] id comp ()
+          vdom <- runComp Nothing [] id comp ()
           rendered0 <- renderVirtualDom vdom $ \rendered -> do
             DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
             return rendered
           -- now loop
-          go comp comps0 rendered0)
+          go comp rendered0)
         (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid')))))
     (actionEnv id)
 

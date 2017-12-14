@@ -25,7 +25,7 @@ import Control.Concurrent (ThreadId, forkIO, myThreadId)
 import Control.Monad.Trans (lift)
 import Data.Maybe (fromMaybe)
 import Data.DList (DList)
-import Data.IORef (IORef, newIORef, atomicModifyIORef', writeIORef)
+import Data.IORef (IORef, newIORef, modifyIORef')
 import Control.Monad.Reader (MonadReader(..))
 
 import qualified GHCJS.DOM.Types as DOM
@@ -204,8 +204,6 @@ askHandleException = liftAction (Action (\env -> return (aeHandleException env))
 -- Monad
 -- --------------------------------------------------------------------
 
-type ClearPlacedComponents = [IO ()]
-
 data AnapoEnv stateRoot state = AnapoEnv
   { aeReversePath :: [VDomPathSegment]
   -- ^ this is stored in _reverse_ order
@@ -218,35 +216,41 @@ newtype AnapoM dom state a = AnapoM
          forall rootState compProps compState.
          ActionEnv rootState compProps compState state
       -> AnapoEnv rootState state
-      -> ClearPlacedComponents
       -> dom
-      -> DOM.JSM (ClearPlacedComponents, dom, a)
+      -> DOM.JSM (dom, a)
+  }
+
+type ResetComponent = IO ()
+
+data DomState = DomState
+  { domStateLength :: Int
+  , domStateDom :: ~(DList (V.Node V.SomeVDomNode))
   }
 
 -- the Int is to store the current index in the dom, to be able o build
 -- tthe next path segment.
-type Dom state = AnapoM (Int, DList (V.Node V.SomeVDomNode)) state ()
+type Dom state = AnapoM DomState state ()
 type Node state = AnapoM () state (V.Node V.SomeVDomNode)
 
 instance MonadIO (AnapoM dom state) where
   {-# INLINE liftIO #-}
-  liftIO m = AnapoM $ \_actEnv _anEnv comps dom -> do
+  liftIO m = AnapoM $ \_actEnv _anEnv dom -> do
     x <- liftIO m
-    return (comps, dom, x)
+    return (dom, x)
 
 #if !defined(ghcjs_HOST_OS)
 instance JSaddle.MonadJSM (AnapoM dom state) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = AnapoM $ \_actEnv _anEnv comps dom -> do
+  liftJSM' m = AnapoM $ \_actEnv _anEnv dom -> do
     x <- m
-    return (comps, dom, x)
+    return (dom, x)
 #endif
 
 instance Functor (AnapoM dom state) where
   {-# INLINE fmap #-}
-  fmap f (AnapoM g) = AnapoM $ \acEnv aeEnv comps dom -> do
-    (comps', dom', x) <- g acEnv aeEnv comps dom
-    return (comps', dom', f x)
+  fmap f (AnapoM g) = AnapoM $ \acEnv aeEnv dom -> do
+    (dom', x) <- g acEnv aeEnv dom
+    return (dom', f x)
 
 instance Applicative (AnapoM dom state) where
   {-# INLINE pure #-}
@@ -256,43 +260,41 @@ instance Applicative (AnapoM dom state) where
 
 instance Monad (AnapoM dom state) where
   {-# INLINE return #-}
-  return x = AnapoM (\_acEnv _aeEnv comps dom -> return (comps, dom, x))
+  return x = AnapoM (\_acEnv _aeEnv dom -> return (dom, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = AnapoM $ \acEnv anEnv comps0 dom0 -> do
-    (comps1, dom1, x) <- unAnapoM ma acEnv anEnv comps0 dom0
-    (comps2, dom2, y) <- unAnapoM (mf x) acEnv anEnv comps1 dom1
-    return (comps2, dom2, y)
+  ma >>= mf = AnapoM $ \acEnv anEnv dom0 -> do
+    (dom1, x) <- unAnapoM ma acEnv anEnv dom0
+    (dom2, y) <- unAnapoM (mf x) acEnv anEnv dom1
+    return (dom2, y)
 
 instance MonadAction state (AnapoM dom state) where
   {-# INLINE liftAction #-}
-  liftAction (Action f) = AnapoM $ \acEnv _anEnv comps dom -> do
+  liftAction (Action f) = AnapoM $ \acEnv _anEnv dom -> do
     x <- f acEnv
-    return (comps, dom, x)
+    return (dom, x)
 
 instance MonadReader state (AnapoM dom state) where
   {-# INLINE ask #-}
-  ask = AnapoM (\_acEnv anEnv comps dom -> return (comps, dom, aeState anEnv))
+  ask = AnapoM (\_acEnv anEnv dom -> return (dom, aeState anEnv))
   {-# INLINE local #-}
-  local f m = AnapoM $ \acEnv anEnv comps dom -> do
-    unAnapoM m acEnv anEnv{ aeState = f (aeState anEnv) } comps dom
+  local f m = AnapoM $ \acEnv anEnv dom -> do
+    unAnapoM m acEnv anEnv{ aeState = f (aeState anEnv) } dom
 
 {-# INLINE askPreviousState #-}
 askPreviousState :: AnapoM dom state (Maybe state)
 askPreviousState =
-  AnapoM $ \acEnv anEnv comps dom ->
+  AnapoM $ \acEnv anEnv dom ->
     return
-      ( comps
-      , dom
+      ( dom
       , toMaybeOf (aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv) =<< aePrevState anEnv
       )
 
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> AnapoM dom in_ a -> AnapoM dom out a
-zoomL l m = AnapoM $ \acEnv anEnv comps dom ->
+zoomL l m = AnapoM $ \acEnv anEnv dom ->
   unAnapoM m
     acEnv{ aeTraverseToState = aeTraverseToState acEnv . l }
     anEnv{ aeState = view l (aeState anEnv) }
-    comps
     dom
 
 {-# INLINE zoomT #-}
@@ -303,11 +305,10 @@ zoomT ::
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> AnapoM dom in_ a
   -> AnapoM dom out a
-zoomT st l m = AnapoM $ \acEnv anEnv comps dom ->
+zoomT st l m = AnapoM $ \acEnv anEnv dom ->
   unAnapoM m
     acEnv{ aeTraverseToState = aeTraverseToState acEnv . l }
     anEnv{ aeState = st }
-    comps
     dom
 
 -- to manipulate nodes
@@ -338,9 +339,15 @@ unsafeWillRemove = NPUnsafeWillRemove
 
 {-# INLINE n #-}
 n :: Node state -> Dom state
-n getNode = AnapoM $ \acEnv anEnv comps (ix, dom) -> do
-  (comps', _, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSNormal ix : aeReversePath anEnv } comps ()
-  return (comps', (ix+1, dom <> DList.singleton nod), ())
+n getNode = AnapoM $ \acEnv anEnv dom -> do
+  (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv } ()
+  return
+    ( dom
+        { domStateLength = domStateLength dom + 1
+        , domStateDom = domStateDom dom <> DList.singleton nod
+        }
+    , ()
+    )
 
 -- TODO right now this it not implemented, but we will implement it in
 -- the future.
@@ -371,14 +378,13 @@ rawNode ::
   -> [NodePatch el state]
   -> Node state
 rawNode wrap x patches = do
-  node <- patchNode
+  node <- patchNode patches
     V.VDomNode
       { V.vdomMark = Nothing
       , V.vdomBody = V.VDBRawNode x
       , V.vdomCallbacks = mempty
       , V.vdomWrap = wrap
       }
-    patches
   return V.Node
     { V.nodeBody = V.SomeVDomNode node
     , V.nodeChildren = Nothing
@@ -412,13 +418,13 @@ rawNode wrap x patches = do
 marked ::
      (Maybe state -> state -> V.Rerender)
   -> StaticPtr (Node state) -> Node state
-marked shouldRerender ptr = AnapoM $ \acEnv anEnv comps dom -> do
+marked shouldRerender ptr = AnapoM $ \acEnv anEnv dom -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender
         (toMaybeOf (aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv) =<< aePrevState anEnv)
         (aeState anEnv)
-  (comps', _, V.Node (V.SomeVDomNode nod) children) <- unAnapoM (deRefStaticPtr ptr) acEnv anEnv comps dom
-  return (comps', (), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
+  (_, V.Node (V.SomeVDomNode nod) children) <- unAnapoM (deRefStaticPtr ptr) acEnv anEnv dom
+  return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
 
 -- Utilities to quickly create nodes
 -- --------------------------------------------------------------------
@@ -442,11 +448,11 @@ class IsElementChildren a state where
 instance IsElementChildren () state where
   {-# INLINE elementChildren #-}
   elementChildren _ = return (V.CNormal mempty)
-instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM (Int, DList (V.Node V.SomeVDomNode)) state1 a) state2 where
+instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM DomState state1 a) state2 where
   {-# INLINE elementChildren #-}
-  elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv comps _ -> do
-    (comps', (_, dom), _) <- f acEnv anEnv comps (0, mempty)
-    return (comps', (), V.CNormal (Vec.fromList (DList.toList dom)))
+  elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
+    (DomState _ dom, _) <- f acEnv anEnv (DomState 0 mempty)
+    return ((), V.CNormal (Vec.fromList (DList.toList dom)))
 instance (a ~ ()) => IsElementChildren UnsafeRawHtml state2 where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)
@@ -454,8 +460,8 @@ instance (a ~ ()) => IsElementChildren UnsafeRawHtml state2 where
 {-# INLINE patchNode #-}
 patchNode ::
      (HasCallStack, DOM.IsNode el)
-  => V.VDomNode el -> [NodePatch el state] -> AnapoM () state (V.VDomNode el)
-patchNode node00 patches00 = do
+  => [NodePatch el state] -> V.VDomNode el -> AnapoM () state (V.VDomNode el)
+patchNode patches00 node00 = do
   u <- liftAction askUnliftIO
   let
     modifyCallbacks body f =
@@ -533,7 +539,7 @@ el ::
   -> Node state
 el tag wrap patches isChildren = do
   children <- elementChildren isChildren
-  vdom <- patchNode
+  vdom <- patchNode patches
     V.VDomNode
       { V.vdomMark = Nothing
       , V.vdomBody = V.VDBElement V.Element
@@ -545,7 +551,6 @@ el tag wrap patches isChildren = do
       , V.vdomCallbacks = mempty
       , V.vdomWrap = wrap
       }
-    patches
   return V.Node
     { V.nodeBody = V.SomeVDomNode vdom
     , V.nodeChildren = Just children
@@ -893,12 +898,14 @@ onselect_ = NPEvent . SomeEventAction DOM.select
 -- --------------------------------------------------------------------
 
 simpleNode :: forall state. state ->  Node state -> DOM.JSM (V.Node V.SomeVDomNode)
-simpleNode st node = do
-  comp <- newComponent st (\() -> node)
-  (_, _, vdom) <- unAnapoM
+simpleNode st node0 = do
+  comp <- newComponent st (\() -> node0)
+  (_, vdom) <- unAnapoM
     (do
-      registerComponent comp ()
-      _componentNode comp ())
+      node <- _componentNode comp ()
+      forSomeNodeBody node $ \node' -> do
+        patches <- registerComponent (_componentPositions comp) ()
+        patchNode patches node')
     ActionEnv
       { aeRegisterThread = \_ -> fail "Trying to register a thread from the simpleRenderNode"
       , aeHandleException = \_ -> fail "Trying to handle an exception from the simpleRenderNode"
@@ -911,7 +918,7 @@ simpleNode st node = do
       , aePrevState = Nothing
       , aeState = st
       }
-    [] ()
+    ()
   return vdom
 
 -- when we want a quick render of a component, e.g. inside a raw node.
@@ -938,10 +945,20 @@ unliftJSM u m = liftIO (unliftIO u m)
 -- Components
 -- --------------------------------------------------------------------
 
+forSomeNodeBody ::
+     Monad m
+  => V.Node V.SomeVDomNode
+  -> (forall el. DOM.IsNode el => V.VDomNode el -> m (V.VDomNode el))
+  -> m (V.Node V.SomeVDomNode)
+forSomeNodeBody node f = case V.nodeBody node of
+  V.SomeVDomNode node' -> do
+    node'' <- f node'
+    return node{V.nodeBody = V.SomeVDomNode node''}
+
 data Component props state = Component
   { _componentState :: state
   , _componentNode :: props -> Node state
-  , _componentPlaced :: IORef (Maybe (props, VDomPath))
+  , _componentPositions :: IORef (HMS.HashMap VDomPath props)
   }
 
 {-# INLINE componentState #-}
@@ -955,21 +972,29 @@ componentNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 {-# INLINE newComponent #-}
 newComponent :: MonadIO m => state -> (props -> Node state) -> m (Component props state)
 newComponent st node = do
-  posRef <- liftIO (newIORef Nothing)
+  posRef <- liftIO (newIORef mempty)
   return (Component st node posRef)
 
 -- TODO: sadly the HasCallStack does nothing with fail -- i should add
 -- the location explicitly
-registerComponent :: HasCallStack => Component props state -> props -> AnapoM dom a ()
-registerComponent comp props = AnapoM $ \_acEnv anEnv comps dom -> do
-  -- check that the component hasn't been placed already...
-  ok <-
-    liftIO $ atomicModifyIORef' (_componentPlaced comp) $ \case
-      Nothing -> (Just (props, reverse (aeReversePath anEnv)), True)
-      x@Just{} -> (x, False)
-  unless ok $
-    fail "component: trying to place a component twice!"
-  return (writeIORef (_componentPlaced comp) Nothing : comps, dom, ())
+registerComponent :: HasCallStack => IORef (HMS.HashMap VDomPath props) -> props -> AnapoM dom a [NodePatch el state]
+registerComponent ref props = AnapoM $ \_acEnv anEnv dom -> do
+  let add txt = \_ -> do
+        unless (null (reverse (aeReversePath anEnv))) $
+          logInfo ("ADD " <> txt <> ": " <> T.pack (show (reverse (aeReversePath anEnv))))
+        liftIO (modifyIORef' ref (HMS.insert (reverse (aeReversePath anEnv)) props))
+  let remove txt = \_ -> do
+        unless (null (reverse (aeReversePath anEnv))) $
+          logInfo ("REMOVE " <> txt <> ": " <> T.pack (show (reverse (aeReversePath anEnv))))
+        liftIO (modifyIORef' ref (HMS.delete (reverse (aeReversePath anEnv))))
+  return
+    ( dom
+    , [ NPUnsafeWillMount (add "MOUNT")
+      , NPUnsafeWillPatch (remove "PATCH")
+      , NPUnsafeDidPatch (add "PATCH")
+      , NPUnsafeWillRemove (remove "REMOVE")
+      ]
+    )
 
 -- | This function will fail if you've already inserted the component in
 -- the VDOM.
@@ -977,8 +1002,7 @@ registerComponent comp props = AnapoM $ \_acEnv anEnv comps dom -> do
 component :: HasCallStack => props -> Node (Component props state)
 component props = do
   comp <- ask
-  registerComponent comp props
-  AnapoM $ \acEnv anEnv comps dom ->
+  node <- AnapoM $ \acEnv anEnv dom ->
     unAnapoM
       (_componentNode (aeState anEnv) props)
       acEnv
@@ -987,8 +1011,10 @@ component props = do
         }
       anEnv
         { aeState = _componentState (aeState anEnv) }
-      comps
       dom
+  forSomeNodeBody node $ \node' -> do
+    patches <- registerComponent (_componentPositions comp) props
+    patchNode patches node'
 
 {-# INLINE componentL #-}
 componentL :: Lens' out (Component props state) -> props -> Node out
