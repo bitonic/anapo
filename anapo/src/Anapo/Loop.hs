@@ -13,7 +13,7 @@ import Data.Monoid ((<>))
 import Control.Exception.Safe (throwIO, tryAsync, SomeException, bracket, finally)
 import Control.Exception (BlockedIndefinitelyOnMVar)
 import Control.Concurrent (MVar, newEmptyMVar, tryPutMVar, readMVar)
-import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef, writeIORef)
+import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef)
 import qualified Control.Concurrent.Async as Async
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
@@ -21,6 +21,7 @@ import Control.Concurrent (ThreadId, killThread, myThreadId)
 import qualified Data.Foldable as F
 import Control.Monad.State (runStateT)
 import Control.Lens (use, _1, _2, (.=))
+import Data.Foldable (sequenceA_)
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -40,8 +41,8 @@ timeIt m = do
   t1 <- liftIO getCurrentTime
   return (x, diffUTCTime t1 t0)
 
-data DispatchMsg stateRoot = forall state. DispatchMsg
-  { _dispatchMsgTraverse :: AffineTraversal' (Component stateRoot) (Component state)
+data DispatchMsg stateRoot = forall props state. DispatchMsg
+  { _dispatchMsgTraverse :: AffineTraversal' (Component () stateRoot) (Component props state)
   , _dispatchMsgModify :: state -> DOM.JSM state
   }
 
@@ -81,8 +82,8 @@ nodeLoop withState node excComp root = do
         (\_ -> m)
   let
     actionEnv ::
-         AffineTraversal' (Component state) (Component state')
-      -> ActionEnv (Component state) state' state'
+         AffineTraversal' (Component () state) (Component props state')
+      -> ActionEnv (Component () state) props state' state'
     actionEnv trav = ActionEnv
       { aeRegisterThread = register
       , aeHandleException = handler
@@ -93,21 +94,22 @@ nodeLoop withState node excComp root = do
   -- helper to run the component
   let
     runComp ::
-        Maybe (Component state)
+        Maybe (Component () state)
      -> VDomPath
-     -> AffineTraversal' (Component state) (Component state')
-     -> Component state'
-     -> DOM.JSM (PlacedComponents, V.Node V.SomeVDomNode)
-    runComp mbPrevComp path trav comp = do
+     -> AffineTraversal' (Component () state) (Component props state')
+     -> Component props state'
+     -> props
+     -> DOM.JSM (ClearPlacedComponents, V.Node V.SomeVDomNode)
+    runComp mbPrevComp path trav comp props = do
       ((comps, _, vdom), vdomDt) <- timeIt $ unAnapoM
         (do
-          registerComponent comp
-          componentNode comp)
+          registerComponent comp props
+          _componentNode comp props)
         (actionEnv trav)
         AnapoEnv
           { aeReversePath = reverse path
           , aePrevState = mbPrevComp
-          , aeState = componentState comp
+          , aeState = _componentState comp
           }
         [] ()
       DOM.syncPoint
@@ -119,9 +121,9 @@ nodeLoop withState node excComp root = do
       -- main loop
       let
         go ::
-             Component state
+             Component () state
           -- ^ the previous state
-          -> PlacedComponents
+          -> ClearPlacedComponents
           -- ^ the previous placed components
           -> V.Node RenderedVDomNode
           -- ^ the previous rendered node
@@ -156,39 +158,40 @@ nodeLoop withState node excComp root = do
                       -- remember that we have already visited
                       _1 .= True
                       -- perform the update
-                      st <- DOM.liftJSM (modif (componentState comp))
-                      let comp' = comp{ componentState = st }
+                      st <- DOM.liftJSM (modif (_componentState comp))
+                      let comp' = comp{ _componentState = st }
                       -- check if the component is present in the
                       -- vdom at all. if it's not, we won't need to
                       -- render.
-                      mbPos <- liftIO (readIORef (componentPosition comp))
-                      F.for_ mbPos $ \pos ->
+                      mbPos <- liftIO (readIORef (_componentPlaced comp))
+                      F.for_ mbPos $ \(props, pos) ->
                         -- signal which component we need to render,
                         -- and at which position. note that we
                         -- need to grab the position now before
                         -- rendering, since it might be reset while
                         -- rendering.
-                        _2 .= Just (comp', pos)
+                        _2 .= Just (comp', props, pos)
                       return comp')
                   compRoot)
                 (False, Nothing)
               logDebug ("State updated (" <> pack (show updateDt) <> "), might re render")
               -- reset all the components
-              liftIO (F.for_ compsPoss (\ref -> writeIORef ref Nothing))
+              liftIO (sequenceA_ compsPoss)
               case mbToRender of
                 Nothing -> do
                   logInfo "Did not get anything to render, either because the component was not found or because it was not placed."
                   go compRoot' [] rendered
-                Just (comp, pos) -> do
-                  (compsPoss', vdom) <- runComp (Just compRoot) pos trav comp
+                Just (comp, props, pos) -> do
+                  logInfo ("POSITION: " <> pack (show pos))
+                  (compsPoss', vdom) <- runComp (Just compRoot) pos trav comp props
                   rendered' <- reconciliateVirtualDom rendered pos vdom
                   go compRoot' compsPoss' rendered'
       tid <- liftIO myThreadId
       finally
         (do
           -- run for the first time
-          comp <- newComponent st0 node
-          (comps0, vdom) <- runComp Nothing [] id comp
+          comp <- newComponent st0 (\() -> node)
+          (comps0, vdom) <- runComp Nothing [] id comp ()
           rendered0 <- renderVirtualDom vdom $ \rendered -> do
             DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
             return rendered

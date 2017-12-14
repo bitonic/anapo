@@ -110,9 +110,12 @@ youTubeComponent = do
         else Rerender
       Nothing -> Rerender)
     (static youTubeNode)
-  n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
-    simpleTextInput "video id" ytsVideoId
-      (dispatch $ do
-        vid <- use ytsVideoId
-        put =<< liftJSM (youTubeInit vid))
-      "Choose video"
+  u <- liftAction askUnliftJSM
+  zoomL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
+    n$ simpleTextInput
+      STIP
+        { stipButtonText = "Choose video"
+        , stipOnSubmit = unliftJSM u $ dispatch $ do
+            vid <- use ytsVideoId
+            put =<< liftJSM (youTubeInit vid)
+        }

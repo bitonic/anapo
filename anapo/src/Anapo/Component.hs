@@ -121,10 +121,16 @@ module Anapo.Component
 
     -- * component
   , Component
+  , componentState
+  , componentNode
   , newComponent
   , component
   , componentT
   , componentL
+
+  , UnliftJSM
+  , askUnliftJSM
+  , unliftJSM
   ) where
 
 import qualified GHCJS.DOM.Event as DOM.Event

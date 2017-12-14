@@ -25,7 +25,7 @@ import Control.Concurrent (ThreadId, forkIO, myThreadId)
 import Control.Monad.Trans (lift)
 import Data.Maybe (fromMaybe)
 import Data.DList (DList)
-import Data.IORef (IORef, newIORef, atomicModifyIORef')
+import Data.IORef (IORef, newIORef, atomicModifyIORef', writeIORef)
 import Control.Monad.Reader (MonadReader(..))
 
 import qualified GHCJS.DOM.Types as DOM
@@ -77,7 +77,7 @@ toMaybeOf l x = case Lens.toListOf l x of
 
 newtype Dispatch stateRoot = Dispatch
   { unDispatch ::
-      forall state. AffineTraversal' stateRoot (Component state) -> (state -> DOM.JSM state) -> IO ()
+      forall state props. AffineTraversal' stateRoot (Component props state) -> (state -> DOM.JSM state) -> IO ()
   }
 
 -- Register / handle
@@ -97,17 +97,17 @@ type HandleException = SomeException -> IO ()
 -- fires or as a fork in an event
 newtype Action state a = Action
   { unAction ::
-         forall stateRoot stateComp.
-         ActionEnv stateRoot stateComp state
+         forall rootState compProps compState.
+         ActionEnv rootState compProps compState state
       -> DOM.JSM a
   }
 
-data ActionEnv stateRoot stateComp state = ActionEnv
+data ActionEnv rootState compProps compState state = ActionEnv
   { aeRegisterThread :: RegisterThread
   , aeHandleException :: HandleException
-  , aeDispatch :: Dispatch stateRoot
-  , aeTraverseToComp :: AffineTraversal' stateRoot (Component stateComp)
-  , aeTraverseToState :: AffineTraversal' stateComp state
+  , aeDispatch :: Dispatch rootState
+  , aeTraverseToComp :: AffineTraversal' rootState (Component compProps compState)
+  , aeTraverseToState :: AffineTraversal' compState state
   }
 
 {-
@@ -204,7 +204,7 @@ askHandleException = liftAction (Action (\env -> return (aeHandleException env))
 -- Monad
 -- --------------------------------------------------------------------
 
-type PlacedComponents = [IORef (Maybe VDomPath)]
+type ClearPlacedComponents = [IO ()]
 
 data AnapoEnv stateRoot state = AnapoEnv
   { aeReversePath :: [VDomPathSegment]
@@ -215,12 +215,12 @@ data AnapoEnv stateRoot state = AnapoEnv
 
 newtype AnapoM dom state a = AnapoM
   { unAnapoM ::
-         forall stateRoot stateComp.
-         ActionEnv stateRoot stateComp state
-      -> AnapoEnv stateRoot state
-      -> PlacedComponents
+         forall rootState compProps compState.
+         ActionEnv rootState compProps compState state
+      -> AnapoEnv rootState state
+      -> ClearPlacedComponents
       -> dom
-      -> DOM.JSM (PlacedComponents, dom, a)
+      -> DOM.JSM (ClearPlacedComponents, dom, a)
   }
 
 -- the Int is to store the current index in the dom, to be able o build
@@ -283,7 +283,7 @@ askPreviousState =
     return
       ( comps
       , dom
-      , toMaybeOf (aeTraverseToComp acEnv . _componentState . aeTraverseToState acEnv) =<< aePrevState anEnv
+      , toMaybeOf (aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv) =<< aePrevState anEnv
       )
 
 {-# INLINE zoomL #-}
@@ -415,7 +415,7 @@ marked ::
 marked shouldRerender ptr = AnapoM $ \acEnv anEnv comps dom -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender
-        (toMaybeOf (aeTraverseToComp acEnv . _componentState . aeTraverseToState acEnv) =<< aePrevState anEnv)
+        (toMaybeOf (aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv) =<< aePrevState anEnv)
         (aeState anEnv)
   (comps', _, V.Node (V.SomeVDomNode nod) children) <- unAnapoM (deRefStaticPtr ptr) acEnv anEnv comps dom
   return (comps', (), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
@@ -892,13 +892,13 @@ onselect_ = NPEvent . SomeEventAction DOM.select
 -- simple rendering
 -- --------------------------------------------------------------------
 
-simpleNode :: forall state. state -> Node state -> DOM.JSM (V.Node V.SomeVDomNode)
+simpleNode :: forall state. state ->  Node state -> DOM.JSM (V.Node V.SomeVDomNode)
 simpleNode st node = do
-  comp <- newComponent st node
+  comp <- newComponent st (\() -> node)
   (_, _, vdom) <- unAnapoM
     (do
-      registerComponent comp
-      componentNode comp)
+      registerComponent comp ()
+      _componentNode comp ())
     ActionEnv
       { aeRegisterThread = \_ -> fail "Trying to register a thread from the simpleRenderNode"
       , aeHandleException = \_ -> fail "Trying to handle an exception from the simpleRenderNode"
@@ -908,7 +908,7 @@ simpleNode st node = do
       }
     AnapoEnv
       { aeReversePath = []
-      , aePrevState = Nothing :: Maybe (Component state)
+      , aePrevState = Nothing
       , aeState = st
       }
     [] ()
@@ -922,69 +922,84 @@ simpleRenderNode st node = do
   vdom <- simpleNode st node
   renderVirtualDom vdom (return . renderedVDomNodeDom . V.nodeBody)
 
+-- utils
+-- --------------------------------------------------------------------
+
+type UnliftJSM = UnliftIO
+
+{-# INLINE askUnliftJSM #-}
+askUnliftJSM :: MonadUnliftIO m => m (UnliftJSM m)
+askUnliftJSM = askUnliftIO
+
+{-# INLINE unliftJSM #-}
+unliftJSM :: UnliftJSM m -> m a -> DOM.JSM a
+unliftJSM u m = liftIO (unliftIO u m)
+
 -- Components
 -- --------------------------------------------------------------------
 
-data Component state = Component
-  { componentState :: state
-  , componentNode :: Node state
-  , componentPosition :: IORef (Maybe VDomPath)
+data Component props state = Component
+  { _componentState :: state
+  , _componentNode :: props -> Node state
+  , _componentPlaced :: IORef (Maybe (props, VDomPath))
   }
 
-{-# INLINE _componentState #-}
-_componentState :: Lens' (Component state) state
-_componentState = lens componentState (\comp st -> comp{ componentState = st })
+{-# INLINE componentState #-}
+componentState :: Lens' (Component props state) state
+componentState = lens _componentState (\comp st -> comp{ _componentState = st })
 
-{-# INLINE _componentNode #-}
-_componentNode :: Lens' (Component state) (Node state)
-_componentNode = lens componentNode (\comp st -> comp{ componentNode = st })
+{-# INLINE componentNode #-}
+componentNode :: Lens' (Component props state) (props -> Node state)
+componentNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 
 {-# INLINE newComponent #-}
-newComponent :: MonadIO m => state -> Node state -> m (Component state)
+newComponent :: MonadIO m => state -> (props -> Node state) -> m (Component props state)
 newComponent st node = do
   posRef <- liftIO (newIORef Nothing)
   return (Component st node posRef)
 
 -- TODO: sadly the HasCallStack does nothing with fail -- i should add
 -- the location explicitly
-registerComponent :: HasCallStack => Component state -> AnapoM dom a ()
-registerComponent comp = AnapoM $ \_acEnv anEnv comps dom -> do
+registerComponent :: HasCallStack => Component props state -> props -> AnapoM dom a ()
+registerComponent comp props = AnapoM $ \_acEnv anEnv comps dom -> do
   -- check that the component hasn't been placed already...
   ok <-
-    liftIO $ atomicModifyIORef' (componentPosition comp) $ \case
-      Nothing -> (Just (reverse (aeReversePath anEnv)), True)
+    liftIO $ atomicModifyIORef' (_componentPlaced comp) $ \case
+      Nothing -> (Just (props, reverse (aeReversePath anEnv)), True)
       x@Just{} -> (x, False)
   unless ok $
     fail "component: trying to place a component twice!"
-  return (componentPosition comp : comps, dom, ())
+  return (writeIORef (_componentPlaced comp) Nothing : comps, dom, ())
 
 -- | This function will fail if you've already inserted the component in
 -- the VDOM.
 {-# INLINE component #-}
-component :: HasCallStack => Node (Component state)
-component = do
-  registerComponent =<< ask
+component :: HasCallStack => props -> Node (Component props state)
+component props = do
+  comp <- ask
+  registerComponent comp props
   AnapoM $ \acEnv anEnv comps dom ->
     unAnapoM
-      (componentNode (aeState anEnv))
+      (_componentNode (aeState anEnv) props)
       acEnv
-        { aeTraverseToComp = aeTraverseToComp acEnv . _componentState . aeTraverseToState acEnv
+        { aeTraverseToComp = aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv
         , aeTraverseToState = id
         }
       anEnv
-        { aeState = componentState (aeState anEnv) }
-      (componentPosition (aeState anEnv) : comps)
+        { aeState = _componentState (aeState anEnv) }
+      comps
       dom
 
 {-# INLINE componentL #-}
-componentL :: Lens' out (Component state) -> Node out
-componentL l = zoomL l component
+componentL :: Lens' out (Component props state) -> props -> Node out
+componentL l props = zoomL l (component props)
 
 {-# INLINE componentT #-}
 componentT ::
      HasCallStack
-  => Component state
-  -> AffineTraversal' out (Component state)
+  => Component props state
+  -> AffineTraversal' out (Component props state)
   -- ^ note: if the traversal is not affine you'll get crashes.
+  -> props
   -> Node out
-componentT st l = zoomT st l component
+componentT st l props = zoomT st l (component props)
