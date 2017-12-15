@@ -46,6 +46,7 @@ executable test-app
     Anapo.TestApps.Timer
     Anapo.TestApps.YouTube
     Anapo.TestApps.YouTubeBindings
+    Anapo.TestApps.Bump
     -- Anapo.TestApps.SlowRequest
   default-language: Haskell2010
   -- DO NOT put TemplateHaskell here, currently it triggers -dynamic-too

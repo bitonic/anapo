@@ -12,9 +12,10 @@ import Control.Concurrent as X (killThread)
 import Control.Lens as X (makePrisms, makeLenses, over, (^.), set, ix, (%=), use, (.=), at, Lens', view)
 import GHCJS.DOM.Types as X (JSM, liftJSM, MonadJSM)
 import Anapo.Text as X (Text)
-import Control.Monad.State as X (put, get)
+import Control.Monad.State as X (put, get, modify)
 import Control.Monad.Reader as X (ask)
 import Control.Monad.IO.Unlift as X (unliftIO, askUnliftIO)
+import Data.Monoid as X ((<>))
 
 import qualified Data.Aeson.TH as Aeson
 import Data.List (isPrefixOf)

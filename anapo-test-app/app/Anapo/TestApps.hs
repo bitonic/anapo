@@ -18,6 +18,7 @@ import Anapo.TestApps.Prelude
 import Anapo.TestApps.TodoList
 import Anapo.TestApps.Timer
 import Anapo.TestApps.YouTube
+import Anapo.TestApps.Bump
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.WindowEventHandlers as DOM (popState)
@@ -34,6 +35,7 @@ data WhichTestApp =
   | Todo
   | Timer
   | YouTube
+  | Bumps
   deriving (Eq, Show, Read, Enum, Bounded, Typeable)
 
 testAppToPath :: WhichTestApp -> Text
@@ -42,6 +44,7 @@ testAppToPath = \case
   Todo -> "/todo"
   Timer -> "/timer"
   YouTube -> "/youTube"
+  Bumps -> "/bumps"
 
 testAppFromPath :: Text -> Maybe WhichTestApp
 testAppFromPath = \case
@@ -49,6 +52,7 @@ testAppFromPath = \case
   "/todo" -> Just Todo
   "/timer" -> Just Timer
   "/youTube" -> Just YouTube
+  "/bumps" -> Just Bumps
   "/" -> Just Todo
   _ -> Nothing
 
@@ -62,6 +66,7 @@ data TestAppsState = TestAppsState
   , _tasTimer :: TimerState
   , _tasStopTimerOnAppChange :: Bool
   , _tasYouTube :: YouTubeState
+  , _tasBumps :: Component () BumpsState
   }
 makeLenses ''TestAppsState
 
@@ -121,6 +126,7 @@ testAppsComponent = do
         Todo -> n$ componentL tasTodo ()
         Timer -> zoomL tasTimer timerComponent
         YouTube -> zoomL tasYouTube youTubeComponent
+        Bumps -> n$ componentL tasBumps ()
 
 testAppsWith ::
      (TestAppsStateOrError -> Action TestAppsStateOrError a)
@@ -144,6 +150,7 @@ testAppsWith cont = do
         (\listener -> unliftIO u (liftJSM (DOM.removeListener window DOM.popState listener False)))
         (\_ -> unliftIO u $ do
             todo <- zoomAction (_TASOEOk.tasTodo.componentState) todoInit
+            bumps <- zoomAction (_TASOEOk.tasBumps.componentState) bumpsInit
             st <- TestAppsState
               <$> pure app
               <*> pure app
@@ -151,4 +158,5 @@ testAppsWith cont = do
               <*> timerInit
               <*> pure False
               <*> youTubeInit "3yQObSCXyoo"
+              <*> newComponent bumps (\() -> bumpsNode)
             cont (TASOEOk st))
