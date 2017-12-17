@@ -267,6 +267,12 @@ instance Monad (AnapoM dom state) where
     (dom2, y) <- unAnapoM (mf x) acEnv anEnv dom1
     return (dom2, y)
 
+instance (a ~ ()) => Monoid (AnapoM dom state a) where
+  {-# INLINE mempty #-}
+  mempty = return ()
+  {-# INLINE mappend #-}
+  mappend = (>>)
+
 instance MonadAction state (AnapoM dom state) where
   {-# INLINE liftAction #-}
   liftAction (Action f) = AnapoM $ \acEnv _anEnv dom -> do
