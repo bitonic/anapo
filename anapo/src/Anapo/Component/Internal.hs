@@ -935,12 +935,12 @@ simpleRenderNode st node = do
 type UnliftJSM = UnliftIO
 
 {-# INLINE askUnliftJSM #-}
-askUnliftJSM :: MonadUnliftIO m => m (UnliftJSM m)
+askUnliftJSM :: (MonadUnliftIO m) => m (UnliftJSM m)
 askUnliftJSM = askUnliftIO
 
 {-# INLINE unliftJSM #-}
-unliftJSM :: UnliftJSM m -> m a -> DOM.JSM a
-unliftJSM u m = liftIO (unliftIO u m)
+unliftJSM :: (DOM.MonadJSM n) => UnliftJSM m -> m a -> n a
+unliftJSM u m = DOM.liftJSM (liftIO (unliftIO u m))
 
 {-# INLINE actionUnliftJSM #-}
 actionUnliftJSM :: (MonadAction state m) => m (UnliftJSM (Action state))
