@@ -422,14 +422,16 @@ rawNode wrap x patches = do
 -- at call site (see for example Anapo.TestApps.YouTube)
 {-# INLINE marked #-}
 marked ::
-     (Maybe state -> state -> V.Rerender)
-  -> StaticPtr (Node state) -> Node state
-marked shouldRerender ptr = AnapoM $ \acEnv anEnv dom -> do
+     (Maybe state -> props -> state -> V.Rerender)
+  -> StaticPtr (props -> Node state) -> props -> Node state
+marked shouldRerender ptr props = AnapoM $ \acEnv anEnv dom -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender
         (toMaybeOf (aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv) =<< aePrevState anEnv)
+        props
         (aeState anEnv)
-  (_, V.Node (V.SomeVDomNode nod) children) <- unAnapoM (deRefStaticPtr ptr) acEnv anEnv dom
+  (_, V.Node (V.SomeVDomNode nod) children) <-
+    unAnapoM (deRefStaticPtr ptr props) acEnv anEnv dom
   return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
 
 -- Utilities to quickly create nodes

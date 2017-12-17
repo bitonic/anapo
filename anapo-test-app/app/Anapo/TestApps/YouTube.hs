@@ -104,12 +104,13 @@ youTubeComponent :: Dom YouTubeState
 youTubeComponent = do
   -- TODO this causes a linking error with GHC! see TODO on 'marked'
   n$ marked
-    (\mbPrevSt st -> case mbPrevSt of
+    (\mbPrevSt _ st -> case mbPrevSt of
       Just prevSt -> if prevSt^.ytsToken == st^.ytsToken
         then UnsafeDontRerender
         else Rerender
       Nothing -> Rerender)
-    (static youTubeNode)
+    (static (\_ -> youTubeNode))
+    ()
   u <- liftAction askUnliftJSM
   zoomL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
     n$ simpleTextInput
