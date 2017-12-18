@@ -144,13 +144,13 @@ testAppsWith cont = do
             ev <- ask
             st <- DOM.PopStateEvent.getState ev
             mbApp <- liftJSM (fmap (read . T.unpack) <$> fromJSVal st)
-            liftIO (unliftIO u (zoomAction _TASOEOk (changeToApp False mbApp)))
+            liftIO (unliftIO u (actionZoom _TASOEOk (changeToApp False mbApp)))
           liftJSM (DOM.addListener window DOM.popState listener False)
           return listener)
         (\listener -> unliftIO u (liftJSM (DOM.removeListener window DOM.popState listener False)))
         (\_ -> unliftIO u $ do
-            todo <- zoomAction (_TASOEOk.tasTodo.componentState) todoInit
-            bumps <- zoomAction (_TASOEOk.tasBumps.componentState) bumpsInit
+            todo <- actionZoom (_TASOEOk.tasTodo.componentState) todoInit
+            bumps <- actionZoom (_TASOEOk.tasBumps.componentState) bumpsInit
             st <- TestAppsState
               <$> pure app
               <*> pure app

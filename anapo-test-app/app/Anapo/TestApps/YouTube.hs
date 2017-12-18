@@ -58,7 +58,7 @@ youTubeNode = do
   st <- ask
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
   let
-    didMount el = void $ forkAction $ liftJSM $ do
+    didMount el = void $ actionFork $ liftJSM $ do
       logInfo "Creating new YouTube object"
       -- We create the you tube element in the div _inside_ the
       -- top-level element otherwise anapo will choke on the fact that

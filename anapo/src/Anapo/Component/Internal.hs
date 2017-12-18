@@ -163,10 +163,19 @@ instance MonadAction state (StateT s (Action state)) where
   {-# INLINE liftAction #-}
   liftAction = lift
 
-{-# INLINE zoomAction #-}
-zoomAction :: MonadAction out m => AffineTraversal' out in_ -> Action in_ a -> m a
-zoomAction t m =
+{-# INLINE actionZoom #-}
+actionZoom :: MonadAction out m => AffineTraversal' out in_ -> Action in_ a -> m a
+actionZoom t m =
   liftAction (Action (\env -> unAction m env{aeTraverseToState = aeTraverseToState env . t}))
+
+{-# INLINE actionComponent #-}
+actionComponent ::
+  MonadAction (Component props state) m => Action state a -> m a
+actionComponent (Action m) = liftAction $ Action $ \env ->
+  m env
+    { aeTraverseToComp = aeTraverseToComp env . componentState . aeTraverseToState env
+    , aeTraverseToState = id
+    }
 
 {-# INLINE forkRegistered #-}
 forkRegistered :: MonadUnliftIO m => RegisterThread -> HandleException -> m () -> m ThreadId
@@ -181,9 +190,9 @@ forkRegistered register handler m = do
         handler err
       Right _ -> return ()
 
-{-# INLINE forkAction #-}
-forkAction :: MonadAction state m => Action state () -> m ThreadId
-forkAction m =
+{-# INLINE actionFork #-}
+actionFork :: MonadAction state m => Action state () -> m ThreadId
+actionFork m =
   liftAction (Action (\env -> forkRegistered (aeRegisterThread env) (aeHandleException env) (unAction m env)))
 
 {-# INLINE dispatch #-}

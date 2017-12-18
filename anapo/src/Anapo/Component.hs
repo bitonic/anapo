@@ -22,8 +22,9 @@ module Anapo.Component
   , Action(..)
   , ActionEnv(..)
   , dispatch
-  , forkAction
-  , zoomAction
+  , actionFork
+  , actionZoom
+  , actionComponent
   , MonadAction(..)
 
     -- * AnapoM
