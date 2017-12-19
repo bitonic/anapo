@@ -43,8 +43,11 @@ forkCollected m = liftAction $ do
   ctid <- liftIO $ uninterruptibleMask $ \restore -> do
     tid <- unliftIO u (actionFork (liftIO (restore (unliftIO u m))))
     void $ liftIO $ mkWeakIORef ref $ do
+      return ()
+      {-
       logDebug ("Killing linked thread " <> pack (show tid))
       killThread tid
+      -}
     return (CollectedThreadId tid ref)
   logDebug ("Spawned linked thread " <> pack (show (collectedThreadId ctid)))
   return ctid
