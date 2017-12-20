@@ -13,7 +13,7 @@ module Anapo.CollectedThread
 import Prelude
 import Control.Exception.Safe (uninterruptibleMask)
 import Control.Concurrent (ThreadId, killThread)
-import Data.IORef (mkWeakIORef, IORef, newIORef)
+import Data.IORef (mkWeakIORef, IORef, newIORef, readIORef)
 import Control.Monad (void)
 import Control.Monad.IO.Unlift (askUnliftIO, unliftIO)
 import Data.Monoid ((<>))
@@ -23,10 +23,7 @@ import Anapo.Text (pack)
 import Anapo.Logging
 import Anapo
 
-data CollectedThreadId = CollectedThreadId
-  { collectedThreadId :: ThreadId
-  , _ctidRef :: IORef ()
-  }
+newtype CollectedThreadId = CollectedThreadId { _unCollectedThreadId :: IORef (ThreadId) }
 
 {-# INLINE forkCollected #-}
 forkCollected :: MonadAction write m => Action write () -> m CollectedThreadId
@@ -38,17 +35,22 @@ forkCollected m = liftAction $ do
   -- but with finalizer.
   -- see also
   -- <https://gist.github.com/nh2/2b27a2bb17a7e1926ecb#file-remotevalues-hs-L309>
-  ref <- liftIO (newIORef ())
   u <- askUnliftIO
   ctid <- liftIO $ uninterruptibleMask $ \restore -> do
     tid <- unliftIO u (actionFork (liftIO (restore (unliftIO u m))))
+    ref <- liftIO (newIORef tid)
     void $ liftIO $ mkWeakIORef ref $ do
       logDebug ("Killing linked thread " <> pack (show tid))
       killThread tid
-    return (CollectedThreadId tid ref)
-  logDebug ("Spawned linked thread " <> pack (show (collectedThreadId ctid)))
+    return (CollectedThreadId ref)
+  tid <- collectedThreadId ctid
+  logDebug ("Spawned linked thread " <> pack (show tid))
   return ctid
 
 {-# INLINE killCollected #-}
 killCollected :: (MonadIO m) => CollectedThreadId -> m ()
-killCollected ctid = liftIO (killThread (collectedThreadId ctid))
+killCollected ctid = liftIO (killThread =<< collectedThreadId ctid)
+
+{-# INLINE collectedThreadId #-}
+collectedThreadId :: MonadIO m => CollectedThreadId -> m ThreadId
+collectedThreadId (CollectedThreadId ref) = liftIO (readIORef ref)
