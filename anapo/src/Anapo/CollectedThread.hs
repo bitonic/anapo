@@ -18,12 +18,24 @@ import Control.Monad (void)
 import Control.Monad.IO.Unlift (askUnliftIO, unliftIO)
 import Data.Monoid ((<>))
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Anapo.Text (pack)
 import Anapo.Logging
 import Anapo
 
 newtype CollectedThreadId = CollectedThreadId { _unCollectedThreadId :: IORef (ThreadId) }
+
+instance Show CollectedThreadId where
+  showsPrec d (CollectedThreadId ref) = unsafePerformIO $ do
+    tid <- readIORef ref
+    return (showString "CollectedThreadId " . showsPrec d tid)
+
+instance Eq CollectedThreadId where
+  CollectedThreadId ref1 == CollectedThreadId ref2 = unsafePerformIO $ do
+    tid1 <- readIORef ref1
+    tid2 <- readIORef ref2
+    return (tid1 == tid2)
 
 {-# INLINE forkCollected #-}
 forkCollected :: MonadAction write m => Action write () -> m CollectedThreadId
