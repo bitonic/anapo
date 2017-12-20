@@ -20,6 +20,7 @@ import qualified Data.HashSet as HS
 import Control.Concurrent (ThreadId, killThread, myThreadId)
 import Control.Monad.State (runStateT, put, get)
 import qualified Data.HashMap.Strict as HMS
+import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -29,7 +30,7 @@ import qualified GHCJS.DOM.Document as DOM.Document
 import qualified Anapo.VDOM as V
 import Anapo.Component.Internal
 import Anapo.Render
-import Anapo.Text (pack)
+import Anapo.Text (Text, pack)
 import Anapo.Logging
 
 timeIt :: DOM.JSM a -> DOM.JSM (a, NominalDiffTime)
@@ -42,6 +43,7 @@ timeIt m = do
 data DispatchMsg stateRoot = forall props state. DispatchMsg
   { _dispatchMsgTraverse :: AffineTraversal' (Component () stateRoot) (Component props state)
   , _dispatchMsgModify :: state -> DOM.JSM state
+  , _dispatchCallStack :: CallStack
   }
 
 nodeLoop :: forall state.
@@ -85,7 +87,7 @@ nodeLoop withState node excComp root = do
     actionEnv trav = ActionEnv
       { aeRegisterThread = register
       , aeHandleException = handler
-      , aeDispatch = Dispatch (\trav' modify -> writeChan dispatchChan (DispatchMsg trav' modify))
+      , aeDispatch = Dispatch (\stack trav' modify -> writeChan dispatchChan (DispatchMsg trav' modify stack))
       , aeTraverseToComp = trav
       , aeTraverseToState = id
       }
@@ -142,7 +144,8 @@ nodeLoop withState node excComp root = do
             Right Nothing -> do
               logInfo "No state update received, terminating component loop"
               return rendered
-            Right (Just (DispatchMsg trav modif)) -> do
+            Right (Just (DispatchMsg trav modif stack)) -> do
+              logDebug (addCallStack stack "About to update state")
               -- traverse to the component using StateT, failing
               -- if we reach anything twice (it'd mean it's not an
               -- AffineTraversal)
@@ -199,3 +202,8 @@ installNodeBody getSt vdom0 excVdom = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.Document.getBodyUnchecked doc
   void (nodeLoop getSt vdom0 excVdom (DOM.toNode body))
+
+addCallStack :: CallStack -> Text -> Text
+addCallStack stack = case getCallStack stack of
+  [] -> id
+  (_, SrcLoc{..}) : _ -> \txt -> "[" <> pack srcLocModule <> ":" <> pack (show srcLocStartLine) <> ":" <> pack (show srcLocStartCol) <> "] " <> txt

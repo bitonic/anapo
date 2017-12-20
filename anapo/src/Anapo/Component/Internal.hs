@@ -16,7 +16,7 @@ import Data.Monoid ((<>), Endo)
 import qualified Data.DList as DList
 import Data.String (IsString(..))
 import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
-import GHC.Stack (HasCallStack)
+import GHC.Stack (HasCallStack, CallStack, callStack)
 import Control.Monad.State (execStateT, StateT)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO, UnliftIO(..))
@@ -77,7 +77,7 @@ toMaybeOf l x = case Lens.toListOf l x of
 
 newtype Dispatch stateRoot = Dispatch
   { unDispatch ::
-      forall state props. AffineTraversal' stateRoot (Component props state) -> (state -> DOM.JSM state) -> IO ()
+      forall state props. CallStack -> AffineTraversal' stateRoot (Component props state) -> (state -> DOM.JSM state) -> IO ()
   }
 
 -- Register / handle
@@ -196,10 +196,10 @@ actionFork m =
   liftAction (Action (\env -> forkRegistered (aeRegisterThread env) (aeHandleException env) (unAction m env)))
 
 {-# INLINE dispatch #-}
-dispatch :: MonadAction state m => StateT state (Action state) () -> m ()
+dispatch :: (HasCallStack, MonadAction state m) => StateT state (Action state) () -> m ()
 dispatch m =
   liftAction $ Action $ \env ->
-    liftIO $ unDispatch (aeDispatch env) (aeTraverseToComp env) $ aeTraverseToState env $ \st ->
+    liftIO $ unDispatch (aeDispatch env) callStack (aeTraverseToComp env) $ aeTraverseToState env $ \st ->
       unAction (execStateT m st) env
 
 {-# INLINE askRegisterThread #-}
