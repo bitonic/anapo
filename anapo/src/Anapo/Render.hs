@@ -20,7 +20,7 @@ import Control.Monad.Reader (ask)
 import Control.Monad.Trans (lift)
 import Data.Monoid ((<>))
 import Data.Traversable (for)
-import qualified Data.Vector as V
+import qualified Data.Vector as Vec
 import Data.Vector (Vector)
 import Data.Hashable (Hashable(..))
 
@@ -34,6 +34,7 @@ import qualified GHCJS.DOM.ElementCSSInlineStyle as DOM.ElementCSSInlineStyle
 import qualified GHCJS.DOM.EventM as DOM.EventM
 
 import qualified Anapo.VDOM as V
+import qualified Anapo.OrderedHashMap as OHM
 import Anapo.Text (Text, pack)
 import Anapo.Logging
 
@@ -68,12 +69,14 @@ emptyOverlay vdom dom = V.Node
 
 type VDomPath = [VDomPathSegment]
 
-newtype VDomPathSegment =
+data VDomPathSegment =
     VDPSNormal Int
+  | VDPSKeyed Text
   deriving (Eq, Show)
 instance Hashable VDomPathSegment where
   {-# INLINE hashWithSalt #-}
-  hashWithSalt salt (VDPSNormal i) = hashWithSalt salt i
+  hashWithSalt salt (VDPSNormal i) = salt `hashWithSalt` (0::Int) `hashWithSalt` i
+  hashWithSalt salt (VDPSKeyed i) = salt `hashWithSalt` (1::Int) `hashWithSalt` i
 
 {-# INLINE addEvents #-}
 addEvents ::
@@ -135,6 +138,7 @@ renderDom ::
   -> t (V.Node V.SomeVDomNode)
   -> DOM.JSM (t (V.Node RenderedVDomNode))
 renderDom doc container vdoms =
+  -- KEEP IN SYNC WITH patchKeyedDom
   for vdoms $ \vdom -> do
     renderNode doc vdom $ \rendered -> do
       DOM.Node.appendChild_ container (rvdnDom (V.nodeBody rendered))
@@ -153,6 +157,8 @@ renderChildren doc container = \case
     return (V.CRawHtml html)
   V.CNormal vdoms ->
     V.CNormal <$> renderDom doc container vdoms
+  V.CKeyed vdoms ->
+    V.CKeyed <$> renderDom doc container vdoms
 
 {-# INLINE renderNode #-}
 renderNode ::
@@ -213,6 +219,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
     removeChildren container = \case
       V.CRawHtml{} -> return ()
       V.CNormal vdoms -> removeDom container vdoms
+      V.CKeyed vdoms -> removeDom container vdoms
 
     {-# INLINE removeDom #-}
     removeDom ::
@@ -260,7 +267,62 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
             rendered <- patchNode prevVDom vdom
             rendereds <- go prevVDoms' vdoms'
             return (rendered : rendereds)
-      V.fromList <$> go (V.toList prevVDoms0) (V.toList vdoms0)
+      Vec.fromList <$> go (Vec.toList prevVDoms0) (Vec.toList vdoms0)
+
+    {-# INLINE patchKeyedDom #-}
+    patchKeyedDom ::
+         DOM.Node -- ^ the container
+      -> OHM.OrderedHashMap Text (V.Node RenderedVDomNode) -- ^ the previous vdom
+      -> OHM.OrderedHashMap Text (V.Node V.SomeVDomNode) -- ^ the current vdom
+      -> DOM.JSM (OHM.OrderedHashMap Text (V.Node RenderedVDomNode))
+    patchKeyedDom container prevVDoms0 vdoms0 = do
+      let
+        go ::
+             [Text] -- the previous keys left to visit
+          -> HMS.HashMap Text (V.Node RenderedVDomNode) -- the previous nodes _still in their original positions_
+          -> [Text] -- the new keys left to visit
+          -> Maybe DOM.Node
+          -> DOM.JSM [(Text, V.Node RenderedVDomNode)]
+        go prevKs0 prevNodesUntouched ks mbCursor = do
+          let prevKs = dropWhile (\k -> not (HMS.member k prevNodesUntouched)) prevKs0
+          case ks of
+            [] -> do
+              -- we want to remove them in the right order.
+              let prevKsUntouched = filter (`HMS.member` prevNodesUntouched) prevKs
+              removeDom container (OHM.unsafeNew prevNodesUntouched (Vec.fromList prevKsUntouched))
+              return []
+            k : ks' -> case prevKs of
+              [] ->
+                for (k : ks') $ \ix ->
+                  renderNode doc (vdoms0 OHM.! ix) $ \rendered -> do
+                    DOM.Node.appendChild_ container (rvdnDom (V.nodeBody rendered))
+                    return (ix, rendered)
+              -- this one below is a special but common case (the dom
+              -- didn't change at all). it should be removable without
+              -- loss of correctness.
+              prevK : prevKs' | prevK == k -> do
+                rendered <- patchNode (prevNodesUntouched HMS.! k) (vdoms0 OHM.! k)
+                rendereds <- go prevKs' (HMS.delete k prevNodesUntouched) ks' (Just (rvdnDom (V.nodeBody rendered)))
+                return ((k, rendered) : rendereds)
+              _:_ ->
+                case HMS.lookup k prevNodesUntouched of
+                  Nothing -> do
+                    rendered <- renderNode doc (vdoms0 OHM.! k) $ \rendered -> do
+                      appendAfter_ mbCursor (rvdnDom (V.nodeBody rendered))
+                      return rendered
+                    go prevKs prevNodesUntouched ks' (Just (rvdnDom (V.nodeBody rendered)))
+                  Just prevNode -> do
+                    -- move the node right after the cursor
+                    -- (appendAfter_ will remove it from the previous
+                    -- position automatically)
+                    appendAfter_ mbCursor (rvdnDom (V.nodeBody prevNode))
+                    rendered <- patchNode prevNode (vdoms0 OHM.! k)
+                    rendereds <- go prevKs (HMS.delete k prevNodesUntouched) ks' (Just (rvdnDom (V.nodeBody rendered)))
+                    return ((k, rendered) : rendereds)
+      hm <-
+        fmap HMS.fromList $
+          go (Vec.toList (OHM.getOrder prevVDoms0)) (OHM.getMap prevVDoms0) (Vec.toList (OHM.getOrder vdoms0)) Nothing
+      return (OHM.unsafeNew hm (OHM.getOrder vdoms0))
 
     {-# INLINE patchChildren #-}
     patchChildren ::
@@ -275,6 +337,8 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
         (V.CRawHtml prevHtml, V.CRawHtml html) | prevHtml == html -> return (V.CRawHtml prevHtml)
         (V.CNormal prevNChildren, V.CNormal nchildren) ->
           V.CNormal <$> patchDom (DOM.toNode container) prevNChildren nchildren
+        (V.CKeyed prevNChildren, V.CKeyed nchildren) ->
+          V.CKeyed <$> patchKeyedDom (DOM.toNode container) prevNChildren nchildren
         (prevChildren, children) -> do
           removeChildren (DOM.toNode container) prevChildren
           renderChildren doc container children
@@ -373,18 +437,33 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
       -> DOM.JSM (V.Node RenderedVDomNode)
     followPath node f = \case
       [] -> f node
-      VDPSNormal ix : path -> case V.nodeChildren node of
+      ix : path -> case V.nodeChildren node of
         Nothing -> fail ("renderVirtualDom: no children when following non-empty path: " <> show path)
         Just ch -> case ch of
           V.CRawHtml{} -> fail "renderVirtualDom: CRawHtml when following non-empty path"
-          V.CNormal children -> case children V.!? ix of
-            Nothing -> fail ("renderVirtualDom: did not find index " <> show ix <> " when following path")
-            Just n -> do
-              n' <- followPath n f path
-              return node{ V.nodeChildren = Just (V.CNormal (children V.// [(ix, n')])) }
+          V.CNormal children -> case ix of
+            VDPSKeyed{} -> fail "renderVirtualDom: got keyed path segment for normal dom"
+            VDPSNormal ix' -> case children Vec.!? ix' of
+              Nothing -> fail ("renderVirtualDom: did not find index " <> show ix <> " when following path")
+              Just n -> do
+                n' <- followPath n f path
+                return node{ V.nodeChildren = Just (V.CNormal (children Vec.// [(ix', n')])) }
+          V.CKeyed children -> case ix of
+            VDPSNormal{} -> fail "renderVirtualDom: got normal path segment for keyed dom"
+            VDPSKeyed ix' -> do
+              n' <- followPath (children OHM.! ix') f path
+              return node{ V.nodeChildren = Just (V.CKeyed (OHM.replace ix' n' children)) }
 
   t0 <- liftIO getCurrentTime
   x <- followPath prevVdom000 (\pathVdom -> patchNode pathVdom vdom000) path000
   t1 <- liftIO getCurrentTime
   logDebug ("Vdom reconciled (" <> pack (show (diffUTCTime t1 t0)) <> ")")
   return x
+
+-- if the node is null, the node will be inserted at the beginning.
+appendAfter_ :: Maybe DOM.Node -> DOM.Node -> DOM.JSM ()
+appendAfter_ mbNode1 node2 = do
+  parent <- DOM.Node.getParentNodeUnsafe node2
+  DOM.Node.insertBefore_ parent node2 =<< (case mbNode1 of
+    Nothing -> DOM.Node.getFirstChild parent
+    Just node1 -> return (Just node1))

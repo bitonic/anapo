@@ -47,6 +47,7 @@ import Anapo.Render
 import Anapo.Logging
 import Anapo.Text (Text, pack)
 import qualified Anapo.Text as T
+import qualified Anapo.OrderedHashMap as OHM
 
 #if defined(ghcjs_HOST_OS)
 import GHCJS.Types (JSVal)
@@ -236,9 +237,12 @@ data DomState = DomState
   , domStateDom :: ~(DList (V.Node V.SomeVDomNode))
   }
 
+newtype KeyedDomState = KeyedDomState (DList (Text, V.Node V.SomeVDomNode))
+
 -- the Int is to store the current index in the dom, to be able o build
 -- tthe next path segment.
 type Dom state = AnapoM DomState state ()
+type KeyedDom state = AnapoM KeyedDomState state ()
 type Node state = AnapoM () state (V.Node V.SomeVDomNode)
 
 instance MonadIO (AnapoM dom state) where
@@ -367,8 +371,10 @@ n getNode = AnapoM $ \acEnv anEnv dom -> do
 -- TODO right now this it not implemented, but we will implement it in
 -- the future.
 {-# INLINE key #-}
-key :: Text -> Node state -> Dom state
-key _k = n
+key :: Text -> Node state -> KeyedDom state
+key k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
+  (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE text #-}
 text :: Text -> Node state
@@ -461,7 +467,7 @@ data NodePatch el state =
   | NPEvent (SomeEventAction el state)
 
 class IsElementChildren a state where
-  elementChildren :: a -> AnapoM () state (V.Children V.SomeVDomNode)
+  elementChildren :: HasCallStack => a -> AnapoM () state (V.Children V.SomeVDomNode)
 instance IsElementChildren () state where
   {-# INLINE elementChildren #-}
   elementChildren _ = return (V.CNormal mempty)
@@ -470,6 +476,11 @@ instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM DomState state1 
   elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
     (DomState _ dom, _) <- f acEnv anEnv (DomState 0 mempty)
     return ((), V.CNormal (Vec.fromList (DList.toList dom)))
+instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM KeyedDomState state1 a) state2 where
+  {-# INLINE elementChildren #-}
+  elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
+    (KeyedDomState dom, _) <- f acEnv anEnv (KeyedDomState mempty)
+    return ((), V.CKeyed (OHM.fromList (DList.toList dom)))
 instance (a ~ ()) => IsElementChildren UnsafeRawHtml state2 where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)

@@ -12,6 +12,7 @@ import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM
 
 import Anapo.Text
+import Anapo.OrderedHashMap
 
 -- Core types
 -- --------------------------------------------------------------------
@@ -29,6 +30,7 @@ data Node body = Node
 data Children body =
     CRawHtml Text
   | CNormal (Vector (Node body))
+  | CKeyed (OrderedHashMap Text (Node body))
   deriving (Functor, Foldable, Traversable)
 
 -- Core types
@@ -51,21 +53,6 @@ data Mark = Mark
   { markFingerprint :: Fingerprint
   , markRerender :: Rerender
   }
-
-{-
-we should probably do something like this:
-
--- | When patching an element, unsafeWillPatch will be called on the
--- _previous_ element, then unsafeDidPatch will be called on the next
--- element.
-data Callbacks = Callbacks
-  { callbacksUnsafeWillMount :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeDidMount :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeWillPatch :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeDidPatch :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeWillRemove :: DOM.Node -> DOM.JSM ()
-  }
--}
 
 data Callbacks = Callbacks
   { callbacksUnsafeWillMount :: DOM.Node -> DOM.JSM ()

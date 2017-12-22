@@ -26,6 +26,7 @@ library
     Anapo.CollectedThread
   other-modules:
     Anapo.Component.Internal
+    Anapo.OrderedHashMap
   build-depends:
     base >= 4.7 && < 5,
     async,
