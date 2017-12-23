@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- | Note: we use 'Traversal' to keep a cursor to the
 -- write end of the state, but really we should use an
 -- "affine traversal" which guarantees we have either 0
@@ -160,9 +161,9 @@ instance MonadAction state (Action state) where
   {-# INLINE liftAction #-}
   liftAction = id
 
-instance MonadAction state (StateT s (Action state)) where
+instance (MonadAction state m) => MonadAction state (StateT s m) where
   {-# INLINE liftAction #-}
-  liftAction = lift
+  liftAction m = lift (liftAction m)
 
 {-# INLINE actionZoom #-}
 actionZoom :: MonadAction out m => AffineTraversal' out in_ -> Action in_ a -> m a
