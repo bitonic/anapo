@@ -23,6 +23,7 @@ import Data.Traversable (for)
 import qualified Data.Vector as Vec
 import Data.Vector (Vector)
 import Data.Hashable (Hashable(..))
+import GHC.Stack (HasCallStack)
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Document as DOM.Document
@@ -292,7 +293,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
               removeDom container (OHM.unsafeNew prevNodesUntouched (Vec.fromList prevKsUntouched))
               return []
             k : ks' -> case prevKs of
-              [] ->
+              [] -> do
                 for (k : ks') $ \ix ->
                   renderNode doc (vdoms0 OHM.! ix) $ \rendered -> do
                     DOM.Node.appendChild_ container (rvdnDom (V.nodeBody rendered))
@@ -308,14 +309,15 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
                 case HMS.lookup k prevNodesUntouched of
                   Nothing -> do
                     rendered <- renderNode doc (vdoms0 OHM.! k) $ \rendered -> do
-                      appendAfter_ mbCursor (rvdnDom (V.nodeBody rendered))
+                      appendAfter_ container mbCursor (rvdnDom (V.nodeBody rendered))
                       return rendered
-                    go prevKs prevNodesUntouched ks' (Just (rvdnDom (V.nodeBody rendered)))
+                    rendereds <- go prevKs prevNodesUntouched ks' (Just (rvdnDom (V.nodeBody rendered)))
+                    return ((k, rendered) : rendereds)
                   Just prevNode -> do
                     -- move the node right after the cursor
                     -- (appendAfter_ will remove it from the previous
                     -- position automatically)
-                    appendAfter_ mbCursor (rvdnDom (V.nodeBody prevNode))
+                    appendAfter_ container mbCursor (rvdnDom (V.nodeBody prevNode))
                     rendered <- patchNode prevNode (vdoms0 OHM.! k)
                     rendereds <- go prevKs (HMS.delete k prevNodesUntouched) ks' (Just (rvdnDom (V.nodeBody rendered)))
                     return ((k, rendered) : rendereds)
@@ -460,10 +462,15 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
   logDebug ("Vdom reconciled (" <> pack (show (diffUTCTime t1 t0)) <> ")")
   return x
 
--- if the node is null, the node will be inserted at the beginning.
-appendAfter_ :: Maybe DOM.Node -> DOM.Node -> DOM.JSM ()
-appendAfter_ mbNode1 node2 = do
-  parent <- DOM.Node.getParentNodeUnsafe node2
-  DOM.Node.insertBefore_ parent node2 =<< (case mbNode1 of
-    Nothing -> DOM.Node.getFirstChild parent
-    Just node1 -> return (Just node1))
+-- if the cursor is null, the node will be inserted at the beginning.
+appendAfter_ :: HasCallStack => DOM.Node -> Maybe DOM.Node -> DOM.Node -> DOM.JSM ()
+appendAfter_ container mbCursor node = case mbCursor of
+  Nothing -> do
+    -- if the cursor is null, put before the first element. note that if
+    -- there is no first element it'll just append the node, which is
+    -- fine since it's the only node.
+    DOM.Node.insertBefore_ container node =<< DOM.Node.getFirstChild container
+  Just cursor -> do
+    -- if the cursor has no next sibling it'll append it at the end,
+    -- which is what we want.
+    DOM.Node.insertBefore_ container node =<< DOM.Node.getNextSibling cursor

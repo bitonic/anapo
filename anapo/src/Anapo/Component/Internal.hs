@@ -481,7 +481,7 @@ instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM KeyedDomState st
   elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
     (KeyedDomState dom, _) <- f acEnv anEnv (KeyedDomState mempty)
     return ((), V.CKeyed (OHM.fromList (DList.toList dom)))
-instance (a ~ ()) => IsElementChildren UnsafeRawHtml state2 where
+instance IsElementChildren UnsafeRawHtml state2 where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)
 

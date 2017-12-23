@@ -19,6 +19,7 @@ import Anapo.TestApps.TodoList
 import Anapo.TestApps.Timer
 import Anapo.TestApps.YouTube
 import Anapo.TestApps.Bump
+import Anapo.TestApps.KeyedList
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.WindowEventHandlers as DOM (popState)
@@ -36,6 +37,7 @@ data WhichTestApp =
   | Timer
   | YouTube
   | Bumps
+  | KeyedList
   deriving (Eq, Show, Read, Enum, Bounded, Typeable)
 
 testAppToPath :: WhichTestApp -> Text
@@ -45,6 +47,7 @@ testAppToPath = \case
   Timer -> "/timer"
   YouTube -> "/youTube"
   Bumps -> "/bumps"
+  KeyedList -> "/keyedList"
 
 testAppFromPath :: Text -> Maybe WhichTestApp
 testAppFromPath = \case
@@ -53,6 +56,7 @@ testAppFromPath = \case
   "/timer" -> Just Timer
   "/youTube" -> Just YouTube
   "/bumps" -> Just Bumps
+  "/keyedList" -> Just KeyedList
   "/" -> Just Todo
   _ -> Nothing
 
@@ -67,6 +71,7 @@ data TestAppsState = TestAppsState
   , _tasStopTimerOnAppChange :: Bool
   , _tasYouTube :: YouTubeState
   , _tasBumps :: Component () BumpsState
+  , _tasKeyedList :: Component () KeyedListState
   }
 makeLenses ''TestAppsState
 
@@ -127,6 +132,7 @@ testAppsComponent = do
         Timer -> zoomL tasTimer timerComponent
         YouTube -> zoomL tasYouTube youTubeComponent
         Bumps -> n$ componentL tasBumps ()
+        KeyedList -> n$ componentL tasKeyedList ()
 
 testAppsWith ::
      (TestAppsStateOrError -> Action TestAppsStateOrError a)
@@ -151,6 +157,7 @@ testAppsWith cont = do
         (\_ -> unliftIO u $ do
             todo <- actionZoom (_TASOEOk.tasTodo.componentState) todoInit
             bumps <- actionZoom (_TASOEOk.tasBumps.componentState) bumpsInit
+            keyedList <- actionZoom (_TASOEOk.tasKeyedList.componentState) keyedListInit
             st <- TestAppsState
               <$> pure app
               <*> pure app
@@ -159,4 +166,5 @@ testAppsWith cont = do
               <*> pure False
               <*> youTubeInit "3yQObSCXyoo"
               <*> newComponent bumps (\() -> bumpsNode)
+              <*> newComponent keyedList (\() -> keyedListComponent)
             cont (TASOEOk st))
