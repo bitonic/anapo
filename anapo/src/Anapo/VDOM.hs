@@ -31,6 +31,7 @@ data Children body =
     CRawHtml Text
   | CNormal (Vector (Node body))
   | CKeyed (OrderedHashMap Text (Node body))
+  | CMap (HMS.HashMap Text (Node body))
   deriving (Functor, Foldable, Traversable)
 
 -- Core types

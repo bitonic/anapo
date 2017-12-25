@@ -160,6 +160,8 @@ renderChildren doc container = \case
     V.CNormal <$> renderDom doc container vdoms
   V.CKeyed vdoms ->
     V.CKeyed <$> renderDom doc container vdoms
+  V.CMap vdoms ->
+    V.CMap <$> renderDom doc container vdoms
 
 {-# INLINE renderNode #-}
 renderNode ::
@@ -221,6 +223,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
       V.CRawHtml{} -> return ()
       V.CNormal vdoms -> removeDom container vdoms
       V.CKeyed vdoms -> removeDom container vdoms
+      V.CMap vdoms -> removeDom container vdoms
 
     {-# INLINE removeDom #-}
     removeDom ::
@@ -326,6 +329,35 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           go (Vec.toList (OHM.getOrder prevVDoms0)) (OHM.getMap prevVDoms0) (Vec.toList (OHM.getOrder vdoms0)) Nothing
       return (OHM.unsafeNew hm (OHM.getOrder vdoms0))
 
+    {-# INLINE patchMapDom #-}
+    patchMapDom ::
+         DOM.Node -- ^ the container
+      -> HMS.HashMap Text (V.Node RenderedVDomNode) -- ^ the previous vdom
+      -> HMS.HashMap Text (V.Node V.SomeVDomNode) -- ^ the current vdom
+      -> DOM.JSM (HMS.HashMap Text (V.Node RenderedVDomNode))
+    patchMapDom container prevVDoms0 vdoms0 = do
+      let
+        go ::
+             HMS.HashMap Text (V.Node RenderedVDomNode) -- ^ the previous nodes left to patch
+          -> [(Text, V.Node V.SomeVDomNode)] -- ^ the remaining new nodes to analyze
+          -> DOM.JSM [(Text, V.Node RenderedVDomNode)]
+        go prevVDoms = \case
+          [] -> do
+            removeDom container prevVDoms
+            return []
+          (k, vdom) : vdoms -> case HMS.lookup k prevVDoms of
+            Nothing -> do
+              rendered <- renderNode doc vdom $ \rendered -> do
+                DOM.Node.appendChild_ container (rvdnDom (V.nodeBody rendered))
+                return rendered
+              rendereds <- go prevVDoms vdoms
+              return ((k, rendered) : rendereds)
+            Just rendered -> do
+              rendered' <- patchNode rendered vdom
+              rendereds <- go (HMS.delete k prevVDoms) vdoms
+              return ((k, rendered') : rendereds)
+      fmap HMS.fromList (go prevVDoms0 (HMS.toList vdoms0))
+
     {-# INLINE patchChildren #-}
     patchChildren ::
          (DOM.IsElement el)
@@ -341,6 +373,8 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           V.CNormal <$> patchDom (DOM.toNode container) prevNChildren nchildren
         (V.CKeyed prevNChildren, V.CKeyed nchildren) ->
           V.CKeyed <$> patchKeyedDom (DOM.toNode container) prevNChildren nchildren
+        (V.CMap prevNChildren, V.CMap nchildren) ->
+          V.CMap <$> patchMapDom (DOM.toNode container) prevNChildren nchildren
         (prevChildren, children) -> do
           removeChildren (DOM.toNode container) prevChildren
           renderChildren doc container children
@@ -455,6 +489,11 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
             VDPSKeyed ix' -> do
               n' <- followPath (children OHM.! ix') f path
               return node{ V.nodeChildren = Just (V.CKeyed (OHM.replace ix' n' children)) }
+          V.CMap children -> case ix of
+            VDPSNormal{} -> fail "renderVirtualDom: got normal path segment for map dom"
+            VDPSKeyed ix' -> do
+              n' <- followPath (children HMS.! ix') f path
+              return node{ V.nodeChildren = Just (V.CMap (HMS.insert ix' n' children)) }
 
   t0 <- liftIO getCurrentTime
   x <- followPath prevVdom000 (\pathVdom -> patchNode pathVdom vdom000) path000

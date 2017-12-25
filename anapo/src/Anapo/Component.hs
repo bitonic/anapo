@@ -31,6 +31,10 @@ module Anapo.Component
   , AnapoM
   , Dom
   , DomState
+  , KeyedDom
+  , KeyedDomState
+  , MapDom
+  , MapDomState
   , Node
   , askRegisterThread
   , askHandleException
@@ -54,6 +58,7 @@ module Anapo.Component
     -- * basic combinators
   , n
   , key
+  , ukey
   , text
   , rawNode
   , marked

@@ -240,10 +240,13 @@ data DomState = DomState
 
 newtype KeyedDomState = KeyedDomState (DList (Text, V.Node V.SomeVDomNode))
 
+newtype MapDomState = MapDomState (DList (Text, V.Node V.SomeVDomNode))
+
 -- the Int is to store the current index in the dom, to be able o build
 -- tthe next path segment.
 type Dom state = AnapoM DomState state ()
 type KeyedDom state = AnapoM KeyedDomState state ()
+type MapDom state = AnapoM MapDomState state ()
 type Node state = AnapoM () state (V.Node V.SomeVDomNode)
 
 instance MonadIO (AnapoM dom state) where
@@ -369,11 +372,15 @@ n getNode = AnapoM $ \acEnv anEnv dom -> do
     , ()
     )
 
--- TODO right now this it not implemented, but we will implement it in
--- the future.
 {-# INLINE key #-}
 key :: Text -> Node state -> KeyedDom state
 key k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
+  (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
+
+{-# INLINE ukey #-}
+ukey :: Text -> Node state -> KeyedDom state
+ukey k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
   (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
 
@@ -482,6 +489,16 @@ instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM KeyedDomState st
   elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
     (KeyedDomState dom, _) <- f acEnv anEnv (KeyedDomState mempty)
     return ((), V.CKeyed (OHM.fromList (DList.toList dom)))
+instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM MapDomState state1 a) state2 where
+  {-# INLINE elementChildren #-}
+  elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
+    (MapDomState dom, _) <- f acEnv anEnv (MapDomState mempty)
+    let kvs = DList.toList dom
+    let numKvs = length kvs
+    let hm = HMS.fromList kvs
+    if numKvs /= HMS.size hm
+      then error "duplicate keys when building map vdom!"
+      else return ((), V.CMap (HMS.fromList kvs))
 instance IsElementChildren UnsafeRawHtml state2 where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)
