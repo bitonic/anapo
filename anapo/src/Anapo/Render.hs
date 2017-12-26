@@ -47,6 +47,7 @@ data RenderedVDomNode = RenderedVDomNode
   -- ^ holds functions that can reset all the properties that
   -- have been set.
   , rvdnStyle :: V.ElementStyle
+  , rvdnAttributes :: V.ElementAttributes
   }
 
 renderedVDomNodeDom :: RenderedVDomNode -> DOM.Node
@@ -64,7 +65,7 @@ data SomeSaferEventListener = forall t e. (DOM.IsEventTarget t, DOM.IsEvent e) =
 {-# INLINE emptyOverlay #-}
 emptyOverlay :: V.SomeVDomNode -> DOM.Node -> V.Node RenderedVDomNode
 emptyOverlay vdom dom = V.Node
-  { nodeBody = RenderedVDomNode vdom dom mempty mempty mempty
+  { nodeBody = RenderedVDomNode vdom dom mempty mempty mempty mempty
   , nodeChildren = Nothing
   }
 
@@ -131,6 +132,24 @@ addStyle el style prevStyle = do
       Just prop' -> when (prop /= prop') set
   return style
 
+{-# INLINE addAttributes #-}
+addAttributes ::
+     (DOM.IsElement el)
+  => el
+  -> V.ElementAttributes
+  -> V.ElementAttributes
+  -> DOM.JSM V.ElementAttributes
+addAttributes el attrs prevAttrs = do
+  -- remove all the attributes that are not there anymore
+  for_ (HMS.keys (prevAttrs `HMS.difference` attrs)) (DOM.Element.removeAttribute el)
+  -- add the others
+  for_ (HMS.toList attrs) $ \(propName, prop) -> do
+    let set = DOM.Element.setAttribute el propName prop
+    case HMS.lookup propName prevAttrs of
+      Nothing -> set
+      Just prop' -> when (prop /= prop') set
+  return attrs
+
 {-# INLINE renderDom #-}
 renderDom ::
      (DOM.IsNode el, Traversable t)
@@ -186,13 +205,14 @@ renderNode doc V.Node{nodeBody = vdom@(V.SomeVDomNode V.VDomNode{..}), nodeChild
     V.VDBElement V.Element{..} -> do
       el <- DOM.unsafeCastTo vdomWrap =<< DOM.Document.createElement doc elementTag
       defProps <- addProperties el vdomWrap elementProperties mempty
+      attrs <- addAttributes el elementAttributes mempty
       style <- addStyle el elementStyle mempty
       evts <- addEvents el elementEvents
       childrenRendered <- case nodeChildren of
         Nothing -> fail "renderNode: got no children for an element"
         Just children -> renderChildren doc el children
       cont $ V.Node
-        (RenderedVDomNode vdom (DOM.toNode el) evts defProps style)
+        (RenderedVDomNode vdom (DOM.toNode el) evts defProps style attrs)
         (Just childrenRendered)
 
 {-# INLINE renderVirtualDom #-}
@@ -435,6 +455,8 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
               -- TODO maybe do something safer here...
               DOM.EventM.removeListener (unsafeCoerce dom') evtName evt False
               DOM.EventM.releaseListener evt
+            -- add attribuse
+            newAttrs <- addAttributes dom' (V.elementAttributes element) (rvdnAttributes prevRendered)
             -- add style
             newStyle <- addStyle dom' (V.elementStyle element) (rvdnStyle prevRendered)
             -- add all events
@@ -452,6 +474,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
                   , rvdnEvents = evts
                   , rvdnResetProperties = newResetProperties
                   , rvdnStyle = newStyle
+                  , rvdnAttributes = newAttrs
                   }
               , V.nodeChildren = Just newChildren
               }

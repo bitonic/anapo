@@ -24,7 +24,6 @@ import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO, UnliftIO(.
 import Control.Exception.Safe (SomeException, uninterruptibleMask, tryAny)
 import Control.Concurrent (ThreadId, forkIO, myThreadId)
 import Control.Monad.Trans (lift)
-import Data.Maybe (fromMaybe)
 import Data.DList (DList)
 import Data.IORef (IORef, newIORef, modifyIORef')
 import Control.Monad.Reader (MonadReader(..))
@@ -379,10 +378,10 @@ key k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
   return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE ukey #-}
-ukey :: Text -> Node state -> KeyedDom state
-ukey k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
+ukey :: Text -> Node state -> MapDom state
+ukey k getNode = AnapoM $ \acEnv anEnv (MapDomState dom) -> do
   (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
-  return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
+  return (MapDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE text #-}
 text :: Text -> Node state
@@ -471,6 +470,7 @@ data NodePatch el state =
   | NPUnsafeDidPatch (DOM.Node -> Action state ())
   | NPUnsafeWillRemove (DOM.Node -> Action state ())
   | NPStyle V.StylePropertyName V.StyleProperty
+  | NPAttribute V.AttributeName V.AttributeBody
   | NPProperty V.ElementPropertyName (V.ElementProperty el)
   | NPEvent (SomeEventAction el state)
 
@@ -556,6 +556,12 @@ patchNode patches00 node00 = do
                 HMS.insert styleName styleBody (V.elementStyle vel)
             })
           patches
+        NPAttribute attrName attrBody -> go
+          (modifyElement node $ \vel -> vel
+            { V.elementAttributes =
+                HMS.insert attrName attrBody (V.elementAttributes vel)
+            })
+          patches
         NPProperty propName propBody -> go
           (modifyElement node $ \vel -> vel
             { V.elementProperties =
@@ -593,6 +599,7 @@ el tag wrap patches isChildren = do
           , V.elementProperties = mempty
           , V.elementStyle = mempty
           , V.elementEvents = mempty
+          , V.elementAttributes = mempty
           }
       , V.vdomCallbacks = mempty
       , V.vdomWrap = wrap
@@ -833,11 +840,7 @@ rawProperty k x = NPProperty k $ V.ElementProperty
 
 {-# INLINE rawAttribute #-}
 rawAttribute :: (DOM.IsElement el) => Text -> Text -> NodePatch el state
-rawAttribute k x = NPProperty k $ V.ElementProperty
-  { V.eaGetProperty = \el_ -> fromMaybe "" <$> DOM.getAttribute el_ k
-  , V.eaSetProperty = \el_ y -> DOM.setAttribute el_ k y
-  , V.eaValue = return x
-  }
+rawAttribute = NPAttribute
 
 class HasPlaceholderProperty el where
   getPlaceholder :: el -> DOM.JSM Text

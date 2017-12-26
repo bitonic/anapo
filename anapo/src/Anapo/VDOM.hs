@@ -106,10 +106,14 @@ type ElementEvents el = DList (SomeEvent el)
 type StylePropertyName = Text
 type StyleProperty = Text
 type ElementStyle = HMS.HashMap StylePropertyName StyleProperty
+type AttributeName = Text
+type AttributeBody = Text
+type ElementAttributes = HMS.HashMap AttributeName AttributeBody
 
 data Element el = Element
   { elementTag :: ElementTag
   , elementProperties :: ElementProperties el
   , elementStyle :: ElementStyle
+  , elementAttributes :: ElementAttributes
   , elementEvents :: ElementEvents el
   }
