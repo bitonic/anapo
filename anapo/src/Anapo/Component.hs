@@ -97,7 +97,6 @@ module Anapo.Component
   , ul_
   , li_
   , label_
-  , multiple_
   , iframe_
   , small_
   , pre_
@@ -120,8 +119,12 @@ module Anapo.Component
   , checked_
   , HasDisabledProperty(..)
   , disabled_
+  , HasSrcProperty(..)
   , src_
+  , HasPlaceholderProperty(..)
   , placeholder_
+  , HasMultipleProperty(..)
+  , multiple_
   , for_
   , rawProperty
   , rawAttribute

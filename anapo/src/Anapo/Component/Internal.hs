@@ -722,70 +722,70 @@ id_ txt = NPProperty "id" $ V.ElementProperty
   }
 
 class HasTypeProperty el where
-  htpGetType :: el -> DOM.JSM Text
-  htpSetType :: el -> Text -> DOM.JSM ()
+  getType :: el -> DOM.JSM Text
+  setType :: el -> Text -> DOM.JSM ()
 
 instance HasTypeProperty DOM.HTMLInputElement where
-  htpGetType = DOM.Input.getType
-  htpSetType = DOM.Input.setType
+  getType = DOM.Input.getType
+  setType = DOM.Input.setType
 
 instance HasTypeProperty DOM.HTMLButtonElement where
-  htpGetType = DOM.Button.getType
-  htpSetType = DOM.Button.setType
+  getType = DOM.Button.getType
+  setType = DOM.Button.setType
 
 type_ :: (HasTypeProperty el) => Text -> NodePatch el state
 type_ txt = NPProperty "type" $ V.ElementProperty
-  { V.eaGetProperty = htpGetType
-  , V.eaSetProperty = htpSetType
+  { V.eaGetProperty = getType
+  , V.eaSetProperty = setType
   , V.eaValue = return txt
   }
 
 class HasHrefProperty el where
-  htpGetHref :: el -> DOM.JSM Text
-  htpSetHref :: el -> Text -> DOM.JSM ()
+  getHref :: el -> DOM.JSM Text
+  setHref :: el -> Text -> DOM.JSM ()
 
 instance HasHrefProperty DOM.HTMLAnchorElement where
-  htpGetHref = DOM.HyperlinkElementUtils.getHref
-  htpSetHref = DOM.HyperlinkElementUtils.setHref
+  getHref = DOM.HyperlinkElementUtils.getHref
+  setHref = DOM.HyperlinkElementUtils.setHref
 
 href_ :: (HasHrefProperty el) => Text -> NodePatch el state
 href_ txt = NPProperty "href" $ V.ElementProperty
-  { V.eaGetProperty = htpGetHref
-  , V.eaSetProperty = htpSetHref
+  { V.eaGetProperty = getHref
+  , V.eaSetProperty = setHref
   , V.eaValue = return txt
   }
 
 class HasValueProperty el where
-  hvpGetValue :: el -> DOM.JSM Text
-  hvpSetValue :: el -> Text -> DOM.JSM ()
+  getValue :: el -> DOM.JSM Text
+  setValue :: el -> Text -> DOM.JSM ()
 
 instance HasValueProperty DOM.HTMLInputElement where
-  hvpGetValue = DOM.Input.getValue
-  hvpSetValue = DOM.Input.setValue
+  getValue = DOM.Input.getValue
+  setValue = DOM.Input.setValue
 
 instance HasValueProperty DOM.HTMLOptionElement where
-  hvpGetValue = DOM.Option.getValue
-  hvpSetValue = DOM.Option.setValue
+  getValue = DOM.Option.getValue
+  setValue = DOM.Option.setValue
 
 value_ :: (HasValueProperty el) => Text -> NodePatch el state
 value_ txt = NPProperty "value" $ V.ElementProperty
-  { V.eaGetProperty = hvpGetValue
-  , V.eaSetProperty = hvpSetValue
+  { V.eaGetProperty = getValue
+  , V.eaSetProperty = setValue
   , V.eaValue = return txt
   }
 
 class HasCheckedProperty el where
-  hcpGetChecked :: el -> DOM.JSM Bool
-  hcpSetChecked :: el -> Bool -> DOM.JSM ()
+  getChecked :: el -> DOM.JSM Bool
+  setChecked :: el -> Bool -> DOM.JSM ()
 
 instance HasCheckedProperty DOM.HTMLInputElement where
-  hcpGetChecked = DOM.Input.getChecked
-  hcpSetChecked = DOM.Input.setChecked
+  getChecked = DOM.Input.getChecked
+  setChecked = DOM.Input.setChecked
 
 checked_ :: (HasCheckedProperty el) => Bool -> NodePatch el state
 checked_ b = NPProperty "checked" $ V.ElementProperty
-  { V.eaGetProperty = hcpGetChecked
-  , V.eaSetProperty = hcpSetChecked
+  { V.eaGetProperty = getChecked
+  , V.eaSetProperty = setChecked
   , V.eaValue = return b
   }
 
@@ -797,17 +797,17 @@ selected_ b = NPProperty "selected" $ V.ElementProperty
   }
 
 class HasDisabledProperty el where
-  hdpGetDisabled :: el -> DOM.JSM Bool
-  hdpSetDisabled :: el -> Bool -> DOM.JSM ()
+  getDisabled :: el -> DOM.JSM Bool
+  setDisabled :: el -> Bool -> DOM.JSM ()
 
 instance HasDisabledProperty DOM.HTMLButtonElement where
-  hdpGetDisabled = DOM.Button.getDisabled
-  hdpSetDisabled = DOM.Button.setDisabled
+  getDisabled = DOM.Button.getDisabled
+  setDisabled = DOM.Button.setDisabled
 
 disabled_ :: HasDisabledProperty el => Bool -> NodePatch el state
 disabled_ b = NPProperty "disabled" $ V.ElementProperty
-  { V.eaGetProperty = hdpGetDisabled
-  , V.eaSetProperty = hdpSetDisabled
+  { V.eaGetProperty = getDisabled
+  , V.eaSetProperty = setDisabled
   , V.eaValue = return b
   }
 
