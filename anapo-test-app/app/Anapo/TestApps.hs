@@ -20,6 +20,7 @@ import Anapo.TestApps.Timer
 import Anapo.TestApps.YouTube
 import Anapo.TestApps.Bump
 import Anapo.TestApps.KeyedList
+import Anapo.TestApps.ComponentDifferentNodes
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.WindowEventHandlers as DOM (popState)
@@ -38,6 +39,7 @@ data WhichTestApp =
   | YouTube
   | Bumps
   | KeyedList
+  | DifferentNodes
   deriving (Eq, Show, Read, Enum, Bounded, Typeable)
 
 testAppToPath :: WhichTestApp -> Text
@@ -48,6 +50,7 @@ testAppToPath = \case
   YouTube -> "/youTube"
   Bumps -> "/bumps"
   KeyedList -> "/keyedList"
+  DifferentNodes -> "/differentNodes"
 
 testAppFromPath :: Text -> Maybe WhichTestApp
 testAppFromPath = \case
@@ -57,6 +60,7 @@ testAppFromPath = \case
   "/youTube" -> Just YouTube
   "/bumps" -> Just Bumps
   "/keyedList" -> Just KeyedList
+  "/differentNodes" -> Just DifferentNodes
   "/" -> Just Todo
   _ -> Nothing
 
@@ -72,6 +76,7 @@ data TestAppsState = TestAppsState
   , _tasYouTube :: YouTubeState
   , _tasBumps :: Component () BumpsState
   , _tasKeyedList :: Component () KeyedListState
+  , _tasDifferentNodes :: Component () Bool
   }
 makeLenses ''TestAppsState
 
@@ -133,6 +138,7 @@ testAppsComponent = do
         YouTube -> zoomL tasYouTube youTubeComponent
         Bumps -> n$ componentL tasBumps ()
         KeyedList -> n$ componentL tasKeyedList ()
+        DifferentNodes -> n$ componentL tasDifferentNodes ()
 
 testAppsWith ::
      (TestAppsStateOrError -> Action TestAppsStateOrError a)
@@ -167,4 +173,5 @@ testAppsWith cont = do
               <*> youTubeInit "3yQObSCXyoo"
               <*> newComponent bumps (\() -> bumpsNode)
               <*> newComponent keyedList (\() -> keyedListComponent)
+              <*> componentDifferentNodesInit
             cont (TASOEOk st))
