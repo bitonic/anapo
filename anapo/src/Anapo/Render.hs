@@ -251,27 +251,22 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
       => DOM.Node
       -> t (V.Node RenderedVDomNode)
       -> DOM.JSM ()
-    removeDom container vdoms = for_ vdoms (removeNode container DOM.Node.removeChild_)
+    removeDom container vdoms = for_ vdoms (removeNode container)
 
     {-# INLINE removeNode #-}
     removeNode ::
          DOM.Node -- ^ the container
-      -> (DOM.Node -> DOM.Node -> DOM.JSM ())
-      -- ^ how to remove the child node given a container. note that
-      -- sometimes we replace the child with another child, which is why
-      -- this is not always 'DOM.removeChild_'
       -> V.Node RenderedVDomNode
       -> DOM.JSM ()
     removeNode
         container
-        removeChild
         (V.Node RenderedVDomNode{rvdnVDom = V.SomeVDomNode V.VDomNode{..}, ..} mbChildren) = do
       -- first call the will remove
       V.callbacksUnsafeWillRemove vdomCallbacks rvdnDom
       -- then recurse down...
       for_ mbChildren (removeChildren rvdnDom)
       -- then remove the DOM thing and remove the children
-      removeChild container rvdnDom
+      DOM.Node.removeChild_ container rvdnDom
       for_ rvdnEvents (\(SomeSaferEventListener _ ev) -> DOM.EventM.releaseListener ev)
 
     {-# INLINE patchDom #-}
@@ -455,7 +450,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
               -- TODO maybe do something safer here...
               DOM.EventM.removeListener (unsafeCoerce dom') evtName evt False
               DOM.EventM.releaseListener evt
-            -- add attribuse
+            -- add attributes
             newAttrs <- addAttributes dom' (V.elementAttributes element) (rvdnAttributes prevRendered)
             -- add style
             newStyle <- addStyle dom' (V.elementStyle element) (rvdnStyle prevRendered)
@@ -485,8 +480,15 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
         incompatible = do
           -- remove all chidren and swap the topmost node
           container <- DOM.Node.getParentNodeUnsafe (rvdnDom prevRendered)
+          -- it is important that we remove before we mount, otherwise
+          -- the willRemove will be called before the didMount, which
+          -- is bizarre and less useful -- for example it prevents us
+          -- from implementing components. to do that, we first save the
+          -- next node to know where to insert.
+          mbPrevChild <- DOM.Node.getNextSibling (rvdnDom (V.nodeBody prevNode))
+          removeNode container prevNode
           renderNode doc node $ \rendered -> do
-            removeNode container (\cont -> DOM.Node.replaceChild_ cont (rvdnDom (V.nodeBody rendered))) prevNode
+            DOM.Node.insertBefore_ container (rvdnDom (V.nodeBody rendered)) mbPrevChild
             return rendered
 
     followPath ::
