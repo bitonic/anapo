@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveTraversable #-}
 module Anapo.VDOM where
-  
+
 import Data.DList (DList)
 import GHC.Fingerprint.Type (Fingerprint)
 import qualified Data.HashMap.Strict as HMS
@@ -93,26 +93,21 @@ data VDomBody el where
 data SomeEvent el = forall e. (DOM.IsEvent e) =>
   SomeEvent (DOM.EventName el e) (el -> e -> DOM.JSM ())
 
-data ElementProperty el = forall a. ElementProperty
-  { eaGetProperty :: el -> DOM.JSM a
-  , eaSetProperty :: el -> a -> DOM.JSM ()
-  , eaValue :: DOM.JSM a
-  }
-
 type ElementTag = Text
 type ElementPropertyName = Text
-type ElementProperties el = HMS.HashMap ElementPropertyName (ElementProperty el)
+type ElementProperty = DOM.JSVal
+type ElementProperties = HMS.HashMap ElementPropertyName ElementProperty
 type ElementEvents el = DList (SomeEvent el)
 type StylePropertyName = Text
 type StyleProperty = Text
 type ElementStyle = HMS.HashMap StylePropertyName StyleProperty
 type AttributeName = Text
-type AttributeBody = Text
+type AttributeBody = DOM.JSVal
 type ElementAttributes = HMS.HashMap AttributeName AttributeBody
 
 data Element el = Element
   { elementTag :: ElementTag
-  , elementProperties :: ElementProperties el
+  , elementProperties :: ElementProperties
   , elementStyle :: ElementStyle
   , elementAttributes :: ElementAttributes
   , elementEvents :: ElementEvents el

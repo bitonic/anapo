@@ -108,26 +108,19 @@ module Anapo.Component
   , style
   , class_
   , id_
-  , HasTypeProperty(..)
   , type_
-  , HasHrefProperty(..)
   , href_
-  , HasValueProperty(..)
   , value_
   , selected_
-  , HasCheckedProperty(..)
   , checked_
-  , HasDisabledProperty(..)
   , disabled_
-  , HasSrcProperty(..)
   , src_
-  , HasPlaceholderProperty(..)
   , placeholder_
-  , HasMultipleProperty(..)
   , multiple_
   , for_
-  , rawProperty
+  , property
   , rawAttribute
+  , attribute
   , onEvent
 
     -- * events

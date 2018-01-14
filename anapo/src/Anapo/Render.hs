@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 module Anapo.Render
   ( RenderedVDomNode
   , VDomPath
@@ -9,11 +10,10 @@ module Anapo.Render
   ) where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Monad (forM_, when, forM)
+import Control.Monad (forM_, when, forM, unless)
 import qualified Data.DList as DList
 import Control.Monad.IO.Class (liftIO)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
-import Data.Maybe (catMaybes)
 import Data.Foldable (for_)
 import Unsafe.Coerce (unsafeCoerce)
 import Control.Monad.Reader (ask)
@@ -39,13 +39,23 @@ import qualified Anapo.OrderedHashMap as OHM
 import Anapo.Text (Text, pack)
 import Anapo.Logging
 
+#if !defined(ghcjs_HOST_OS)
+import qualified Language.Javascript.JSaddle as JSaddle
+import Control.Lens ((^.))
+import Control.Monad (void)
+#endif
+
+-- | we need to keep default properties to be able to remove them
+data ExistingProperty = ExistingProperty
+  { epDefault :: V.ElementProperty
+  , epCurrent :: V.ElementProperty
+  }
+
 data RenderedVDomNode = RenderedVDomNode
   { rvdnVDom :: V.SomeVDomNode
   , rvdnDom :: DOM.Node
   , rvdnEvents :: [SomeSaferEventListener]
-  , rvdnResetProperties :: HMS.HashMap V.ElementPropertyName ResetProperty
-  -- ^ holds functions that can reset all the properties that
-  -- have been set.
+  , rvdnProperties :: HMS.HashMap V.ElementPropertyName ExistingProperty
   , rvdnStyle :: V.ElementStyle
   , rvdnAttributes :: V.ElementAttributes
   }
@@ -53,14 +63,11 @@ data RenderedVDomNode = RenderedVDomNode
 renderedVDomNodeDom :: RenderedVDomNode -> DOM.Node
 renderedVDomNodeDom = rvdnDom
 
-newtype ResetProperty = ResetProperty
-  { unResetProperty :: forall el. (DOM.IsElement el) => el -> DOM.JSM ()
-  }
-
-data SomeSaferEventListener = forall t e. (DOM.IsEventTarget t, DOM.IsEvent e) => SomeSaferEventListener
-  { _sselName :: DOM.EventM.EventName t e
-  , _sselEv :: DOM.EventM.SaferEventListener t e
-  }
+data SomeSaferEventListener =
+  forall t e. (DOM.IsEventTarget t, DOM.IsEvent e) => SomeSaferEventListener
+    { _sselName :: DOM.EventM.EventName t e
+    , _sselEv :: DOM.EventM.SaferEventListener t e
+    }
 
 {-# INLINE emptyOverlay #-}
 emptyOverlay :: V.SomeVDomNode -> DOM.Node -> V.Node RenderedVDomNode
@@ -95,25 +102,34 @@ addEvents el evts = forM (DList.toList evts) $ \(V.SomeEvent evtName evt) -> do
 addProperties ::
      (DOM.IsElement el)
   => el
-  -> (DOM.JSVal -> el)
-  -> V.ElementProperties el
-  -> HMS.HashMap V.ElementPropertyName ResetProperty -- ^ previous reset properties
-  -> DOM.JSM (HMS.HashMap V.ElementPropertyName ResetProperty)
-addProperties el wrap props prevReset =
-  fmap (HMS.union prevReset . HMS.fromList . catMaybes) $
-    forM (HMS.toList props) $ \(propName, V.ElementProperty{..}) -> do
-      def <- eaGetProperty el
-      eaSetProperty el =<< eaValue
-      return $ case HMS.lookup propName prevReset of
-        Nothing -> Just
+  -> V.ElementProperties
+  -> HMS.HashMap V.ElementPropertyName ExistingProperty
+  -> DOM.JSM (HMS.HashMap V.ElementPropertyName ExistingProperty)
+addProperties el0 props prevProps = do
+  el <- DOM.toJSVal el0
+  -- remove all the properties that are not there anymore
+  for_
+    (HMS.toList (prevProps `HMS.difference` props))
+    (\(k, ep) -> setProperty el k (epDefault ep))
+  -- add the others
+  fmap HMS.fromList $ for (HMS.toList props) $ \(propName, prop) -> do
+    let set = setProperty el propName prop
+    case HMS.lookup propName prevProps of
+      Nothing -> do
+        val <- getProperty el propName
+        set
+        return
           ( propName
-          , ResetProperty $ \el' -> do
-              el'' <- DOM.unsafeCastTo wrap el'
-              eaSetProperty el'' def
+          , ExistingProperty
+              { epDefault = val
+              , epCurrent = prop
+              }
           )
-        Just{} -> Nothing
+      Just ep -> do
+        eq <- jsEq prop (epCurrent ep)
+        unless eq set
+        return (propName, ep{epCurrent = prop})
 
-{-# INLINE addStyle #-}
 addStyle ::
      (DOM.IsElementCSSInlineStyle el)
   => el
@@ -141,13 +157,19 @@ addAttributes ::
   -> DOM.JSM V.ElementAttributes
 addAttributes el attrs prevAttrs = do
   -- remove all the attributes that are not there anymore
-  for_ (HMS.keys (prevAttrs `HMS.difference` attrs)) (DOM.Element.removeAttribute el)
+  for_
+    (HMS.keys (prevAttrs `HMS.difference` attrs))
+    (DOM.Element.removeAttribute el)
   -- add the others
   for_ (HMS.toList attrs) $ \(propName, prop) -> do
-    let set = DOM.Element.setAttribute el propName prop
+    let set = do
+          val <- DOM.toJSVal el
+          setAttribute val propName prop
     case HMS.lookup propName prevAttrs of
       Nothing -> set
-      Just prop' -> when (prop /= prop') set
+      Just prop' -> do
+        eq <- jsEq prop prop'
+        unless eq set
   return attrs
 
 {-# INLINE renderDom #-}
@@ -182,7 +204,6 @@ renderChildren doc container = \case
   V.CMap vdoms ->
     V.CMap <$> renderDom doc container vdoms
 
-{-# INLINE renderNode #-}
 renderNode ::
      DOM.Document
   -> V.Node V.SomeVDomNode -- ^ what to render
@@ -204,7 +225,7 @@ renderNode doc V.Node{nodeBody = vdom@(V.SomeVDomNode V.VDomNode{..}), nodeChild
     V.VDBRawNode el -> cont (emptyOverlay vdom (DOM.toNode el))
     V.VDBElement V.Element{..} -> do
       el <- DOM.unsafeCastTo vdomWrap =<< DOM.Document.createElement doc elementTag
-      defProps <- addProperties el vdomWrap elementProperties mempty
+      defProps <- addProperties el elementProperties mempty
       attrs <- addAttributes el elementAttributes mempty
       style <- addStyle el elementStyle mempty
       evts <- addEvents el elementEvents
@@ -215,7 +236,6 @@ renderNode doc V.Node{nodeBody = vdom@(V.SomeVDomNode V.VDomNode{..}), nodeChild
         (RenderedVDomNode vdom (DOM.toNode el) evts defProps style attrs)
         (Just childrenRendered)
 
-{-# INLINE renderVirtualDom #-}
 renderVirtualDom ::
      V.Node V.SomeVDomNode
   -> (V.Node RenderedVDomNode -> DOM.JSM a)
@@ -225,7 +245,6 @@ renderVirtualDom vdom mount = do
   doc <- DOM.currentDocumentUnchecked
   renderNode doc vdom mount
 
-{-# INLINE reconciliateVirtualDom #-}
 reconciliateVirtualDom ::
      V.Node RenderedVDomNode
   -> VDomPath
@@ -234,7 +253,6 @@ reconciliateVirtualDom ::
 reconciliateVirtualDom prevVdom000 path000 vdom000 = do
   doc <- DOM.currentDocumentUnchecked
   let
-    {-# INLINE removeChildren #-}
     removeChildren ::
          DOM.Node
       -> V.Children RenderedVDomNode
@@ -253,7 +271,6 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
       -> DOM.JSM ()
     removeDom container vdoms = for_ vdoms (removeNode container)
 
-    {-# INLINE removeNode #-}
     removeNode ::
          DOM.Node -- ^ the container
       -> V.Node RenderedVDomNode
@@ -269,7 +286,6 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
       DOM.Node.removeChild_ container rvdnDom
       for_ rvdnEvents (\(SomeSaferEventListener _ ev) -> DOM.EventM.releaseListener ev)
 
-    {-# INLINE patchDom #-}
     patchDom ::
          DOM.Node -- ^ the container
       -> Vector (V.Node RenderedVDomNode) -- ^ the previous vdom
@@ -288,7 +304,6 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
             return (rendered : rendereds)
       Vec.fromList <$> go (Vec.toList prevVDoms0) (Vec.toList vdoms0)
 
-    {-# INLINE patchKeyedDom #-}
     patchKeyedDom ::
          DOM.Node -- ^ the container
       -> OHM.OrderedHashMap Text (V.Node RenderedVDomNode) -- ^ the previous vdom
@@ -344,7 +359,6 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           go (Vec.toList (OHM.getOrder prevVDoms0)) (OHM.getMap prevVDoms0) (Vec.toList (OHM.getOrder vdoms0)) Nothing
       return (OHM.unsafeNew hm (OHM.getOrder vdoms0))
 
-    {-# INLINE patchMapDom #-}
     patchMapDom ::
          DOM.Node -- ^ the container
       -> HMS.HashMap Text (V.Node RenderedVDomNode) -- ^ the previous vdom
@@ -394,7 +408,6 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           removeChildren (DOM.toNode container) prevChildren
           renderChildren doc container children
 
-    {-# INLINE patchNode #-}
     patchNode ::
          V.Node RenderedVDomNode
       -> V.Node V.SomeVDomNode
@@ -428,18 +441,11 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
             -- callback before patch
             V.callbacksUnsafeWillPatch (V.vdomCallbacks prevVDom) (rvdnDom prevRendered)
             dom' <- DOM.unsafeCastTo (V.vdomWrap vdom)  (rvdnDom prevRendered)
-            -- reset properties that are gone to their default
-            let removedProps = V.elementProperties prevElement `HMS.difference` V.elementProperties element
-            -- TODO we could remove the default properties at this point, but i'm
-            -- not sure it's even worth it
-            forM_ (HMS.keys removedProps) $ \prop ->
-              unResetProperty (rvdnResetProperties prevRendered HMS.! prop) dom'
-            -- insert new properties, and augment the property resetters
-            newResetProperties <- addProperties
+            -- add props
+            newProps <- addProperties
               dom'
-              (V.vdomWrap vdom)
               (V.elementProperties element)
-              (rvdnResetProperties prevRendered)
+              (rvdnProperties prevRendered)
             -- remove all events
             -- TODO we should probably have an option to be able to
             -- have stable events, so that we do not have to delete
@@ -467,7 +473,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
                   { rvdnVDom = V.SomeVDomNode vdom
                   , rvdnDom = rvdnDom prevRendered
                   , rvdnEvents = evts
-                  , rvdnResetProperties = newResetProperties
+                  , rvdnProperties = newProps
                   , rvdnStyle = newStyle
                   , rvdnAttributes = newAttrs
                   }
@@ -538,3 +544,54 @@ appendAfter_ container mbCursor node = case mbCursor of
     -- if the cursor has no next sibling it'll append it at the end,
     -- which is what we want.
     DOM.Node.insertBefore_ container node =<< DOM.Node.getNextSibling cursor
+
+-- JS equality for properties / attributes / ...
+-----------------------------------------------------------------------
+
+#if defined(ghcjs_HOST_OS)
+foreign import javascript unsafe
+  "h$anapoJsEq($1, $2)"
+  jsEq :: DOM.JSVal -> DOM.JSVal -> DOM.JSM Bool
+#else
+jsEq :: DOM.JSVal -> DOM.JSVal -> DOM.JSM Bool
+jsEq _ _ = return False -- this is an optimization anyway.
+#endif
+
+-- setAttribute with JSVal rather than Text. this is for stuff like
+-- aframe that has elements which have attributes that are _not_ text,
+-- e.g. rotations and such.
+-- --------------------------------------------------------------------
+
+#if defined(ghcjs_HOST_OS)
+foreign import javascript unsafe
+  "$1.setAttribute($2, $3)"
+  setAttribute :: DOM.JSVal -> Text -> DOM.JSVal -> DOM.JSM ()
+#else
+setAttribute :: DOM.JSVal -> Text -> DOM.JSVal -> DOM.JSM ()
+setAttribute val k v = do
+  kval <- DOM.toJSVal k
+  void (val ^. JSaddle.jsf ("setAttribute" :: Text) [kval, v])
+#endif
+
+-- setting properties
+-- --------------------------------------------------------------------
+
+#if defined(ghcjs_HOST_OS)
+
+foreign import javascript unsafe
+  "$1[$2]"
+  getProperty :: DOM.JSVal -> Text -> DOM.JSM DOM.JSVal
+
+foreign import javascript unsafe
+  "$1[$2] = $3"
+  setProperty :: DOM.JSVal -> Text -> DOM.JSVal -> DOM.JSM ()
+
+#else
+
+getProperty :: DOM.JSVal -> Text -> DOM.JSM DOM.JSVal
+getProperty el k = el JSaddle.! k
+
+setProperty :: DOM.JSVal -> Text -> DOM.JSVal -> DOM.JSM ()
+setProperty el k x = (el JSaddle.<# k) x
+
+#endif

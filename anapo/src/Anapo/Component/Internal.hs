@@ -27,20 +27,10 @@ import Control.Monad.Trans (lift)
 import Data.DList (DList)
 import Data.IORef (IORef, newIORef, modifyIORef')
 import Control.Monad.Reader (MonadReader(..))
-
+import qualified Data.Vector as Vec
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
-import qualified GHCJS.DOM.Element as DOM
 import qualified GHCJS.DOM.EventM as DOM.EventM
-import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
-import qualified GHCJS.DOM.HTMLButtonElement as DOM.Button
-import qualified GHCJS.DOM.HTMLOptionElement as DOM.Option
-import qualified GHCJS.DOM.HTMLLabelElement as DOM.Label
-import qualified GHCJS.DOM.HTMLSelectElement as DOM.Select
-import qualified GHCJS.DOM.HTMLIFrameElement as DOM.IFrame
-import qualified GHCJS.DOM.HTMLTextAreaElement as DOM.TextArea
-import qualified GHCJS.DOM.HTMLHyperlinkElementUtils as DOM.HyperlinkElementUtils
-import qualified Data.Vector as Vec
 
 import qualified Anapo.VDOM as V
 import Anapo.Render
@@ -470,8 +460,8 @@ data NodePatch el state =
   | NPUnsafeDidPatch (DOM.Node -> Action state ())
   | NPUnsafeWillRemove (DOM.Node -> Action state ())
   | NPStyle V.StylePropertyName V.StyleProperty
-  | NPAttribute V.AttributeName V.AttributeBody
-  | NPProperty V.ElementPropertyName (V.ElementProperty el)
+  | NPAttribute V.AttributeName (DOM.JSM V.AttributeBody)
+  | NPProperty V.ElementPropertyName (DOM.JSM V.ElementProperty)
   | NPEvent (SomeEventAction el state)
 
 class IsElementChildren a state where
@@ -556,18 +546,22 @@ patchNode patches00 node00 = do
                 HMS.insert styleName styleBody (V.elementStyle vel)
             })
           patches
-        NPAttribute attrName attrBody -> go
-          (modifyElement node $ \vel -> vel
-            { V.elementAttributes =
-                HMS.insert attrName attrBody (V.elementAttributes vel)
-            })
-          patches
-        NPProperty propName propBody -> go
-          (modifyElement node $ \vel -> vel
-            { V.elementProperties =
-                HMS.insert propName propBody (V.elementProperties vel)
-            })
-          patches
+        NPAttribute attrName attrBody -> do
+          attrBodyVal <- DOM.liftJSM attrBody
+          go
+            (modifyElement node $ \vel -> vel
+              { V.elementAttributes =
+                  HMS.insert attrName attrBodyVal (V.elementAttributes vel)
+              })
+            patches
+        NPProperty propName propBody -> do
+          propBodyVal <- DOM.liftJSM propBody
+          go
+            (modifyElement node $ \vel -> vel
+              { V.elementProperties =
+                  HMS.insert propName propBodyVal (V.elementProperties vel)
+              })
+            patches
         NPEvent (SomeEventAction evName evListener) -> go
           (modifyElement node $ \vel -> vel
             { V.elementEvents = DList.snoc
@@ -703,207 +697,60 @@ iframe_ = el "iframe" DOM.HTMLIFrameElement
 -- Properties
 -- --------------------------------------------------------------------
 
+{-# INLINE property #-}
+property :: Text -> DOM.JSVal -> NodePatch el state
+property k v = NPProperty k (return v)
+
 {-# INLINE style #-}
 style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el state
 style = NPStyle
 
-class_ :: (DOM.IsElement el) => Text -> NodePatch el state
-class_ txt = NPProperty "class" $ V.ElementProperty
-  { V.eaGetProperty = DOM.getClassName
-  , V.eaSetProperty = DOM.setClassName
-  , V.eaValue = return txt
-  }
+class_ :: Text -> NodePatch el state
+class_ txt = NPProperty "class" (DOM.toJSVal txt)
 
-id_ :: (DOM.IsElement el) => Text -> NodePatch el state
-id_ txt = NPProperty "id" $ V.ElementProperty
-  { V.eaGetProperty = DOM.getId
-  , V.eaSetProperty = DOM.setId
-  , V.eaValue = return txt
-  }
+id_ ::  Text -> NodePatch el state
+id_ txt = NPProperty "id" (DOM.toJSVal txt)
 
-class HasTypeProperty el where
-  getType :: el -> DOM.JSM Text
-  setType :: el -> Text -> DOM.JSM ()
+type_ :: Text -> NodePatch el state
+type_ txt = NPProperty "type" (DOM.toJSVal txt)
 
-instance HasTypeProperty DOM.HTMLInputElement where
-  getType = DOM.Input.getType
-  setType = DOM.Input.setType
+href_ :: Text -> NodePatch el state
+href_ txt = NPProperty "href" (DOM.toJSVal txt)
 
-instance HasTypeProperty DOM.HTMLButtonElement where
-  getType = DOM.Button.getType
-  setType = DOM.Button.setType
+value_ :: Text -> NodePatch el state
+value_ txt = NPProperty "value" (DOM.toJSVal txt)
 
-type_ :: (HasTypeProperty el) => Text -> NodePatch el state
-type_ txt = NPProperty "type" $ V.ElementProperty
-  { V.eaGetProperty = getType
-  , V.eaSetProperty = setType
-  , V.eaValue = return txt
-  }
-
-class HasHrefProperty el where
-  getHref :: el -> DOM.JSM Text
-  setHref :: el -> Text -> DOM.JSM ()
-
-instance HasHrefProperty DOM.HTMLAnchorElement where
-  getHref = DOM.HyperlinkElementUtils.getHref
-  setHref = DOM.HyperlinkElementUtils.setHref
-
-href_ :: (HasHrefProperty el) => Text -> NodePatch el state
-href_ txt = NPProperty "href" $ V.ElementProperty
-  { V.eaGetProperty = getHref
-  , V.eaSetProperty = setHref
-  , V.eaValue = return txt
-  }
-
-class HasValueProperty el where
-  getValue :: el -> DOM.JSM Text
-  setValue :: el -> Text -> DOM.JSM ()
-
-instance HasValueProperty DOM.HTMLInputElement where
-  getValue = DOM.Input.getValue
-  setValue = DOM.Input.setValue
-
-instance HasValueProperty DOM.HTMLOptionElement where
-  getValue = DOM.Option.getValue
-  setValue = DOM.Option.setValue
-
-value_ :: (HasValueProperty el) => Text -> NodePatch el state
-value_ txt = NPProperty "value" $ V.ElementProperty
-  { V.eaGetProperty = getValue
-  , V.eaSetProperty = setValue
-  , V.eaValue = return txt
-  }
-
-class HasCheckedProperty el where
-  getChecked :: el -> DOM.JSM Bool
-  setChecked :: el -> Bool -> DOM.JSM ()
-
-instance HasCheckedProperty DOM.HTMLInputElement where
-  getChecked = DOM.Input.getChecked
-  setChecked = DOM.Input.setChecked
-
-checked_ :: (HasCheckedProperty el) => Bool -> NodePatch el state
-checked_ b = NPProperty "checked" $ V.ElementProperty
-  { V.eaGetProperty = getChecked
-  , V.eaSetProperty = setChecked
-  , V.eaValue = return b
-  }
+checked_ :: Bool -> NodePatch el state
+checked_ b = NPProperty "checked" (DOM.toJSVal b)
 
 selected_ :: Bool -> NodePatch DOM.HTMLOptionElement state
-selected_ b = NPProperty "selected" $ V.ElementProperty
-  { V.eaGetProperty = DOM.Option.getSelected
-  , V.eaSetProperty = DOM.Option.setSelected
-  , V.eaValue = return b
-  }
+selected_ b = NPProperty "selected" (DOM.toJSVal b)
 
-class HasDisabledProperty el where
-  getDisabled :: el -> DOM.JSM Bool
-  setDisabled :: el -> Bool -> DOM.JSM ()
-
-instance HasDisabledProperty DOM.HTMLButtonElement where
-  getDisabled = DOM.Button.getDisabled
-  setDisabled = DOM.Button.setDisabled
-
-disabled_ :: HasDisabledProperty el => Bool -> NodePatch el state
-disabled_ b = NPProperty "disabled" $ V.ElementProperty
-  { V.eaGetProperty = getDisabled
-  , V.eaSetProperty = setDisabled
-  , V.eaValue = return b
-  }
-
-#if defined(ghcjs_HOST_OS)
--- Raw FFI on js for performance
-
-foreign import javascript unsafe
-  "$2[$1]"
-  js_getProperty :: Text -> JSVal -> IO JSVal
-
-foreign import javascript unsafe
-  "$2[$1] = $3"
-  js_setProperty :: Text -> JSVal -> JSVal -> IO ()
-
-rawProperty :: (DOM.PToJSVal el, DOM.ToJSVal a) => Text -> a -> NodePatch el state
-rawProperty k x = NPProperty k $ V.ElementProperty
-  { V.eaGetProperty = \el_ -> js_getProperty k (DOM.pToJSVal el_)
-  , V.eaSetProperty = \el_ y -> do
-      js_setProperty k (DOM.pToJSVal el_) y
-  , V.eaValue = DOM.toJSVal x
-  }
-#else
-rawProperty :: (JSaddle.MakeObject el, DOM.ToJSVal a) => Text -> a -> NodePatch el state
-rawProperty k x = NPProperty k $ V.ElementProperty
-  { V.eaGetProperty = \el_ -> el_ JSaddle.! k
-  , V.eaSetProperty = \el_ y -> (el_ JSaddle.<# k) y
-  , V.eaValue = DOM.toJSVal x
-  }
-#endif
+disabled_ :: Bool -> NodePatch el state
+disabled_ b = NPProperty "disabled" (DOM.toJSVal b)
 
 {-# INLINE rawAttribute #-}
-rawAttribute :: (DOM.IsElement el) => Text -> Text -> NodePatch el state
-rawAttribute = NPAttribute
+rawAttribute :: Text -> DOM.JSVal -> NodePatch el state
+rawAttribute k v = NPAttribute k (return v)
 
-class HasPlaceholderProperty el where
-  getPlaceholder :: el -> DOM.JSM Text
-  setPlaceholder :: el -> Text -> DOM.JSM ()
+{-# INLINE attribute #-}
+attribute :: Text -> Text -> NodePatch el state
+attribute k v = NPAttribute k (DOM.toJSVal v)
 
-instance HasPlaceholderProperty DOM.HTMLInputElement where
-  getPlaceholder = DOM.Input.getPlaceholder
-  setPlaceholder = DOM.Input.setPlaceholder
-
-instance HasPlaceholderProperty DOM.HTMLTextAreaElement where
-  getPlaceholder = DOM.TextArea.getPlaceholder
-  setPlaceholder = DOM.TextArea.setPlaceholder
-
-placeholder_ :: (HasPlaceholderProperty el) => Text -> NodePatch el state
-placeholder_ txt = NPProperty "placeholder" $ V.ElementProperty
-  { V.eaGetProperty = getPlaceholder
-  , V.eaSetProperty = setPlaceholder
-  , V.eaValue = return txt
-  }
+placeholder_ :: Text -> NodePatch el state
+placeholder_ txt = NPProperty "placeholder" (DOM.toJSVal txt)
 
 {-# INLINE for_ #-}
 for_ :: Text -> NodePatch DOM.HTMLLabelElement state
-for_ txt = NPProperty "for" $ V.ElementProperty
-  { V.eaGetProperty = DOM.Label.getHtmlFor
-  , V.eaSetProperty = DOM.Label.setHtmlFor
-  , V.eaValue = return txt
-  }
-
-class HasMultipleProperty el where
-  getMultiple :: el -> DOM.JSM Bool
-  setMultiple :: el -> Bool -> DOM.JSM ()
-
-instance HasMultipleProperty DOM.HTMLInputElement where
-  getMultiple = DOM.Input.getMultiple
-  setMultiple = DOM.Input.setMultiple
-
-instance HasMultipleProperty DOM.HTMLSelectElement where
-  getMultiple = DOM.Select.getMultiple
-  setMultiple = DOM.Select.setMultiple
+for_ txt = NPProperty "for" (DOM.toJSVal txt)
 
 {-# INLINE multiple_ #-}
-multiple_ :: (HasMultipleProperty el) => Bool -> NodePatch el state
-multiple_ txt = NPProperty "multiple" $ V.ElementProperty
-  { V.eaGetProperty = getMultiple
-  , V.eaSetProperty = setMultiple
-  , V.eaValue = return txt
-  }
-
-class HasSrcProperty el where
-  getSrc :: el -> DOM.JSM Text
-  setSrc :: el -> Text -> DOM.JSM ()
-
-instance HasSrcProperty DOM.HTMLIFrameElement where
-  getSrc = DOM.IFrame.getSrc
-  setSrc = DOM.IFrame.setSrc
+multiple_ :: Bool -> NodePatch el state
+multiple_ txt = NPProperty "multiple" (DOM.toJSVal txt)
 
 {-# INLINE src_ #-}
-src_ :: (HasSrcProperty el) => Text -> NodePatch el state
-src_ txt = NPProperty "src" $ V.ElementProperty
-  { V.eaGetProperty = getSrc
-  , V.eaSetProperty = setSrc
-  , V.eaValue = return txt
-  }
+src_ :: Text -> NodePatch el state
+src_ txt = NPProperty "src" (DOM.toJSVal txt)
 
 {-# INLINE onEvent #-}
 onEvent ::

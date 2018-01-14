@@ -48,7 +48,9 @@ library
     build-depends:
       ghcjs-base,
       aeson
-    js-sources: jsbits/fnv.js
+    js-sources:
+      jsbits/fnv.js,
+      jsbits/eq.js
   default-language: Haskell2010
   ghc-options: -Wall
   -- DO NOT put TemplateHaskell here, currently it triggers -dynamic-too
