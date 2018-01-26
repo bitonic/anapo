@@ -706,7 +706,7 @@ style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el state
 style = NPStyle
 
 class_ :: Text -> NodePatch el state
-class_ txt = NPProperty "class" (DOM.toJSVal txt)
+class_ txt = NPProperty "className" (DOM.toJSVal txt)
 
 id_ ::  Text -> NodePatch el state
 id_ txt = NPProperty "id" (DOM.toJSVal txt)
