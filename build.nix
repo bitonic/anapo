@@ -1,5 +1,5 @@
 { ghcjs ? true
-, ghcVersion ? "ghc822"
+, ghcVersion ? "ghc802"
 , ghcjsVersion ? "ghcjsHEAD"
 }:
 let

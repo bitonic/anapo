@@ -3,8 +3,7 @@ all:
 	nix-build build.nix -A anapo
 	nix-build build.nix -A anapo-test-app
 	nix-build build.nix -A anapo --arg ghcjs false
-	# this currently does not work because of linking errors
-	# nix-build -A anapo-test-app --arg ghcjs false
+	nix-build build.nix -A anapo-test-app --arg ghcjs false
 
 .PHONY: ghc-anapo-configure
 ghc-anapo-configure:
