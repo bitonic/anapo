@@ -30,12 +30,16 @@ module Anapo.Component
     -- * AnapoM
   , AnapoM
   , Dom
+  , Dom'
   , DomState
   , KeyedDom
+  , KeyedDom'
   , KeyedDomState
   , MapDom
+  , MapDom'
   , MapDomState
   , Node
+  , Node'
   , askRegisterThread
   , askHandleException
   , askPreviousState
@@ -57,8 +61,11 @@ module Anapo.Component
 
     -- * basic combinators
   , n
+  , n'
   , key
+  , key'
   , ukey
+  , ukey'
   , text
   , rawNode
   , marked

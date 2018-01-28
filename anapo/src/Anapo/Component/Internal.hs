@@ -234,9 +234,13 @@ newtype MapDomState = MapDomState (DList (Text, V.Node V.SomeVDomNode))
 -- the Int is to store the current index in the dom, to be able o build
 -- tthe next path segment.
 type Dom state = AnapoM DomState state ()
+type Dom' state a = AnapoM DomState state a
 type KeyedDom state = AnapoM KeyedDomState state ()
+type KeyedDom' state a = AnapoM KeyedDomState state a
 type MapDom state = AnapoM MapDomState state ()
+type MapDom' state a = AnapoM MapDomState state a
 type Node state = AnapoM () state (V.Node V.SomeVDomNode)
+type Node' state a = AnapoM () state (V.Node V.SomeVDomNode, a)
 
 instance MonadIO (AnapoM dom state) where
   {-# INLINE liftIO #-}
@@ -361,17 +365,41 @@ n getNode = AnapoM $ \acEnv anEnv dom -> do
     , ()
     )
 
+{-# INLINE n' #-}
+n' :: Node' state a -> Dom' state a
+n' getNode = AnapoM $ \acEnv anEnv dom -> do
+  (_, (nod, x)) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv } ()
+  return
+    ( dom
+        { domStateLength = domStateLength dom + 1
+        , domStateDom = domStateDom dom <> DList.singleton nod
+        }
+    , x
+    )
+
 {-# INLINE key #-}
 key :: Text -> Node state -> KeyedDom state
 key k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
   (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
 
+{-# INLINE key' #-}
+key' :: Text -> Node' state a -> KeyedDom' state a
+key' k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
+  (_, (nod, x)) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  return (KeyedDomState (dom <> DList.singleton (k, nod)), x)
+
 {-# INLINE ukey #-}
 ukey :: Text -> Node state -> MapDom state
 ukey k getNode = AnapoM $ \acEnv anEnv (MapDomState dom) -> do
   (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
   return (MapDomState (dom <> DList.singleton (k, nod)), ())
+
+{-# INLINE ukey' #-}
+ukey' :: Text -> Node' state a -> MapDom' state a
+ukey' k getNode = AnapoM $ \acEnv anEnv (MapDomState dom) -> do
+  (_, (nod, x)) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  return (MapDomState (dom <> DList.singleton (k, nod)), x)
 
 {-# INLINE text #-}
 text :: Text -> Node state
