@@ -258,7 +258,9 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
       -> V.Children RenderedVDomNode
       -> DOM.JSM ()
     removeChildren container = \case
-      V.CRawHtml{} -> return ()
+      V.CRawHtml{} -> do
+        container' <- DOM.unsafeCastTo DOM.Element container
+        DOM.Element.setInnerHTML container' ("" :: Text)
       V.CNormal vdoms -> removeDom container vdoms
       V.CKeyed vdoms -> removeDom container vdoms
       V.CMap vdoms -> removeDom container vdoms
