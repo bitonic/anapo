@@ -42,6 +42,16 @@ data Rerender = Rerender | UnsafeDontRerender
 
 data SomeVDomNode = forall el. (DOM.IsNode el) => SomeVDomNode (VDomNode el)
 
+forSomeNodeBody ::
+     Monad m
+  => Node SomeVDomNode
+  -> (forall el. DOM.IsNode el => VDomNode el -> m (VDomNode el))
+  -> m (Node SomeVDomNode)
+forSomeNodeBody node f = case nodeBody node of
+  SomeVDomNode node' -> do
+    node'' <- f node'
+    return node{nodeBody = SomeVDomNode node''}
+
 -- Something that will turn in a single DOM node.
 data VDomNode el = VDomNode
   { vdomMark :: Maybe Mark

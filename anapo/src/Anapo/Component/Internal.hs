@@ -827,7 +827,7 @@ simpleNode st node0 = do
   (_, vdom) <- unAnapoM
     (do
       node <- _componentNode comp ()
-      forSomeNodeBody node $ \node' -> do
+      V.forSomeNodeBody node $ \node' -> do
         patches <- registerComponent (_componentPositions comp) ()
         patchNode patches node')
     ActionEnv
@@ -872,16 +872,6 @@ actionUnliftJSM = liftAction askUnliftJSM
 
 -- Components
 -- --------------------------------------------------------------------
-
-forSomeNodeBody ::
-     Monad m
-  => V.Node V.SomeVDomNode
-  -> (forall el. DOM.IsNode el => V.VDomNode el -> m (V.VDomNode el))
-  -> m (V.Node V.SomeVDomNode)
-forSomeNodeBody node f = case V.nodeBody node of
-  V.SomeVDomNode node' -> do
-    node'' <- f node'
-    return node{V.nodeBody = V.SomeVDomNode node''}
 
 data Component props state = Component
   { _componentState :: state
@@ -934,7 +924,7 @@ component props = do
       anEnv
         { aeState = _componentState (aeState anEnv) }
       dom
-  forSomeNodeBody node $ \node' -> do
+  V.forSomeNodeBody node $ \node' -> do
     patches <- registerComponent (_componentPositions comp) props
     patchNode patches node'
 

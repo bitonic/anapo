@@ -104,7 +104,7 @@ nodeLoop withState node excComp root = do
       ((_, vdom), vdomDt) <- timeIt $ unAnapoM
         (do
           node0 <- _componentNode comp props
-          forSomeNodeBody node0 $ \node' -> do
+          V.forSomeNodeBody node0 $ \node' -> do
             patches <- registerComponent (_componentPositions comp) props
             patchNode patches node')
         (actionEnv trav)
