@@ -39,9 +39,7 @@ import Anapo.Text (Text, pack)
 import qualified Anapo.Text as T
 import qualified Anapo.OrderedHashMap as OHM
 
-#if defined(ghcjs_HOST_OS)
-import GHCJS.Types (JSVal)
-#else
+#if !defined(ghcjs_HOST_OS)
 import qualified Language.Javascript.JSaddle as JSaddle
 #endif
 
@@ -57,6 +55,7 @@ type AffineTraversal a b c d = Lens.Traversal a b c d
 type AffineTraversal' a b = Lens.Traversal' a b
 
 -- | to be used with 'AffineTraversal'
+{-# INLINE toMaybeOf #-}
 toMaybeOf :: (HasCallStack) => Lens.Getting (Endo [a]) s a -> s -> Maybe a
 toMaybeOf l x = case Lens.toListOf l x of
   [] -> Nothing
@@ -67,8 +66,11 @@ toMaybeOf l x = case Lens.toListOf l x of
 -- --------------------------------------------------------------------
 
 newtype Dispatch stateRoot = Dispatch
-  { unDispatch ::
-      forall state props. CallStack -> AffineTraversal' stateRoot (Component props state) -> (state -> DOM.JSM state) -> IO ()
+  { unDispatch :: forall state props.
+      CallStack ->
+      AffineTraversal' stateRoot (Component props state) ->
+      (state -> DOM.JSM state) ->
+      IO ()
   }
 
 -- Register / handle
@@ -100,12 +102,6 @@ data ActionEnv rootState compProps compState state = ActionEnv
   , aeTraverseToComp :: AffineTraversal' rootState (Component compProps compState)
   , aeTraverseToState :: AffineTraversal' compState state
   }
-
-{-
-{-# INLINE runAction #-}
-runAction :: Action state a -> RegisterThread -> HandleException -> Dispatch state -> DOM.JSM a
-runAction vdom reg hdl disp = unAction vdom reg hdl disp id
--}
 
 instance Functor (Action state) where
   {-# INLINE fmap #-}

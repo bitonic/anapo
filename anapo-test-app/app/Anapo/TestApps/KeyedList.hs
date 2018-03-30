@@ -5,7 +5,6 @@ module Anapo.TestApps.KeyedList (KeyedListState, keyedListInit, keyedListCompone
 import qualified Data.Map.Strict as MS
 import Data.List (sortBy)
 import Data.Ord (comparing)
-import qualified Data.Foldable as F
 import qualified GHCJS.DOM.HTMLInputElement as DOM.Input
 import Control.Lens (_1, _2, ix, (+=))
 import Text.Read (readMaybe)
