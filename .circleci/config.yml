@@ -1,0 +1,25 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: nixos/nix:1.11.14
+    environment:
+      SSL_CERT_FILE: "/etc/ssl/certs/ca-bundle.crt"
+    steps:
+      - run:
+          name: install deps
+          command: nix-env -i nss-cacert gnumake git openssh
+      - checkout
+      - run:
+          name: "link cert"
+          command: "ln -s $(nix-build '<nixpkgs>' --no-build-output -A cacert)/etc/ssl/certs/ca-bundle.crt /etc/ssl/certs/ca-bundle.crt"
+      - restore_cache:
+          key: nix-store
+      - run:
+          name: build
+          command: make
+      - save_cache:
+          key: nix-store
+          when: always
+          paths:
+            - /nix
