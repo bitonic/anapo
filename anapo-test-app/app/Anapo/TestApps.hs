@@ -21,6 +21,7 @@ import Anapo.TestApps.YouTube
 import Anapo.TestApps.Bump
 import Anapo.TestApps.KeyedList
 import Anapo.TestApps.ComponentDifferentNodes
+import Anapo.TestApps.RawHtml
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.WindowEventHandlers as DOM (popState)
@@ -40,6 +41,7 @@ data WhichTestApp =
   | Bumps
   | KeyedList
   | DifferentNodes
+  | RawHtml
   deriving (Eq, Show, Read, Enum, Bounded, Typeable)
 
 testAppToPath :: WhichTestApp -> Text
@@ -51,6 +53,7 @@ testAppToPath = \case
   Bumps -> "/bumps"
   KeyedList -> "/keyedList"
   DifferentNodes -> "/differentNodes"
+  RawHtml -> "/rawHtml"
 
 testAppFromPath :: Text -> Maybe WhichTestApp
 testAppFromPath = \case
@@ -61,6 +64,7 @@ testAppFromPath = \case
   "/bumps" -> Just Bumps
   "/keyedList" -> Just KeyedList
   "/differentNodes" -> Just DifferentNodes
+  "/rawHtml" -> Just RawHtml
   "/" -> Just Todo
   _ -> Nothing
 
@@ -77,6 +81,7 @@ data TestAppsState = TestAppsState
   , _tasBumps :: Component () BumpsState
   , _tasKeyedList :: Component () KeyedListState
   , _tasDifferentNodes :: Component () Bool
+  , _tasRawHtml :: Component () Bool
   }
 makeLenses ''TestAppsState
 
@@ -139,6 +144,7 @@ testAppsComponent = do
         Bumps -> n$ componentL tasBumps ()
         KeyedList -> n$ componentL tasKeyedList ()
         DifferentNodes -> n$ componentL tasDifferentNodes ()
+        RawHtml -> n$ componentL tasRawHtml ()
 
 testAppsWith ::
      (TestAppsStateOrError -> Action TestAppsStateOrError a)
@@ -174,4 +180,5 @@ testAppsWith cont = do
               <*> newComponent bumps (\() -> bumpsNode)
               <*> newComponent keyedList (\() -> keyedListComponent)
               <*> componentDifferentNodesInit
+              <*> newComponent False (\() -> rawHtmlComponent)
             cont (TASOEOk st))
