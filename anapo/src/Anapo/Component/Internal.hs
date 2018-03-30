@@ -206,7 +206,12 @@ askHandleException = liftAction (Action (\env -> return (aeHandleException env))
 
 data AnapoEnv stateRoot state = AnapoEnv
   { aeReversePath :: [VDomPathSegment]
-  -- ^ this is stored in _reverse_ order
+  -- ^ this is stored in _reverse_ order. IMPORTANT: update aeDirtyPath
+  -- every time you modify this.
+  , aeDirtyPath :: Bool
+  -- ^ this is whether we have added any path since the last component.
+  -- it's used solely to prevent people placing a component on the same
+  -- path, which will make them step on each other toes.
   , aePrevState :: Maybe stateRoot
   , aeState :: state
   }
@@ -356,7 +361,14 @@ unsafeWillRemove = NPUnsafeWillRemove
 {-# INLINE n #-}
 n :: Node state -> Dom state
 n getNode = AnapoM $ \acEnv anEnv dom -> do
-  (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv } ()
+  (_, nod) <- unAnapoM
+    getNode
+    acEnv
+    anEnv
+      { aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv
+      , aeDirtyPath = True
+      }
+    ()
   return
     ( dom
         { domStateLength = domStateLength dom + 1
@@ -368,7 +380,14 @@ n getNode = AnapoM $ \acEnv anEnv dom -> do
 {-# INLINE n' #-}
 n' :: Node' state a -> Dom' state a
 n' getNode = AnapoM $ \acEnv anEnv dom -> do
-  (_, (nod, x)) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv } ()
+  (_, (nod, x)) <- unAnapoM
+    getNode
+    acEnv
+    anEnv
+      { aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv
+      , aeDirtyPath = True
+      }
+    ()
   return
     ( dom
         { domStateLength = domStateLength dom + 1
@@ -380,25 +399,53 @@ n' getNode = AnapoM $ \acEnv anEnv dom -> do
 {-# INLINE key #-}
 key :: Text -> Node state -> KeyedDom state
 key k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
-  (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  (_, nod) <- unAnapoM
+    getNode
+    acEnv
+    anEnv
+      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
+      , aeDirtyPath = True
+      }
+    ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE key' #-}
 key' :: Text -> Node' state a -> KeyedDom' state a
 key' k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
-  (_, (nod, x)) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  (_, (nod, x)) <- unAnapoM
+    getNode
+    acEnv
+    anEnv
+      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
+      , aeDirtyPath = True
+      }
+      ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), x)
 
 {-# INLINE ukey #-}
 ukey :: Text -> Node state -> MapDom state
 ukey k getNode = AnapoM $ \acEnv anEnv (MapDomState dom) -> do
-  (_, nod) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  (_, nod) <- unAnapoM
+    getNode
+    acEnv
+    anEnv
+      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
+      , aeDirtyPath = True
+      }
+    ()
   return (MapDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE ukey' #-}
 ukey' :: Text -> Node' state a -> MapDom' state a
 ukey' k getNode = AnapoM $ \acEnv anEnv (MapDomState dom) -> do
-  (_, (nod, x)) <- unAnapoM getNode acEnv anEnv{ aeReversePath = VDPSKeyed k : aeReversePath anEnv } ()
+  (_, (nod, x)) <- unAnapoM
+    getNode
+    acEnv
+    anEnv
+      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
+      , aeDirtyPath = True
+      }
+    ()
   return (MapDomState (dom <> DList.singleton (k, nod)), x)
 
 {-# INLINE text #-}
@@ -841,6 +888,7 @@ simpleNode st node0 = do
       { aeReversePath = []
       , aePrevState = Nothing
       , aeState = st
+      , aeDirtyPath = False
       }
     ()
   return vdom
@@ -908,11 +956,13 @@ registerComponent ref props = AnapoM $ \_acEnv anEnv dom -> do
       ]
     )
 
--- | This function will fail if you've already inserted the component in
--- the VDOM.
 {-# INLINE component #-}
 component :: props -> Node (Component props state)
 component props = do
+  AnapoM $ \_acEnv aeEnv dom ->
+    if aeDirtyPath aeEnv
+      then return ((), dom)
+      else error ("Trying to insert component immediately inside another component at path " <> show (reverse (aeReversePath aeEnv)) <> ", please wrap the inner component in a node.")
   comp <- ask
   node <- AnapoM $ \acEnv anEnv dom ->
     unAnapoM

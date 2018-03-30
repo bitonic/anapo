@@ -112,6 +112,7 @@ nodeLoop withState node excComp root = do
           { aeReversePath = reverse path
           , aePrevState = mbPrevComp
           , aeState = _componentState comp
+          , aeDirtyPath = False
           }
         ()
       DOM.syncPoint
