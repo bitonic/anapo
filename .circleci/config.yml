@@ -3,8 +3,6 @@ jobs:
   build:
     docker:
       - image: nixos/nix:1.11.14
-    environment:
-      SSL_CERT_FILE: "/etc/ssl/certs/ca-bundle.crt"
     steps:
       - run:
           name: install deps
