@@ -19,4 +19,7 @@ let
   anapo-test-app = haskellPackages.callPackage ./anapo-test-app/anapo-test-app.nix {
     inherit anapo;
   };
-in { inherit anapo anapo-test-app; }
+  js-framework-benchmark = haskellPackages.callPackage ./js-framework-benchmark/js-framework-benchmark.nix {
+    inherit anapo;
+  };
+in { inherit anapo anapo-test-app js-framework-benchmark; }

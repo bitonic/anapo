@@ -1,0 +1,60 @@
+name:                js-framework-benchmark
+version:             0.1.0.0
+homepage:            https://github.com/bitonic/anapo#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Francesco Mazzoli
+maintainer:          f@mazzo.li
+copyright:           Francesco Mazzoli 2017
+category:            Web
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+-- synopsis:
+-- description:
+
+executable benchmark
+  hs-source-dirs: app
+  main-is: Main.hs
+  ghc-options: -Wall -fsimpl-tick-factor=1000
+  build-depends:
+    anapo,
+    base,
+    vector,
+    ghcjs-dom,
+    random,
+    mtl,
+    lens
+  if !impl(ghcjs)
+    build-depends:
+      jsaddle-warp
+  default-language: Haskell2010
+  -- DO NOT put TemplateHaskell here, currently it triggers -dynamic-too
+  -- which in turns makes everything recompile every time. I am not
+  -- entirely sure why.
+  default-extensions:
+    BangPatterns
+    ConstraintKinds
+    ExistentialQuantification
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    GeneralizedNewtypeDeriving
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    RankNTypes
+    RecordWildCards
+    ScopedTypeVariables
+    StandaloneDeriving
+    StaticPointers
+    StrictData
+    TupleSections
+    TypeApplications
+    TypeFamilies
+
+source-repository head
+  type:     git
+  location: https://github.com/bitonic/anapo

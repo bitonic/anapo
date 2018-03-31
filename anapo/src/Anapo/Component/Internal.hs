@@ -681,6 +681,22 @@ el tag wrap patches isChildren = do
 div_ :: IsElementChildren a state => [NodePatch DOM.HTMLDivElement state] -> a -> Node state
 div_ = el "div" DOM.HTMLDivElement
 
+{-# INLINE table_ #-}
+table_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableElement state] -> a -> Node state
+table_ = el "table" DOM.HTMLTableElement
+
+{-# INLINE tbody_ #-}
+tbody_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableSectionElement state] -> a -> Node state
+tbody_ = el "tbody" DOM.HTMLTableSectionElement
+
+{-# INLINE td_ #-}
+td_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableCellElement state] -> a -> Node state
+td_ = el "td" DOM.HTMLTableCellElement
+
+{-# INLINE tr_ #-}
+tr_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableRowElement state] -> a -> Node state
+tr_ = el "tr" DOM.HTMLTableRowElement
+
 {-# INLINE span_ #-}
 span_ :: IsElementChildren a state => [NodePatch DOM.HTMLSpanElement state] -> a -> Node state
 span_ = el "span" DOM.HTMLSpanElement

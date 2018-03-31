@@ -109,6 +109,10 @@ module Anapo.Component
   , pre_
   , code_
   , nav_
+  , table_
+  , tbody_
+  , tr_
+  , td_
 
     -- * attributes
   , SomeEventAction(..)
