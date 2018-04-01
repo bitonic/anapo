@@ -15,7 +15,7 @@ jobs:
           key: nix-store
       - run:
           name: install deps, post cache
-          command: nix-env -i gnumake python3
+          command: nix-env -i gnumake python
       - run:
           name: build
           command: ./build.py
