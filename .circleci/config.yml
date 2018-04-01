@@ -6,7 +6,7 @@ jobs:
     steps:
       - run:
           name: install deps
-          command: nix-env -i nss-cacert gnumake git openssh
+          command: nix-env -i nss-cacert gnumake git openssh python3
       - checkout
       - run:
           name: "link cert"
@@ -16,7 +16,7 @@ jobs:
       - run:
           timeout: 6000
           name: build
-          command: make
+          command: ./build.py
       - save_cache:
           key: nix-store
           when: always
