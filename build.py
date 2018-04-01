@@ -2,29 +2,29 @@
 import subprocess
 import argparse
 
-def configure(project, ghcjs):
-  print("### Configuring project {}, ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))
+def run(project, ghcjs, cmd):
   subprocess.check_call([
     "nix-shell", "build.nix", "-A", project + ".env",
     "--arg", "ghcjs", "true" if ghcjs else "false",
-    "--run",
-    "cd " + project + " && runhaskell Setup.hs configure" + (" --ghcjs" if ghcjs else "")])
+    "--run", "cd " + project + " && runhaskell Setup.hs " + cmd])
+
+def configure(project, ghcjs):
+  print("### Configuring project {}, ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))
+  run(project, ghcjs, "configure" + (" --ghcjs" if ghcjs else ""))
 
 def build(project, ghcjs):
-  print("### Building project {}, ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))
-  subprocess.check_call(
-    ["nix-shell", "build.nix", "-A", project + ".env",
-      "--arg", "ghcjs", "true" if ghcjs else "false",
-      "--run",
-      "cd " + project + " && runhaskell Setup.hs build"])
+  print("### Configuring project {}, ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))
+  run(project, ghcjs, "build")
 
 def repl(project, ghcjs):
   print("### REPLing project {}, ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))
+  run(project, ghcjs, "repl")
+
+def build_nix(project, ghcjs):
+  print("### Building project {} (nix), ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))
   subprocess.check_call(
-    ["nix-shell", "build.nix", "-A", project + ".env",
-      "--arg", "ghcjs", "true" if ghcjs else "false",
-      "--run",
-      "cd " + project + " && runhaskell Setup.hs repl"])
+    ["nix-build", "build.nix", "-A", project,
+      "--arg", "ghcjs", "true" if ghcjs else "false"])
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ghc", help = "Use GHC rather than GHCjs", action = "store_true")
@@ -47,4 +47,4 @@ else:
   for ghcjs in [True, False]:
     projects = ["anapo", "anapo-test-app", "js-framework-benchmark"]
     for project in projects:
-      configure(project, ghcjs)
+      build_nix(project, ghcjs)
