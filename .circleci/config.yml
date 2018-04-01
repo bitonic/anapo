@@ -14,9 +14,9 @@ jobs:
       - restore_cache:
           key: nix-store
       - run:
-          timeout: 6000
           name: build
           command: ./build.py
+          no_output_timeout: 1000h
       - save_cache:
           key: nix-store
           when: always
