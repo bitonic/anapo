@@ -17,7 +17,7 @@ executable test-app
   hs-source-dirs: app
   main-is: Main.hs
   ghc-options: -Wall -fsimpl-tick-factor=1000
-  if !impl(ghcjs)
+  if impl(ghcjs)
     ghc-options: -dedupe
   build-depends:
     aeson,
