@@ -56,7 +56,7 @@ forSomeNodeBody node f = case nodeBody node of
 data VDomNode el = VDomNode
   { vdomMark :: Maybe Mark
   , vdomBody :: VDomBody el
-  , vdomCallbacks :: Callbacks
+  , vdomCallbacks :: Callbacks el
   , vdomWrap :: DOM.JSVal -> el
   }
 
@@ -65,15 +65,15 @@ data Mark = Mark
   , markRerender :: Rerender
   }
 
-data Callbacks = Callbacks
-  { callbacksUnsafeWillMount :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeDidMount :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeWillPatch :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeDidPatch :: DOM.Node -> DOM.JSM ()
-  , callbacksUnsafeWillRemove :: DOM.Node -> DOM.JSM ()
+data Callbacks el = Callbacks
+  { callbacksUnsafeWillMount :: el -> DOM.JSM ()
+  , callbacksUnsafeDidMount :: el -> DOM.JSM ()
+  , callbacksUnsafeWillPatch :: el -> DOM.JSM ()
+  , callbacksUnsafeDidPatch :: el -> DOM.JSM ()
+  , callbacksUnsafeWillRemove :: el -> DOM.JSM ()
   }
 
-instance Monoid Callbacks where
+instance Monoid (Callbacks el) where
   {-# INLINE mempty #-}
   mempty = Callbacks
     { callbacksUnsafeWillMount = \_ -> return ()

@@ -213,16 +213,16 @@ renderNode ::
   -- when the node is mounted.
   -> DOM.JSM a
 renderNode doc V.Node{nodeBody = vdom@(V.SomeVDomNode V.VDomNode{..}), nodeChildren} cont0 = do
-  let cont rendered = do
-        V.callbacksUnsafeWillMount vdomCallbacks (rvdnDom (V.nodeBody rendered))
+  let cont el rendered = do
+        V.callbacksUnsafeWillMount vdomCallbacks el
         x <- cont0 rendered
-        V.callbacksUnsafeDidMount vdomCallbacks (rvdnDom (V.nodeBody rendered))
+        V.callbacksUnsafeDidMount vdomCallbacks el
         return x
   case vdomBody of
     V.VDBText txt -> do
       txtNode <- DOM.Document.createTextNode doc txt
-      cont (emptyOverlay vdom (DOM.toNode txtNode))
-    V.VDBRawNode el -> cont (emptyOverlay vdom (DOM.toNode el))
+      cont txtNode (emptyOverlay vdom (DOM.toNode txtNode))
+    V.VDBRawNode el -> cont el (emptyOverlay vdom (DOM.toNode el))
     V.VDBElement V.Element{..} -> do
       el <- DOM.unsafeCastTo vdomWrap =<< DOM.Document.createElement doc elementTag
       defProps <- addProperties el elementProperties mempty
@@ -232,7 +232,7 @@ renderNode doc V.Node{nodeBody = vdom@(V.SomeVDomNode V.VDomNode{..}), nodeChild
       childrenRendered <- case nodeChildren of
         Nothing -> fail "renderNode: got no children for an element"
         Just children -> renderChildren doc el children
-      cont $ V.Node
+      cont el $ V.Node
         (RenderedVDomNode vdom (DOM.toNode el) evts defProps style attrs)
         (Just childrenRendered)
 
@@ -281,7 +281,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
         container
         (V.Node RenderedVDomNode{rvdnVDom = V.SomeVDomNode V.VDomNode{..}, ..} mbChildren) = do
       -- first call the will remove
-      V.callbacksUnsafeWillRemove vdomCallbacks rvdnDom
+      V.callbacksUnsafeWillRemove vdomCallbacks =<< DOM.unsafeCastTo vdomWrap rvdnDom
       -- then recurse down...
       for_ mbChildren (removeChildren rvdnDom)
       -- then remove the DOM thing and remove the children
@@ -441,8 +441,9 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           -- Element
           (V.VDBElement prevElement, V.VDBElement element) | V.elementTag prevElement == V.elementTag element -> do
             -- callback before patch
-            V.callbacksUnsafeWillPatch (V.vdomCallbacks prevVDom) (rvdnDom prevRendered)
-            dom' <- DOM.unsafeCastTo (V.vdomWrap vdom)  (rvdnDom prevRendered)
+            V.callbacksUnsafeWillPatch (V.vdomCallbacks prevVDom) =<<
+              DOM.unsafeCastTo (V.vdomWrap prevVDom) (rvdnDom prevRendered)
+            dom' <- DOM.unsafeCastTo (V.vdomWrap vdom) (rvdnDom prevRendered)
             -- add props
             newProps <- addProperties
               dom'
@@ -469,7 +470,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
               (Just prevChildren', Just children') -> patchChildren dom' prevChildren' children'
               (_, _) -> fail "renderVirtualDom.patchNode: no children for Element!"
             -- callback after patch
-            V.callbacksUnsafeDidPatch (V.vdomCallbacks vdom) (rvdnDom prevRendered)
+            V.callbacksUnsafeDidPatch (V.vdomCallbacks vdom) dom'
             return V.Node
               { V.nodeBody = RenderedVDomNode
                   { rvdnVDom = V.SomeVDomNode vdom

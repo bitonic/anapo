@@ -354,23 +354,23 @@ zoomT st l m = AnapoM $ \acEnv anEnv dom ->
 -- --------------------------------------------------------------------
 
 {-# INLINE unsafeWillMount #-}
-unsafeWillMount :: (DOM.Node -> Action state ()) -> NodePatch el state
+unsafeWillMount :: (el -> Action state ()) -> NodePatch el state
 unsafeWillMount = NPUnsafeWillMount
 
 {-# INLINE unsafeDidMount #-}
-unsafeDidMount :: (DOM.Node -> Action state ()) -> NodePatch el state
+unsafeDidMount :: (el -> Action state ()) -> NodePatch el state
 unsafeDidMount = NPUnsafeDidMount
 
 {-# INLINE unsafeWillPatch #-}
-unsafeWillPatch :: (DOM.Node -> Action state ()) -> NodePatch el state
+unsafeWillPatch :: (el -> Action state ()) -> NodePatch el state
 unsafeWillPatch = NPUnsafeWillPatch
 
 {-# INLINE unsafeDidPatch #-}
-unsafeDidPatch :: (DOM.Node -> Action state ()) -> NodePatch el state
+unsafeDidPatch :: (el -> Action state ()) -> NodePatch el state
 unsafeDidPatch = NPUnsafeDidPatch
 
 {-# INLINE unsafeWillRemove #-}
-unsafeWillRemove :: (DOM.Node -> Action state ()) -> NodePatch el state
+unsafeWillRemove :: (el -> Action state ()) -> NodePatch el state
 unsafeWillRemove = NPUnsafeWillRemove
 
 -- useful shorthands
@@ -547,11 +547,11 @@ data SomeEventAction el write = forall e. (DOM.IsEvent e) =>
 newtype UnsafeRawHtml = UnsafeRawHtml Text
 
 data NodePatch el state =
-    NPUnsafeWillMount (DOM.Node -> Action state ())
-  | NPUnsafeDidMount (DOM.Node -> Action state ())
-  | NPUnsafeWillPatch (DOM.Node -> Action state ())
-  | NPUnsafeDidPatch (DOM.Node -> Action state ())
-  | NPUnsafeWillRemove (DOM.Node -> Action state ())
+    NPUnsafeWillMount (el -> Action state ())
+  | NPUnsafeDidMount (el -> Action state ())
+  | NPUnsafeWillPatch (el -> Action state ())
+  | NPUnsafeDidPatch (el -> Action state ())
+  | NPUnsafeWillRemove (el -> Action state ())
   | NPStyle V.StylePropertyName V.StyleProperty
   | NPAttribute V.AttributeName (DOM.JSM V.AttributeBody)
   | NPProperty V.ElementPropertyName (DOM.JSM V.ElementProperty)
