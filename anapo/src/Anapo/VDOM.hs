@@ -66,29 +66,29 @@ data Mark = Mark
   }
 
 data Callbacks el = Callbacks
-  { callbacksUnsafeWillMount :: el -> DOM.JSM ()
-  , callbacksUnsafeDidMount :: el -> DOM.JSM ()
-  , callbacksUnsafeWillPatch :: el -> DOM.JSM ()
-  , callbacksUnsafeDidPatch :: el -> DOM.JSM ()
-  , callbacksUnsafeWillRemove :: el -> DOM.JSM ()
+  { callbacksWillMount :: el -> DOM.JSM ()
+  , callbacksDidMount :: el -> DOM.JSM ()
+  , callbacksWillPatch :: el -> DOM.JSM ()
+  , callbacksDidPatch :: el -> DOM.JSM ()
+  , callbacksWillRemove :: el -> DOM.JSM ()
   }
 
 instance Monoid (Callbacks el) where
   {-# INLINE mempty #-}
   mempty = Callbacks
-    { callbacksUnsafeWillMount = \_ -> return ()
-    , callbacksUnsafeDidMount = \_ -> return ()
-    , callbacksUnsafeWillPatch = \_ -> return ()
-    , callbacksUnsafeDidPatch = \_ -> return ()
-    , callbacksUnsafeWillRemove = \_ -> return ()
+    { callbacksWillMount = \_ -> return ()
+    , callbacksDidMount = \_ -> return ()
+    , callbacksWillPatch = \_ -> return ()
+    , callbacksDidPatch = \_ -> return ()
+    , callbacksWillRemove = \_ -> return ()
     }
   {-# INLINE mappend #-}
   callbacks1 `mappend` callbacks2 = Callbacks
-    { callbacksUnsafeWillMount = \el -> callbacksUnsafeWillMount callbacks1 el >> callbacksUnsafeWillMount callbacks2 el
-    , callbacksUnsafeDidMount = \el -> callbacksUnsafeDidMount callbacks1 el >> callbacksUnsafeDidMount callbacks2 el
-    , callbacksUnsafeWillPatch = \el -> callbacksUnsafeWillPatch callbacks1 el >> callbacksUnsafeWillPatch callbacks2 el
-    , callbacksUnsafeDidPatch = \el -> callbacksUnsafeDidPatch callbacks1 el >> callbacksUnsafeDidPatch callbacks2 el
-    , callbacksUnsafeWillRemove = \el -> callbacksUnsafeWillRemove callbacks1 el >> callbacksUnsafeWillRemove callbacks2 el
+    { callbacksWillMount = \el -> callbacksWillMount callbacks1 el >> callbacksWillMount callbacks2 el
+    , callbacksDidMount = \el -> callbacksDidMount callbacks1 el >> callbacksDidMount callbacks2 el
+    , callbacksWillPatch = \el -> callbacksWillPatch callbacks1 el >> callbacksWillPatch callbacks2 el
+    , callbacksDidPatch = \el -> callbacksDidPatch callbacks1 el >> callbacksDidPatch callbacks2 el
+    , callbacksWillRemove = \el -> callbacksWillRemove callbacks1 el >> callbacksWillRemove callbacks2 el
     }
 
 data VDomBody el where

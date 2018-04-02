@@ -72,11 +72,11 @@ module Anapo.Component
   , marked
 
     -- * callbacks
-  , unsafeWillMount
-  , unsafeDidMount
-  , unsafeWillPatch
-  , unsafeDidPatch
-  , unsafeWillRemove
+  , willMount
+  , didMount
+  , willPatch
+  , didPatch
+  , willRemove
 
     -- * raw html
   , UnsafeRawHtml(..)

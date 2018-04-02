@@ -353,25 +353,25 @@ zoomT st l m = AnapoM $ \acEnv anEnv dom ->
 -- to manipulate nodes
 -- --------------------------------------------------------------------
 
-{-# INLINE unsafeWillMount #-}
-unsafeWillMount :: (el -> Action state ()) -> NodePatch el state
-unsafeWillMount = NPUnsafeWillMount
+{-# INLINE willMount #-}
+willMount :: (el -> Action state ()) -> NodePatch el state
+willMount = NPWillMount
 
-{-# INLINE unsafeDidMount #-}
-unsafeDidMount :: (el -> Action state ()) -> NodePatch el state
-unsafeDidMount = NPUnsafeDidMount
+{-# INLINE didMount #-}
+didMount :: (el -> Action state ()) -> NodePatch el state
+didMount = NPDidMount
 
-{-# INLINE unsafeWillPatch #-}
-unsafeWillPatch :: (el -> Action state ()) -> NodePatch el state
-unsafeWillPatch = NPUnsafeWillPatch
+{-# INLINE willPatch #-}
+willPatch :: (el -> Action state ()) -> NodePatch el state
+willPatch = NPWillPatch
 
-{-# INLINE unsafeDidPatch #-}
-unsafeDidPatch :: (el -> Action state ()) -> NodePatch el state
-unsafeDidPatch = NPUnsafeDidPatch
+{-# INLINE didPatch #-}
+didPatch :: (el -> Action state ()) -> NodePatch el state
+didPatch = NPDidPatch
 
-{-# INLINE unsafeWillRemove #-}
-unsafeWillRemove :: (el -> Action state ()) -> NodePatch el state
-unsafeWillRemove = NPUnsafeWillRemove
+{-# INLINE willRemove #-}
+willRemove :: (el -> Action state ()) -> NodePatch el state
+willRemove = NPWillRemove
 
 -- useful shorthands
 -- --------------------------------------------------------------------
@@ -547,11 +547,11 @@ data SomeEventAction el write = forall e. (DOM.IsEvent e) =>
 newtype UnsafeRawHtml = UnsafeRawHtml Text
 
 data NodePatch el state =
-    NPUnsafeWillMount (el -> Action state ())
-  | NPUnsafeDidMount (el -> Action state ())
-  | NPUnsafeWillPatch (el -> Action state ())
-  | NPUnsafeDidPatch (el -> Action state ())
-  | NPUnsafeWillRemove (el -> Action state ())
+    NPWillMount (el -> Action state ())
+  | NPDidMount (el -> Action state ())
+  | NPWillPatch (el -> Action state ())
+  | NPDidPatch (el -> Action state ())
+  | NPWillRemove (el -> Action state ())
   | NPStyle V.StylePropertyName V.StyleProperty
   | NPAttribute V.AttributeName (DOM.JSM V.AttributeBody)
   | NPProperty V.ElementPropertyName (DOM.JSM V.ElementProperty)
@@ -608,30 +608,30 @@ patchNode patches00 node00 = do
     go !node = \case
       [] -> return node
       patch : patches -> case patch of
-        NPUnsafeWillMount cback -> go
+        NPWillMount cback -> go
           (modifyCallbacks node $ \cbacks -> mappend
             cbacks
-            mempty{ V.callbacksUnsafeWillMount = \e -> liftIO (unliftIO u (cback e)) })
+            mempty{ V.callbacksWillMount = \e -> liftIO (unliftIO u (cback e)) })
           patches
-        NPUnsafeDidMount cback -> go
+        NPDidMount cback -> go
           (modifyCallbacks node $ \cbacks -> mappend
             cbacks
-            mempty{ V.callbacksUnsafeDidMount = \e -> liftIO (unliftIO u (cback e)) })
+            mempty{ V.callbacksDidMount = \e -> liftIO (unliftIO u (cback e)) })
           patches
-        NPUnsafeWillPatch cback -> go
+        NPWillPatch cback -> go
           (modifyCallbacks node $ \cbacks -> mappend
             cbacks
-            mempty{ V.callbacksUnsafeWillPatch = \e -> liftIO (unliftIO u (cback e)) })
+            mempty{ V.callbacksWillPatch = \e -> liftIO (unliftIO u (cback e)) })
           patches
-        NPUnsafeDidPatch cback -> go
+        NPDidPatch cback -> go
           (modifyCallbacks node $ \cbacks -> mappend
             cbacks
-            mempty{ V.callbacksUnsafeDidPatch = \e -> liftIO (unliftIO u (cback e)) })
+            mempty{ V.callbacksDidPatch = \e -> liftIO (unliftIO u (cback e)) })
           patches
-        NPUnsafeWillRemove cback -> go
+        NPWillRemove cback -> go
           (modifyCallbacks node $ \cbacks -> mappend
             cbacks
-            mempty{ V.callbacksUnsafeWillRemove = \e -> liftIO (unliftIO u (cback e)) })
+            mempty{ V.callbacksWillRemove = \e -> liftIO (unliftIO u (cback e)) })
           patches
         NPStyle styleName styleBody -> go
           (modifyElement node $ \vel -> vel
@@ -983,10 +983,10 @@ registerComponent ref props = AnapoM $ \_acEnv anEnv dom -> do
         liftIO (modifyIORef' ref (HMS.delete (reverse (aeReversePath anEnv))))
   return
     ( dom
-    , [ NPUnsafeWillMount add
-      , NPUnsafeWillPatch remove
-      , NPUnsafeDidPatch add
-      , NPUnsafeWillRemove remove
+    , [ NPWillMount add
+      , NPWillPatch remove
+      , NPDidPatch add
+      , NPWillRemove remove
       ]
     )
 

@@ -58,7 +58,7 @@ youTubeNode = do
   st <- ask
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
   let
-    didMount el = void $ actionFork $ liftJSM $ do
+    onDidMount el = void $ actionFork $ liftJSM $ do
       logInfo "Creating new YouTube object"
       -- We create the you tube element in the div _inside_ the
       -- top-level element otherwise anapo will choke on the fact that
@@ -76,7 +76,7 @@ youTubeNode = do
         youTubePauseVideo ytp
       liftIO (writeIORef mbYtpRef (Just ytp))
   let
-    willRemove _el = do
+    onWillRemove _el = do
       mbYtp <- liftIO (readIORef mbYtpRef)
       case mbYtp of
         Nothing -> do
@@ -95,8 +95,10 @@ youTubeNode = do
         n$ text "YouTube player not ready"
   el <- DOM.unsafeCastTo DOM.Element node
   rawNode DOM.Element el
-    [ unsafeDidMount didMount
-    , unsafeWillRemove willRemove
+    [ didMount onDidMount
+    , willPatch onWillRemove
+    , didPatch onDidMount
+    , willRemove onWillRemove
     ]
 
 -- | Never rerender the node

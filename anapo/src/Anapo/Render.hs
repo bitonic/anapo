@@ -214,9 +214,9 @@ renderNode ::
   -> DOM.JSM a
 renderNode doc V.Node{nodeBody = vdom@(V.SomeVDomNode V.VDomNode{..}), nodeChildren} cont0 = do
   let cont el rendered = do
-        V.callbacksUnsafeWillMount vdomCallbacks el
+        V.callbacksWillMount vdomCallbacks el
         x <- cont0 rendered
-        V.callbacksUnsafeDidMount vdomCallbacks el
+        V.callbacksDidMount vdomCallbacks el
         return x
   case vdomBody of
     V.VDBText txt -> do
@@ -281,7 +281,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
         container
         (V.Node RenderedVDomNode{rvdnVDom = V.SomeVDomNode V.VDomNode{..}, ..} mbChildren) = do
       -- first call the will remove
-      V.callbacksUnsafeWillRemove vdomCallbacks =<< DOM.unsafeCastTo vdomWrap rvdnDom
+      V.callbacksWillRemove vdomCallbacks =<< DOM.unsafeCastTo vdomWrap rvdnDom
       -- then recurse down...
       for_ mbChildren (removeChildren rvdnDom)
       -- then remove the DOM thing and remove the children
@@ -441,7 +441,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
           -- Element
           (V.VDBElement prevElement, V.VDBElement element) | V.elementTag prevElement == V.elementTag element -> do
             -- callback before patch
-            V.callbacksUnsafeWillPatch (V.vdomCallbacks prevVDom) =<<
+            V.callbacksWillPatch (V.vdomCallbacks prevVDom) =<<
               DOM.unsafeCastTo (V.vdomWrap prevVDom) (rvdnDom prevRendered)
             dom' <- DOM.unsafeCastTo (V.vdomWrap vdom) (rvdnDom prevRendered)
             -- add props
@@ -470,7 +470,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
               (Just prevChildren', Just children') -> patchChildren dom' prevChildren' children'
               (_, _) -> fail "renderVirtualDom.patchNode: no children for Element!"
             -- callback after patch
-            V.callbacksUnsafeDidPatch (V.vdomCallbacks vdom) dom'
+            V.callbacksDidPatch (V.vdomCallbacks vdom) dom'
             return V.Node
               { V.nodeBody = RenderedVDomNode
                   { rvdnVDom = V.SomeVDomNode vdom
