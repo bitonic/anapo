@@ -42,7 +42,7 @@ timeIt m = do
 
 data DispatchMsg stateRoot = forall props state. DispatchMsg
   { _dispatchMsgTraverse :: AffineTraversal' (Component () stateRoot) (Component props state)
-  , _dispatchMsgModify :: state -> DOM.JSM state
+  , _dispatchMsgModify :: Component () stateRoot -> state -> DOM.JSM state
   , _dispatchCallStack :: CallStack
   }
 
@@ -159,7 +159,7 @@ nodeLoop withState node excComp root = do
                           -- fail if we already visited
                           fail "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
-                          st <- DOM.liftJSM (modif (_componentState comp))
+                          st <- DOM.liftJSM (modif compRoot (_componentState comp))
                           let comp' = comp{ _componentState = st }
                           put (Just comp')
                           return comp')

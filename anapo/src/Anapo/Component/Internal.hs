@@ -69,7 +69,10 @@ newtype Dispatch stateRoot = Dispatch
   { unDispatch :: forall state props.
       CallStack ->
       AffineTraversal' stateRoot (Component props state) ->
-      (state -> DOM.JSM state) ->
+      (stateRoot -> state -> DOM.JSM state) ->
+      -- the second arg is redudant, we pass it in here since we have to
+      -- traverse in Anapo.Loop anyway, so we don't have to traverse twice.
+      -- but we could simply have stateRoot.
       IO ()
   }
 
@@ -186,8 +189,27 @@ actionFork m =
 dispatch :: (HasCallStack, MonadAction state m) => StateT state (Action state) () -> m ()
 dispatch m =
   liftAction $ Action $ \env ->
-    liftIO $ unDispatch (aeDispatch env) callStack (aeTraverseToComp env) $ aeTraverseToState env $ \st ->
+    liftIO $ unDispatch (aeDispatch env) callStack (aeTraverseToComp env) $ \_stRoot -> aeTraverseToState env $ \st ->
       unAction (execStateT m st) env
+
+-- | Useful when one wants to update an inner component _only_ but needs
+-- sorrounding information to do so.
+{-# INLINE dispatchInside #-}
+dispatchInside ::
+     (HasCallStack, MonadAction state m)
+  => AffineTraversal' state (Component props state')
+  -> (state -> Action state state')
+  -> m ()
+dispatchInside toComp m =
+  liftAction $ Action $ \env ->
+    liftIO $ unDispatch
+      (aeDispatch env)
+      callStack
+      (aeTraverseToComp env . componentState . aeTraverseToState env . toComp)
+      (\stRoot _st ->
+          case toMaybeOf (aeTraverseToComp env . componentState . aeTraverseToState env) stRoot of
+            Nothing -> error "Couldn't traverse to outer component!"
+            Just st0 -> unAction (m st0) env)
 
 {-# INLINE askRegisterThread #-}
 askRegisterThread :: (MonadAction state m) => m RegisterThread

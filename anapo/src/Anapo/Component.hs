@@ -22,6 +22,7 @@ module Anapo.Component
   , Action(..)
   , ActionEnv(..)
   , dispatch
+  , dispatchInside
   , actionFork
   , actionZoom
   , actionComponent
