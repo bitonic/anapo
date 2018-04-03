@@ -21,9 +21,9 @@ data TodoItemState = TodoItemState
   } deriving (Eq, Show)
 makeLenses ''TodoItemState
 
-todoItemNode :: Node TodoItemState
+todoItemNode :: Node a TodoItemState
 todoItemNode = do
-  st <- ask
+  st <- view state
   let aClass = if st^.tisCompleted
         then "list-group-item active"
         else "list-group-item"
@@ -39,27 +39,27 @@ todoItemNode = do
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
   , _tsTodoElements :: Map.Map Int TodoItemState
-  , _tsInput :: Component SimpleTextInputProps Text
+  , _tsInput :: Component SimpleTextInputProps () Text
   }
 makeLenses ''TodoState
 
-todoComponent :: Node TodoState
+todoComponent :: Node a TodoState
 todoComponent = div_ [] $ do
-  st <- ask
+  st <- view state
   u <- liftAction askUnliftJSM
   n$ div_ [class_ "row align-items-center"] $ do
     n$ div_ [class_ "col-md-auto"] $ do
-      n$ componentL tsInput STIP
+      n$ zoomCtxF () noContext $ componentL tsInput STIP
         { stipButtonText = "Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)
         , stipOnSubmit = unliftJSM u $ dispatch $ do
-            curText <- use (tsInput.componentState)
+            curText <- use (tsInput.compState)
             when (curText /= "") $ do
               let newTodoItem = TodoItemState False curText
               todoEls <- use tsTodoElements
               let itemKey = if Map.null todoEls
                     then 0
                     else fst (Map.findMax todoEls) + 1
-              tsInput.componentState .= ""
+              tsInput.compState .= ""
               tsTodoElements.at itemKey .= Just newTodoItem
         }
     -- toggle completed tasks
@@ -78,7 +78,7 @@ todoComponent = div_ [] $ do
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =
         n$ div_ [class_ "list-group mx-1 my-2"] $ forM_ items $ \(itemKey, itemState) ->
-          zoomT itemState (tsTodoElements . ix itemKey) $
+          zoomStT itemState (tsTodoElements . ix itemKey) $
             key (tshow itemKey) todoItemNode
   n$ div_ [class_ "row"] $ do
     n$ div_ [class_ "col"] $ do
@@ -88,7 +88,7 @@ todoComponent = div_ [] $ do
       n$ h2_ [class_ "mx-1 my-2"] (n$"Things already done")
       renderItems done
 
-todoInit :: Action TodoState TodoState
+todoInit :: Action a TodoState TodoState
 todoInit = do
   inp <- newComponent "" simpleTextInput
   return TodoState

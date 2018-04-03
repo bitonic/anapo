@@ -8,10 +8,10 @@ import Anapo.TestApps.Prelude
 
 componentDifferentNodesInit ::
      MonadJSM m
-  => m (Component () Bool)
+  => m (Component () () Bool)
 componentDifferentNodesInit = do
   newComponent True $ \_ -> do
-    b <- ask
+    b <- view state
     let toggle = do
           n$ a_
             [ href_ "#"

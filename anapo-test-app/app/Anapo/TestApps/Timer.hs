@@ -27,9 +27,9 @@ data TimerState = TimerState
   }
 makeLenses ''TimerState
 
-timerComponent :: Dom TimerState
+timerComponent :: Dom a TimerState
 timerComponent = do
-  st <- ask
+  st <- view state
   let timePassed =
         st ^. tsTimePassed +
         (case st ^. tsRunning of
@@ -71,7 +71,7 @@ timerStop st = case st ^. tsRunning of
       , _tsTimePassed = st ^. tsTimePassed + diffUTCTime t1 t0
       }
 
-timerToggle :: Action TimerState ()
+timerToggle :: Action a TimerState ()
 timerToggle = dispatch $ do
   running <- use tsRunning
   passed <- use tsTimePassed
@@ -93,7 +93,7 @@ timerToggle = dispatch $ do
         , _tsTimePassed = passed + diffUTCTime t1 t0
         }
 
-timerBump :: Action TimerState ()
+timerBump :: Action a TimerState ()
 timerBump = dispatch $ do
   running <- use tsRunning
   case running of
@@ -102,7 +102,7 @@ timerBump = dispatch $ do
       t1 <- liftIO getCurrentTime
       tsRunning .= Running t0 t1 timer
 
-timerReset :: Action TimerState ()
+timerReset :: Action a TimerState ()
 timerReset = dispatch $ do
   running <- use tsRunning
   case running of

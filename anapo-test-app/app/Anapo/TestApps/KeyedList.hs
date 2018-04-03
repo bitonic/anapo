@@ -24,9 +24,9 @@ makeLenses ''KeyedListState
 keyedListInit :: Monad m => m KeyedListState
 keyedListInit = return (KeyedListState mempty (0, "") 0)
 
-keyedListComponent :: Node KeyedListState
+keyedListComponent :: Node a KeyedListState
 keyedListComponent = do
-  st <- ask
+  st <- view state
   div_ [] $ do
     n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $ do
       n$ form_
@@ -67,7 +67,7 @@ keyedListComponent = do
       F.for_ (sortBy (comparing (fst . snd)) (MS.toList (st^.klsElements))) $ \(k, (prio, txt)) -> do
         key (tshow k) $ div_ [class_ "row mt-1 mb-1"] $ do
             n$ div_ [class_ "col ml-1"] $ n$ text txt
-            n$ div_ [class_ "col ml-1 mr-1"] $ n$ zoomT prio (klsElements.ix k._1) $ input_
+            n$ div_ [class_ "col ml-1 mr-1"] $ n$ zoomStT prio (klsElements.ix k._1) $ input_
               [ type_ "number"
               , class_ "form-control"
               , value_ (tshow prio)

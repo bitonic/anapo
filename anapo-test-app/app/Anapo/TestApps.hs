@@ -74,14 +74,14 @@ allTestApps = [minBound..maxBound]
 data TestAppsState = TestAppsState
   { _tasApp :: WhichTestApp
   , _tasFirstApp :: WhichTestApp
-  , _tasTodo :: Component () TodoState
+  , _tasTodo :: Component () () TodoState
   , _tasTimer :: TimerState
   , _tasStopTimerOnAppChange :: Bool
   , _tasYouTube :: YouTubeState
-  , _tasBumps :: Component () BumpsState
-  , _tasKeyedList :: Component () KeyedListState
-  , _tasDifferentNodes :: Component () Bool
-  , _tasRawHtml :: Component () Bool
+  , _tasBumps :: Component () () BumpsState
+  , _tasKeyedList :: Component () () KeyedListState
+  , _tasDifferentNodes :: Component () () Bool
+  , _tasRawHtml :: Component () () Bool
   }
 makeLenses ''TestAppsState
 
@@ -90,7 +90,7 @@ data TestAppsStateOrError =
   | TASOEOk TestAppsState
 makePrisms ''TestAppsStateOrError
 
-changeToApp :: MonadAction TestAppsState m => Bool -> Maybe WhichTestApp -> m ()
+changeToApp :: MonadAction a TestAppsState m => Bool -> Maybe WhichTestApp -> m ()
 changeToApp pushHistory mbApp =
   dispatch $ do
     st' <- get
@@ -105,18 +105,18 @@ changeToApp pushHistory mbApp =
       else return st'
     put (set tasApp app st'')
 
-testAppsError :: Text -> Node state
+testAppsError :: Text -> Node a state
 testAppsError err =
   div_ [class_ "container"] $ do
     n$ div_ [class_ "m-2 alert alert-danger"] (n$ text err)
 
 testAppsComponent ::
-  Node TestAppsStateOrError
-testAppsComponent = do
-  stoe <- ask
+  Node a TestAppsStateOrError
+testAppsComponent = zoomCtxF () noContext $ do
+  stoe <- view state
   case stoe of
     TASOEError err -> testAppsError err
-    TASOEOk st -> div_ [class_ "container"] $ zoomT st _TASOEOk $ do
+    TASOEOk st -> div_ [class_ "container"] $ zoomStT st _TASOEOk $ do
       n$ div_ [class_ "row m-2 align-items-center"] $ do
         n$ div_ [class_ "col col-md-auto"] $ do
           n$ ul_ [class_ "nav nav-pills"] $ forM_ allTestApps $ \app -> do
@@ -131,7 +131,7 @@ testAppsComponent = do
                   changeToApp True (Just app)
               ]
               (n$ text (tshow app))
-        n$ div_ [class_ "col"] $ zoomL tasStopTimerOnAppChange $
+        n$ div_ [class_ "col"] $ zoomStL tasStopTimerOnAppChange $
           n$ div_ [class_ "form-check"] $
             n$ label_ [class_ "form-check-label"] $ do
               n$ booleanCheckbox
@@ -139,16 +139,16 @@ testAppsComponent = do
       n$ div_ [class_ "row m-2"] $ n$ div_ [class_ "col"] $ case st^.tasApp of
         Blank -> return ()
         Todo -> n$ componentL tasTodo ()
-        Timer -> zoomL tasTimer timerComponent
-        YouTube -> zoomL tasYouTube youTubeComponent
+        Timer -> zoomStL tasTimer timerComponent
+        YouTube -> zoomStL tasYouTube youTubeComponent
         Bumps -> n$ componentL tasBumps ()
         KeyedList -> n$ componentL tasKeyedList ()
         DifferentNodes -> n$ componentL tasDifferentNodes ()
         RawHtml -> n$ componentL tasRawHtml ()
 
 testAppsWith ::
-     (TestAppsStateOrError -> Action TestAppsStateOrError a)
-  -> Action TestAppsStateOrError a
+     (TestAppsStateOrError -> Action b TestAppsStateOrError a)
+  -> Action b TestAppsStateOrError a
 testAppsWith cont = do
   path <- liftJSM (DOM.getPathname =<< DOM.getLocation =<< DOM.currentWindowUnchecked)
   case testAppFromPath path of
@@ -162,23 +162,24 @@ testAppsWith cont = do
             ev <- ask
             st <- DOM.PopStateEvent.getState ev
             mbApp <- liftJSM (fmap (read . T.unpack) <$> fromJSVal st)
-            liftIO (unliftIO u (actionZoom _TASOEOk (changeToApp False mbApp)))
+            liftIO (unliftIO u (actZoomSt _TASOEOk (changeToApp False mbApp)))
           liftJSM (DOM.addListener window DOM.popState listener False)
           return listener)
         (\listener -> unliftIO u (liftJSM (DOM.removeListener window DOM.popState listener False)))
         (\_ -> unliftIO u $ do
-            todo <- actionZoom (_TASOEOk.tasTodo.componentState) todoInit
-            bumps <- actionZoom (_TASOEOk.tasBumps.componentState) bumpsInit
-            keyedList <- actionZoom (_TASOEOk.tasKeyedList.componentState) keyedListInit
-            st <- TestAppsState
-              <$> pure app
-              <*> pure app
-              <*> newComponent todo (\() -> todoComponent)
-              <*> timerInit
-              <*> pure False
-              <*> youTubeInit "3yQObSCXyoo"
-              <*> newComponent bumps (\() -> bumpsNode)
-              <*> newComponent keyedList (\() -> keyedListComponent)
-              <*> componentDifferentNodesInit
-              <*> newComponent False (\() -> rawHtmlComponent)
+            st <- actZoomCtx noContext $ do
+              todo <- actZoomSt (_TASOEOk.tasTodo.compState) todoInit
+              bumps <- actZoomSt (_TASOEOk.tasBumps.compState) bumpsInit
+              keyedList <- actZoomSt (_TASOEOk.tasKeyedList.compState) keyedListInit
+              TestAppsState
+                <$> pure app
+                <*> pure app
+                <*> newComponent todo (\() -> todoComponent)
+                <*> timerInit
+                <*> pure False
+                <*> youTubeInit "3yQObSCXyoo"
+                <*> newComponent bumps (\() -> bumpsNode)
+                <*> newComponent keyedList (\() -> keyedListComponent)
+                <*> componentDifferentNodesInit
+                <*> newComponent False (\() -> rawHtmlComponent)
             cont (TASOEOk st))

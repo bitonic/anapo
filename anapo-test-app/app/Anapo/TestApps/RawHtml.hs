@@ -6,9 +6,9 @@ import Control.Monad (when)
 import Anapo
 import Anapo.TestApps.Prelude
 
-rawHtmlComponent :: Node Bool
+rawHtmlComponent :: Node a Bool
 rawHtmlComponent = div_ [] $ do
-  b <- ask
+  b <- view state
   n$ a_
     [ href_ "#"
     , onclick_ $ \_ ev -> do

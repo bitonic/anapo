@@ -38,7 +38,7 @@ instance Eq CollectedThreadId where
     return (tid1 == tid2)
 
 {-# INLINE forkCollected #-}
-forkCollected :: MonadAction write m => Action write () -> m CollectedThreadId
+forkCollected :: MonadAction context state m => Action context state () -> m CollectedThreadId
 forkCollected m = liftAction $ do
   -- we use an IORef because we do not have a function that attaches
   -- a finalizer on the primitive ThreadId#, and when i attach it
@@ -49,7 +49,7 @@ forkCollected m = liftAction $ do
   -- <https://gist.github.com/nh2/2b27a2bb17a7e1926ecb#file-remotevalues-hs-L309>
   u <- askUnliftIO
   ctid <- liftIO $ uninterruptibleMask $ \restore -> do
-    tid <- unliftIO u (actionFork (liftIO (restore (unliftIO u m))))
+    tid <- unliftIO u (actFork (liftIO (restore (unliftIO u m))))
     ref <- liftIO (newIORef tid)
     void $ liftIO $ mkWeakIORef ref $ do
       logDebug ("Killing linked thread " <> pack (show tid))

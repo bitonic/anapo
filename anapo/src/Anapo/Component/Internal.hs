@@ -12,13 +12,14 @@ module Anapo.Component.Internal where
 import qualified Data.HashMap.Strict as HMS
 import Control.Lens (Lens', view, lens)
 import qualified Control.Lens as Lens
+import qualified Control.Lens.Internal.Zoom as Lens
 import Control.Monad (ap)
 import Data.Monoid ((<>), Endo)
 import qualified Data.DList as DList
 import Data.String (IsString(..))
 import GHC.StaticPtr (StaticPtr, deRefStaticPtr, staticKey)
 import GHC.Stack (HasCallStack, CallStack, callStack)
-import Control.Monad.State (execStateT, StateT)
+import Control.Monad.State (StateT(..), MonadState(..), runStateT)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.IO.Unlift (askUnliftIO, unliftIO, MonadUnliftIO, UnliftIO(..))
 import Control.Exception.Safe (SomeException, uninterruptibleMask, tryAny)
@@ -26,7 +27,7 @@ import Control.Concurrent (ThreadId, forkIO, myThreadId)
 import Control.Monad.Trans (lift)
 import Data.DList (DList)
 import Data.IORef (IORef, newIORef, modifyIORef')
-import Control.Monad.Reader (MonadReader(..))
+import Control.Monad.Reader (MonadReader(..), asks)
 import qualified Data.Vector as Vec
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
@@ -53,8 +54,9 @@ import qualified Language.Javascript.JSaddle as JSaddle
 -- therefore we provide a type synonym for clarity.
 type AffineTraversal a b c d = Lens.Traversal a b c d
 type AffineTraversal' a b = Lens.Traversal' a b
+type AffineFold a b = Lens.Fold a b
 
--- | to be used with 'AffineTraversal'
+-- | to be used with 'AffineTraversal' and 'AffineFold'
 {-# INLINE toMaybeOf #-}
 toMaybeOf :: (HasCallStack) => Lens.Getting (Endo [a]) s a -> s -> Maybe a
 toMaybeOf l x = case Lens.toListOf l x of
@@ -66,13 +68,11 @@ toMaybeOf l x = case Lens.toListOf l x of
 -- --------------------------------------------------------------------
 
 newtype Dispatch stateRoot = Dispatch
-  { unDispatch :: forall state props.
+  { unDispatch :: forall state context props.
       CallStack ->
-      AffineTraversal' stateRoot (Component props state) ->
-      (stateRoot -> state -> DOM.JSM state) ->
-      -- the second arg is redudant, we pass it in here since we have to
-      -- traverse in Anapo.Loop anyway, so we don't have to traverse twice.
-      -- but we could simply have stateRoot.
+      AffineTraversal' stateRoot (Component props context state) ->
+      AffineFold stateRoot context ->
+      (context -> state -> DOM.JSM state) ->
       IO ()
   }
 
@@ -91,80 +91,101 @@ type HandleException = SomeException -> IO ()
 
 -- | An action we'll spawn from a component -- for example when an event
 -- fires or as a fork in an event
-newtype Action state a = Action
+newtype Action context state a = Action
   { unAction ::
-         forall rootState compProps compState.
-         ActionEnv rootState compProps compState state
+         forall rootState compProps compContext compState.
+         ActionEnv rootState
+      -> ActionTraverse rootState compProps compContext compState context state
+      -- we keep this separate from ActionEnv because ActionTraverse
+      -- changes all the time, ActionEnv never does.
       -> DOM.JSM a
   }
 
-data ActionEnv rootState compProps compState state = ActionEnv
+data ActionEnv rootState = ActionEnv
   { aeRegisterThread :: RegisterThread
   , aeHandleException :: HandleException
   , aeDispatch :: Dispatch rootState
-  , aeTraverseToComp :: AffineTraversal' rootState (Component compProps compState)
-  , aeTraverseToState :: AffineTraversal' compState state
   }
 
-instance Functor (Action state) where
+data ActionTraverse rootState compProps compContext compState context state = ActionTraverse
+  { atToComp :: AffineTraversal' rootState (Component compProps compContext compState)
+  , atToCompContext :: AffineFold rootState compContext
+  , atToState :: AffineTraversal' compState state
+  , atToContext :: AffineFold compContext context
+  }
+
+instance Functor (Action context state) where
   {-# INLINE fmap #-}
-  fmap f (Action g) = Action $ \env -> do
-    x <- g env
+  fmap f (Action g) = Action $ \env trav -> do
+    x <- g env trav
     return (f x)
 
-instance Applicative (Action state) where
+instance Applicative (Action context state) where
   {-# INLINE pure #-}
   pure = return
   {-# INLINE (<*>) #-}
   (<*>) = ap
 
-instance Monad (Action state) where
+instance Monad (Action context state) where
   {-# INLINE return #-}
-  return x = Action (\_env -> return x)
+  return x = Action (\_env _trav -> return x)
   {-# INLINE (>>=) #-}
-  ma >>= mf = Action $ \env -> do
-    x <- unAction ma env
-    unAction (mf x) env
+  ma >>= mf = Action $ \env trav -> do
+    x <- unAction ma env trav
+    unAction (mf x) env trav
 
-instance MonadIO (Action state) where
+instance MonadIO (Action context state) where
   {-# INLINE liftIO #-}
-  liftIO m = Action (\_env -> liftIO m)
+  liftIO m = Action (\_env _trav -> liftIO m)
 
 #if !defined(ghcjs_HOST_OS)
-instance  JSaddle.MonadJSM (Action state) where
+instance  JSaddle.MonadJSM (Action context state) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = Action (\_env -> m)
+  liftJSM' m = Action (\_env _trav -> m)
 #endif
 
-instance MonadUnliftIO (Action state) where
+instance MonadUnliftIO (Action context state) where
   {-# INLINE askUnliftIO #-}
-  askUnliftIO = Action $ \env -> do
+  askUnliftIO = Action $ \env trav -> do
     u <- askUnliftIO
-    return (UnliftIO (\(Action m) -> unliftIO u (m env)))
+    return (UnliftIO (\(Action m) -> unliftIO u (m env trav)))
 
-class (DOM.MonadJSM m) => MonadAction state m | m -> state where
-  liftAction :: Action state a -> m a
+class (DOM.MonadJSM m) => MonadAction context state m | m -> context, m -> state where
+  liftAction :: Action context state a -> m a
 
-instance MonadAction state (Action state) where
+instance MonadAction context state (Action context state) where
   {-# INLINE liftAction #-}
   liftAction = id
 
-instance (MonadAction state m) => MonadAction state (StateT s m) where
+instance (MonadAction context state m) => MonadAction context state (StateT s m) where
   {-# INLINE liftAction #-}
   liftAction m = lift (liftAction m)
 
-{-# INLINE actionZoom #-}
-actionZoom :: MonadAction out m => AffineTraversal' out in_ -> Action in_ a -> m a
-actionZoom t m =
-  liftAction (Action (\env -> unAction m env{aeTraverseToState = aeTraverseToState env . t}))
+{-# INLINE actZoomSt #-}
+actZoomSt :: MonadAction context out m => AffineTraversal' out in_ -> Action context in_ a -> m a
+actZoomSt t m =
+  liftAction (Action (\env trav -> unAction m env trav{atToState = atToState trav . t}))
 
-{-# INLINE actionComponent #-}
-actionComponent ::
-  MonadAction (Component props state) m => Action state a -> m a
-actionComponent (Action m) = liftAction $ Action $ \env ->
-  m env
-    { aeTraverseToComp = aeTraverseToComp env . componentState . aeTraverseToState env
-    , aeTraverseToState = id
+{-# INLINE actZoomCtx #-}
+actZoomCtx :: MonadAction out state m => AffineFold out in_ -> Action in_ state a -> m a
+actZoomCtx t m =
+  liftAction (Action (\env trav -> unAction m env trav{atToContext = atToContext trav . t}))
+
+{-# INLINE noContext #-}
+noContext :: Lens.Fold a ()
+noContext f x = f () *> pure x
+
+{-# INLINE actComponent #-}
+actComponent ::
+     MonadAction context (Component props context state) m
+  => Action context state a
+  -> m a
+actComponent (Action m) = liftAction $ Action $ \env trav ->
+  m env trav
+    { atToComp = atToComp trav . compState . atToState trav
+    , atToCompContext = atToCompContext trav . atToContext trav
+    , atToState = id
+    , atToContext = id
     }
 
 {-# INLINE forkRegistered #-}
@@ -180,70 +201,137 @@ forkRegistered register handler m = do
         handler err
       Right _ -> return ()
 
-{-# INLINE actionFork #-}
-actionFork :: MonadAction state m => Action state () -> m ThreadId
-actionFork m =
-  liftAction (Action (\env -> forkRegistered (aeRegisterThread env) (aeHandleException env) (unAction m env)))
+{-# INLINE actFork #-}
+actFork ::
+     MonadAction context state m
+  => Action context state ()
+  -> m ThreadId
+actFork m =
+  liftAction (Action (\env trav -> forkRegistered (aeRegisterThread env) (aeHandleException env) (unAction m env trav)))
+
+newtype DispatchM context0 state0 context state a =
+  DispatchM {unDispatchM :: context -> state -> Action context0 state0 (a, state)}
+
+instance Functor (DispatchM context0 state0 context state) where
+  {-# INLINE fmap #-}
+  fmap f (DispatchM g) = DispatchM (\ctx st -> do (x, st') <- g ctx st; return (f x, st'))
+
+instance Applicative (DispatchM context0 state0 context state) where
+  {-# INLINE pure #-}
+  pure = return
+  {-# INLINE (<*>) #-}
+  (<*>) = ap
+
+instance Monad (DispatchM context0 state0 context state) where
+  {-# INLINE return #-}
+  return x = DispatchM (\_ctx st -> return (x, st))
+
+  {-# INLINE (>>=) #-}
+  DispatchM mx >>= mf = DispatchM $ \ctx st1 -> do
+    (x, st2) <- mx ctx st1
+    unDispatchM (mf x) ctx st2
+
+instance MonadReader context (DispatchM context0 state0 context state) where
+  {-# INLINE ask #-}
+  ask = DispatchM (\ctx st -> return (ctx, st))
+  {-# INLINE reader #-}
+  reader f = DispatchM (\ctx st -> return (f ctx, st))
+  {-# INLINE local #-}
+  local f (DispatchM g) = DispatchM (\ctx st -> g (f ctx) st)
+
+instance MonadState state (DispatchM context0 state0 context state) where
+  {-# INLINE get #-}
+  get = DispatchM (\_ctx st -> return (st, st))
+  {-# INLINE put #-}
+  put st = DispatchM (\_ctx _st -> return ((), st))
+  {-# INLINE state #-}
+  state f = DispatchM (\_ctx st -> return (f st))
+
+instance MonadIO (DispatchM context0 state0 context state) where
+  {-# INLINE liftIO #-}
+  liftIO m = DispatchM (\_ctx st -> do x <- liftIO m; return (x, st))
+
+#if !defined(ghcjs_HOST_OS)
+instance JSaddle.MonadJSM (DispatchM context0 state0 context state) where
+  {-# INLINE liftJSM' #-}
+  liftJSM' m = DispatchM (\_ctx st -> do x <- JSaddle.liftJSM' m; return (x, st))
+#endif
+
+instance MonadAction context0 state0 (DispatchM context0 state0 context state) where
+  {-# INLINE liftAction #-}
+  liftAction m = DispatchM (\_ctx st -> do x <- m; return (x, st))
+
+type instance Lens.Magnified (DispatchM ctx0 state0 ctx state) = Lens.Effect (StateT state (Action ctx0 state0))
+instance Lens.Magnify (DispatchM ctx0 state0 in_ state) (DispatchM ctx0 state0 out state) in_ out where
+  {-# INLINE magnify #-}
+  magnify l (DispatchM m) =
+    DispatchM (\ctx st -> runStateT (Lens.getEffect (l (\ctx' -> Lens.Effect (StateT (m ctx'))) ctx)) st)
+
+type instance Lens.Zoomed (DispatchM ctx0 state0 ctx state) = Lens.Focusing (Action ctx0 state0)
+instance Lens.Zoom (DispatchM ctx0 state0 ctx in_) (DispatchM ctx0 state0 ctx out) in_ out where
+  {-# INLINE zoom #-}
+  zoom l (DispatchM m) =
+    DispatchM (\ctx st -> Lens.unfocusing (l (\st' -> Lens.Focusing (m ctx st')) st))
 
 {-# INLINE dispatch #-}
-dispatch :: (HasCallStack, MonadAction state m) => StateT state (Action state) () -> m ()
-dispatch m =
-  liftAction $ Action $ \env ->
-    liftIO $ unDispatch (aeDispatch env) callStack (aeTraverseToComp env) $ \_stRoot -> aeTraverseToState env $ \st ->
-      unAction (execStateT m st) env
-
--- | Useful when one wants to update an inner component _only_ but needs
--- sorrounding information to do so.
-{-# INLINE dispatchInside #-}
-dispatchInside ::
-     (HasCallStack, MonadAction state m)
-  => AffineTraversal' state (Component props state')
-  -> (state -> Action state state')
+dispatch ::
+     (HasCallStack, MonadAction context state m)
+  => DispatchM context state context state ()
   -> m ()
-dispatchInside toComp m =
-  liftAction $ Action $ \env ->
+dispatch (DispatchM m) =
+  liftAction $ Action $ \env trav ->
     liftIO $ unDispatch
       (aeDispatch env)
       callStack
-      (aeTraverseToComp env . componentState . aeTraverseToState env . toComp)
-      (\stRoot _st ->
-          case toMaybeOf (aeTraverseToComp env . componentState . aeTraverseToState env) stRoot of
-            Nothing -> error "Couldn't traverse to outer component!"
-            Just st0 -> unAction (m st0) env)
+      (atToComp trav)
+      (atToCompContext trav)
+      (\ctx st -> case toMaybeOf (atToContext trav) ctx of
+          Nothing -> return st
+          Just ctx' -> atToState trav (\st' -> fmap snd (unAction (m ctx' st') env trav)) st)
 
 {-# INLINE askRegisterThread #-}
-askRegisterThread :: (MonadAction state m) => m RegisterThread
-askRegisterThread = liftAction (Action (\env -> return (aeRegisterThread env)))
+askRegisterThread :: (MonadAction context state m) => m RegisterThread
+askRegisterThread = liftAction (Action (\env _trav -> return (aeRegisterThread env)))
 
 {-# INLINE askHandleException #-}
-askHandleException :: (MonadAction state m) => m HandleException
-askHandleException = liftAction (Action (\env -> return (aeHandleException env)))
+askHandleException :: (MonadAction context state m) => m HandleException
+askHandleException = liftAction (Action (\env _trav -> return (aeHandleException env)))
 
 -- Monad
 -- --------------------------------------------------------------------
 
-data AnapoEnv stateRoot state = AnapoEnv
-  { aeReversePath :: [VDomPathSegment]
-  -- ^ this is stored in _reverse_ order. IMPORTANT: update aeDirtyPath
+data DomEnv stateRoot = DomEnv
+  { domEnvReversePath :: [VDomPathSegment]
+  -- ^ this is stored in _reverse_ order. IMPORTANT: updatedomDirtyPath
   -- every time you modify this.
-  , aeDirtyPath :: Bool
+  , domEnvDirtyPath :: Bool
   -- ^ this is whether we have added any path since the last component.
   -- it's used solely to prevent people placing a component on the same
   -- path, which will make them step on each other toes.
-  , aePrevState :: Maybe stateRoot
-  , aeState :: state
+  , domEnvPrevState :: Maybe stateRoot
   }
 
-newtype AnapoM dom state a = AnapoM
-  { unAnapoM ::
-         forall rootState compProps compState.
-         ActionEnv rootState compProps compState state
-      -> AnapoEnv rootState state
+data DomCurrent context state = DomCurrent
+  { domCurrentContext :: ~context
+  , domCurrentState :: ~state
+  }
+
+context :: Lens' (DomCurrent context state) context
+context = lens domCurrentContext (\comp st -> comp{ domCurrentContext = st })
+
+state :: Lens' (DomCurrent context state) state
+state = lens domCurrentState (\comp st -> comp{ domCurrentState = st })
+
+newtype DomM dom context state a = DomM
+  { unDomM ::
+         forall rootState compProps compContext compState.
+         ActionEnv rootState
+      -> ActionTraverse rootState compProps compContext compState context state
+      -> DomEnv rootState
+      -> DomCurrent context state
       -> dom
       -> DOM.JSM (dom, a)
   }
-
-type ResetComponent = IO ()
 
 data DomState = DomState
   { domStateLength :: Int
@@ -254,138 +342,168 @@ newtype KeyedDomState = KeyedDomState (DList (Text, V.Node V.SomeVDomNode))
 
 newtype MapDomState = MapDomState (DList (Text, V.Node V.SomeVDomNode))
 
--- the Int is to store the current index in the dom, to be able o build
--- tthe next path segment.
-type Dom state = AnapoM DomState state ()
-type Dom' state a = AnapoM DomState state a
-type KeyedDom state = AnapoM KeyedDomState state ()
-type KeyedDom' state a = AnapoM KeyedDomState state a
-type MapDom state = AnapoM MapDomState state ()
-type MapDom' state a = AnapoM MapDomState state a
-type Node state = AnapoM () state (V.Node V.SomeVDomNode)
-type Node' state a = AnapoM () state (V.Node V.SomeVDomNode, a)
+type Dom ctx st = DomM DomState ctx st ()
+type Dom' ctx st a = DomM DomState ctx st a
+type KeyedDom ctx st = DomM KeyedDomState ctx st ()
+type KeyedDom' ctx st a = DomM KeyedDomState ctx st a
+type MapDom ctx st = DomM MapDomState ctx st ()
+type MapDom' ctx st a = DomM MapDomState ctx st a
+type Node ctx st = DomM () ctx st (V.Node V.SomeVDomNode)
+type Node' ctx st a = DomM () ctx st (V.Node V.SomeVDomNode, a)
 
-instance MonadIO (AnapoM dom state) where
+instance MonadIO (DomM dom ctx st) where
   {-# INLINE liftIO #-}
-  liftIO m = AnapoM $ \_actEnv _anEnv dom -> do
+  liftIO m = DomM $ \_actEnv _acTrav _anEnv _curr dom -> do
     x <- liftIO m
     return (dom, x)
 
 #if !defined(ghcjs_HOST_OS)
-instance JSaddle.MonadJSM (AnapoM dom state) where
+instance JSaddle.MonadJSM (DomM dom ctx st) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = AnapoM $ \_actEnv _anEnv dom -> do
+  liftJSM' m = DomM $ \_actEnv _acTrav _anEnv _curr dom -> do
     x <- m
     return (dom, x)
 #endif
 
-instance Functor (AnapoM dom state) where
+instance Functor (DomM dom ctx st) where
   {-# INLINE fmap #-}
-  fmap f (AnapoM g) = AnapoM $ \acEnv aeEnv dom -> do
-    (dom', x) <- g acEnv aeEnv dom
+  fmap f (DomM g) = DomM $ \acEnv acTrav aeEnv curr dom -> do
+    (dom', x) <- g acEnv acTrav aeEnv curr dom
     return (dom', f x)
 
-instance Applicative (AnapoM dom state) where
+instance Applicative (DomM dom ctx st) where
   {-# INLINE pure #-}
   pure = return
   {-# INLINE (<*>) #-}
   (<*>) = ap
 
-instance Monad (AnapoM dom state) where
+instance Monad (DomM dom ctx st) where
   {-# INLINE return #-}
-  return x = AnapoM (\_acEnv _aeEnv dom -> return (dom, x))
+  return x = DomM (\_acEnv _acTrav _aeEnv _curr dom -> return (dom, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = AnapoM $ \acEnv anEnv dom0 -> do
-    (dom1, x) <- unAnapoM ma acEnv anEnv dom0
-    (dom2, y) <- unAnapoM (mf x) acEnv anEnv dom1
+  ma >>= mf = DomM $ \acEnv acTrav anEnv curr dom0 -> do
+    (dom1, x) <- unDomM ma acEnv acTrav anEnv curr dom0
+    (dom2, y) <- unDomM (mf x) acEnv acTrav anEnv curr dom1
     return (dom2, y)
 
-instance (a ~ ()) => Monoid (AnapoM dom state a) where
+instance (a ~ ()) => Monoid (DomM dom ctx st a) where
   {-# INLINE mempty #-}
   mempty = return ()
   {-# INLINE mappend #-}
   mappend = (>>)
 
-instance MonadAction state (AnapoM dom state) where
+instance MonadAction ctx st (DomM dom ctx st) where
   {-# INLINE liftAction #-}
-  liftAction (Action f) = AnapoM $ \acEnv _anEnv dom -> do
-    x <- f acEnv
+  liftAction (Action f) = DomM $ \acEnv acTrav _anEnv _curr dom -> do
+    x <- f acEnv acTrav
     return (dom, x)
 
-instance MonadReader state (AnapoM dom state) where
+instance MonadReader (DomCurrent ctx st) (DomM dom ctx st) where
   {-# INLINE ask #-}
-  ask = AnapoM (\_acEnv anEnv dom -> return (dom, aeState anEnv))
+  ask = DomM (\_acEnv _acTrav _anEnv curr dom -> return (dom, curr))
   {-# INLINE local #-}
-  local f m = AnapoM $ \acEnv anEnv dom -> do
-    unAnapoM m acEnv anEnv{ aeState = f (aeState anEnv) } dom
+  local f m = DomM $ \acEnv acTrav anEnv curr dom -> do
+    unDomM m acEnv acTrav anEnv (f curr) dom
 
 {-# INLINE askPreviousState #-}
-askPreviousState :: AnapoM dom state (Maybe state)
+askPreviousState :: DomM dom ctx st (Maybe st)
 askPreviousState =
-  AnapoM $ \acEnv anEnv dom ->
+  DomM $ \_acEnv acTrav anEnv _curr dom ->
     return
       ( dom
-      , toMaybeOf (aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv) =<< aePrevState anEnv
+      , toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState anEnv
       )
 
-{-# INLINE zoomL #-}
-zoomL :: Lens' out in_ -> AnapoM dom in_ a -> AnapoM dom out a
-zoomL l m = AnapoM $ \acEnv anEnv dom ->
-  unAnapoM m
-    acEnv{ aeTraverseToState = aeTraverseToState acEnv . l }
-    anEnv{ aeState = view l (aeState anEnv) }
+{-# INLINE zoomStL #-}
+zoomStL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
+zoomStL l m = DomM $ \acEnv acTrav anEnv curr dom ->
+  unDomM m
+    acEnv
+    acTrav{ atToState = atToState acTrav . l }
+    anEnv
+    curr{ domCurrentState = view l (domCurrentState curr) }
     dom
 
-{-# INLINE zoomT #-}
-zoomT ::
+{-# INLINE zoomStT #-}
+zoomStT ::
      HasCallStack
   => in_
   -> AffineTraversal' out in_
   -- ^ note: if the traversal is not affine you'll get crashes.
-  -> AnapoM dom in_ a
-  -> AnapoM dom out a
-zoomT st l m = AnapoM $ \acEnv anEnv dom ->
-  unAnapoM m
-    acEnv{ aeTraverseToState = aeTraverseToState acEnv . l }
-    anEnv{ aeState = st }
+  -> DomM dom ctx in_ a
+  -> DomM dom ctx out a
+zoomStT st l m = DomM $ \acEnv acTrav anEnv curr dom ->
+  unDomM m
+    acEnv
+    acTrav{ atToState = atToState acTrav . l }
+    anEnv
+    curr{ domCurrentState = st }
+    dom
+
+{-# INLINE zoomCtxL #-}
+zoomCtxL :: Lens' out in_ -> DomM dom in_ st a -> DomM dom out st a
+zoomCtxL l m = DomM $ \acEnv acTrav anEnv curr dom ->
+  unDomM m
+    acEnv
+    acTrav{ atToContext = atToContext acTrav . l }
+    anEnv
+    curr{ domCurrentContext = view l (domCurrentContext curr) }
+    dom
+
+{-# INLINE zoomCtxF #-}
+zoomCtxF ::
+     HasCallStack
+  => in_
+  -> AffineFold out in_
+  -- ^ note: if the traversal is not affine you'll get crashes.
+  -> DomM dom in_ st a
+  -> DomM dom out st a
+zoomCtxF st l m = DomM $ \acEnv acTrav anEnv curr dom ->
+  unDomM m
+    acEnv
+    acTrav{ atToContext = atToContext acTrav . l }
+    anEnv
+    curr{ domCurrentContext = st }
     dom
 
 -- to manipulate nodes
 -- --------------------------------------------------------------------
 
 {-# INLINE willMount #-}
-willMount :: (el -> Action state ()) -> NodePatch el state
+willMount :: (el -> Action ctx st ()) -> NodePatch el ctx st
 willMount = NPWillMount
 
 {-# INLINE didMount #-}
-didMount :: (el -> Action state ()) -> NodePatch el state
+didMount :: (el -> Action ctx st ()) -> NodePatch el ctx st
 didMount = NPDidMount
 
 {-# INLINE willPatch #-}
-willPatch :: (el -> Action state ()) -> NodePatch el state
+willPatch :: (el -> Action ctx st ()) -> NodePatch el ctx st
 willPatch = NPWillPatch
 
 {-# INLINE didPatch #-}
-didPatch :: (el -> Action state ()) -> NodePatch el state
+didPatch :: (el -> Action ctx st ()) -> NodePatch el ctx st
 didPatch = NPDidPatch
 
 {-# INLINE willRemove #-}
-willRemove :: (el -> Action state ()) -> NodePatch el state
+willRemove :: (el -> Action ctx st ()) -> NodePatch el ctx st
 willRemove = NPWillRemove
 
 -- useful shorthands
 -- --------------------------------------------------------------------
 
 {-# INLINE n #-}
-n :: Node state -> Dom state
-n getNode = AnapoM $ \acEnv anEnv dom -> do
-  (_, nod) <- unAnapoM
+n :: Node ctx st -> Dom ctx st
+n getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
+  (_, nod) <- unDomM
     getNode
     acEnv
+    acTrav
     anEnv
-      { aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv
-      , aeDirtyPath = True
+      { domEnvReversePath = VDPSNormal (domStateLength dom) : domEnvReversePath anEnv
+      , domEnvDirtyPath = True
       }
+    curr
     ()
   return
     ( dom
@@ -396,15 +514,17 @@ n getNode = AnapoM $ \acEnv anEnv dom -> do
     )
 
 {-# INLINE n' #-}
-n' :: Node' state a -> Dom' state a
-n' getNode = AnapoM $ \acEnv anEnv dom -> do
-  (_, (nod, x)) <- unAnapoM
+n' :: Node' ctx st a -> Dom' ctx st a
+n' getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
+  (_, (nod, x)) <- unDomM
     getNode
     acEnv
+    acTrav
     anEnv
-      { aeReversePath = VDPSNormal (domStateLength dom) : aeReversePath anEnv
-      , aeDirtyPath = True
+      { domEnvReversePath = VDPSNormal (domStateLength dom) : domEnvReversePath anEnv
+      , domEnvDirtyPath = True
       }
+    curr
     ()
   return
     ( dom
@@ -415,59 +535,67 @@ n' getNode = AnapoM $ \acEnv anEnv dom -> do
     )
 
 {-# INLINE key #-}
-key :: Text -> Node state -> KeyedDom state
-key k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
-  (_, nod) <- unAnapoM
+key :: Text -> Node ctx st -> KeyedDom ctx st
+key k getNode = DomM $ \acEnv acTrav anEnv curr (KeyedDomState dom) -> do
+  (_, nod) <- unDomM
     getNode
     acEnv
+    acTrav
     anEnv
-      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
-      , aeDirtyPath = True
+      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
+      , domEnvDirtyPath = True
       }
+    curr
     ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE key' #-}
-key' :: Text -> Node' state a -> KeyedDom' state a
-key' k getNode = AnapoM $ \acEnv anEnv (KeyedDomState dom) -> do
-  (_, (nod, x)) <- unAnapoM
+key' :: Text -> Node' ctx st a -> KeyedDom' ctx st a
+key' k getNode = DomM $ \acEnv acTrav anEnv curr (KeyedDomState dom) -> do
+  (_, (nod, x)) <- unDomM
     getNode
     acEnv
+    acTrav
     anEnv
-      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
-      , aeDirtyPath = True
+      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
+      , domEnvDirtyPath = True
       }
-      ()
+    curr
+    ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), x)
 
 {-# INLINE ukey #-}
-ukey :: Text -> Node state -> MapDom state
-ukey k getNode = AnapoM $ \acEnv anEnv (MapDomState dom) -> do
-  (_, nod) <- unAnapoM
+ukey :: Text -> Node ctx st -> MapDom ctx st
+ukey k getNode = DomM $ \acEnv acTrav anEnv curr (MapDomState dom) -> do
+  (_, nod) <- unDomM
     getNode
     acEnv
+    acTrav
     anEnv
-      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
-      , aeDirtyPath = True
+      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
+      , domEnvDirtyPath = True
       }
+    curr
     ()
   return (MapDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE ukey' #-}
-ukey' :: Text -> Node' state a -> MapDom' state a
-ukey' k getNode = AnapoM $ \acEnv anEnv (MapDomState dom) -> do
-  (_, (nod, x)) <- unAnapoM
+ukey' :: Text -> Node' ctx st a -> MapDom' ctx st a
+ukey' k getNode = DomM $ \acEnv acTrav anEnv curr (MapDomState dom) -> do
+  (_, (nod, x)) <- unDomM
     getNode
     acEnv
+    acTrav
     anEnv
-      { aeReversePath = VDPSKeyed k : aeReversePath anEnv
-      , aeDirtyPath = True
+      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
+      , domEnvDirtyPath = True
       }
+    curr
     ()
   return (MapDomState (dom <> DList.singleton (k, nod)), x)
 
 {-# INLINE text #-}
-text :: Text -> Node state
+text :: Text -> Node ctx st
 text txt = return $ V.Node
   { V.nodeBody = V.SomeVDomNode $ V.VDomNode
       { V.vdomMark = Nothing
@@ -478,7 +606,7 @@ text txt = return $ V.Node
   , V.nodeChildren = Nothing
   }
 
-instance (el ~ DOM.Text) => IsString (Node state) where
+instance (el ~ DOM.Text) => IsString (Node ctx st) where
   {-# INLINE fromString #-}
   fromString = text . T.pack
 
@@ -486,8 +614,8 @@ instance (el ~ DOM.Text) => IsString (Node state) where
 rawNode ::
      (DOM.IsNode el)
   => (DOM.JSVal -> el) -> el
-  -> [NodePatch el state]
-  -> Node state
+  -> [NodePatch el ctx st]
+  -> Node ctx st
 rawNode wrap x patches = do
   node <- patchNode patches
     V.VDomNode
@@ -500,6 +628,7 @@ rawNode wrap x patches = do
     { V.nodeBody = V.SomeVDomNode node
     , V.nodeChildren = Nothing
     }
+
 
 -- TODO this causes linking errors, sometimes. bizzarely, the linking
 -- errors seem to happen only if a closure is formed -- e.g. if we
@@ -527,69 +656,71 @@ rawNode wrap x patches = do
 -- at call site (see for example Anapo.TestApps.YouTube)
 {-# INLINE marked #-}
 marked ::
-     (Maybe state -> props -> state -> V.Rerender)
-  -> StaticPtr (props -> Node state) -> props -> Node state
-marked shouldRerender ptr props = AnapoM $ \acEnv anEnv dom -> do
+     (Maybe context -> Maybe state -> props -> context -> state -> V.Rerender)
+  -> StaticPtr (props -> Node context state) -> props -> Node context state
+marked shouldRerender ptr props = DomM $ \acEnv acTrav domEnv curr dom -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender
-        (toMaybeOf (aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv) =<< aePrevState anEnv)
+        (toMaybeOf (atToCompContext acTrav . atToContext acTrav) =<< domEnvPrevState domEnv)
+        (toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState domEnv)
         props
-        (aeState anEnv)
+        (domCurrentContext curr)
+        (domCurrentState curr)
   (_, V.Node (V.SomeVDomNode nod) children) <-
-    unAnapoM (deRefStaticPtr ptr props) acEnv anEnv dom
+    unDomM (deRefStaticPtr ptr props) acEnv acTrav domEnv curr dom
   return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
 
 -- Utilities to quickly create nodes
 -- --------------------------------------------------------------------
 
-data SomeEventAction el write = forall e. (DOM.IsEvent e) =>
-  SomeEventAction (DOM.EventM.EventName el e) (el -> e -> Action write ())
+data SomeEventAction el ctx st = forall e. (DOM.IsEvent e) =>
+  SomeEventAction (DOM.EventM.EventName el e) (el -> e -> Action ctx st ())
 newtype UnsafeRawHtml = UnsafeRawHtml Text
 
-data NodePatch el state =
-    NPWillMount (el -> Action state ())
-  | NPDidMount (el -> Action state ())
-  | NPWillPatch (el -> Action state ())
-  | NPDidPatch (el -> Action state ())
-  | NPWillRemove (el -> Action state ())
+data NodePatch el ctx st =
+    NPWillMount (el -> Action ctx st ())
+  | NPDidMount (el -> Action ctx st ())
+  | NPWillPatch (el -> Action ctx st ())
+  | NPDidPatch (el -> Action ctx st ())
+  | NPWillRemove (el -> Action ctx st ())
   | NPStyle V.StylePropertyName V.StyleProperty
   | NPAttribute V.AttributeName (DOM.JSM V.AttributeBody)
   | NPProperty V.ElementPropertyName (DOM.JSM V.ElementProperty)
-  | NPEvent (SomeEventAction el state)
+  | NPEvent (SomeEventAction el ctx st)
 
-class IsElementChildren a state where
-  elementChildren :: HasCallStack => a -> AnapoM () state (V.Children V.SomeVDomNode)
-instance IsElementChildren () state where
+class IsElementChildren a ctx st where
+  elementChildren :: HasCallStack => a -> DomM () ctx st (V.Children V.SomeVDomNode)
+instance IsElementChildren () ctx st where
   {-# INLINE elementChildren #-}
   elementChildren _ = return (V.CNormal mempty)
-instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM DomState state1 a) state2 where
+instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM DomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
-    (DomState _ dom, _) <- f acEnv anEnv (DomState 0 mempty)
+  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv curr _ -> do
+    (DomState _ dom, _) <- f acEnv acTrav anEnv curr (DomState 0 mempty)
     return ((), V.CNormal (Vec.fromList (DList.toList dom)))
-instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM KeyedDomState state1 a) state2 where
+instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM KeyedDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
-    (KeyedDomState dom, _) <- f acEnv anEnv (KeyedDomState mempty)
+  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv curr _ -> do
+    (KeyedDomState dom, _) <- f acEnv acTrav anEnv curr (KeyedDomState mempty)
     return ((), V.CKeyed (OHM.fromList (DList.toList dom)))
-instance (a ~ (), state1 ~ state2) => IsElementChildren (AnapoM MapDomState state1 a) state2 where
+instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM MapDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (AnapoM f) = AnapoM $ \acEnv anEnv _ -> do
-    (MapDomState dom, _) <- f acEnv anEnv (MapDomState mempty)
+  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv curr _ -> do
+    (MapDomState dom, _) <- f acEnv acTrav anEnv curr (MapDomState mempty)
     let kvs = DList.toList dom
     let numKvs = length kvs
     let hm = HMS.fromList kvs
     if numKvs /= HMS.size hm
       then error "duplicate keys when building map vdom!"
       else return ((), V.CMap (HMS.fromList kvs))
-instance IsElementChildren UnsafeRawHtml state2 where
+instance IsElementChildren UnsafeRawHtml ctx st where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)
 
 {-# INLINE patchNode #-}
 patchNode ::
      (HasCallStack, DOM.IsNode el)
-  => [NodePatch el state] -> V.VDomNode el -> AnapoM () state (V.VDomNode el)
+  => [NodePatch el ctx state] -> V.VDomNode el -> DomM () ctx state (V.VDomNode el)
 patchNode patches00 node00 = do
   u <- liftAction askUnliftIO
   let
@@ -667,15 +798,15 @@ patchNode patches00 node00 = do
 
 {-# INLINE el #-}
 el ::
-     ( IsElementChildren a state
+     ( IsElementChildren a ctx st
      , DOM.IsElement el, DOM.IsElementCSSInlineStyle el
      , HasCallStack
      )
   => V.ElementTag
   -> (DOM.JSVal -> el)
-  -> [NodePatch el state]
+  -> [NodePatch el ctx st]
   -> a
-  -> Node state
+  -> Node ctx st
 el tag wrap patches isChildren = do
   children <- elementChildren isChildren
   vdom <- patchNode patches
@@ -700,170 +831,170 @@ el tag wrap patches isChildren = do
 -- --------------------------------------------------------------------
 
 {-# INLINE div_ #-}
-div_ :: IsElementChildren a state => [NodePatch DOM.HTMLDivElement state] -> a -> Node state
+div_ :: IsElementChildren a context state => [NodePatch DOM.HTMLDivElement context state] -> a -> Node context state
 div_ = el "div" DOM.HTMLDivElement
 
 {-# INLINE table_ #-}
-table_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableElement state] -> a -> Node state
+table_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableElement context state] -> a -> Node context state
 table_ = el "table" DOM.HTMLTableElement
 
 {-# INLINE tbody_ #-}
-tbody_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableSectionElement state] -> a -> Node state
+tbody_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableSectionElement context state] -> a -> Node context state
 tbody_ = el "tbody" DOM.HTMLTableSectionElement
 
 {-# INLINE td_ #-}
-td_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableCellElement state] -> a -> Node state
+td_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableCellElement context state] -> a -> Node context state
 td_ = el "td" DOM.HTMLTableCellElement
 
 {-# INLINE tr_ #-}
-tr_ :: IsElementChildren a state => [NodePatch DOM.HTMLTableRowElement state] -> a -> Node state
+tr_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableRowElement context state] -> a -> Node context state
 tr_ = el "tr" DOM.HTMLTableRowElement
 
 {-# INLINE span_ #-}
-span_ :: IsElementChildren a state => [NodePatch DOM.HTMLSpanElement state] -> a -> Node state
+span_ :: IsElementChildren a context state => [NodePatch DOM.HTMLSpanElement context state] -> a -> Node context state
 span_ = el "span" DOM.HTMLSpanElement
 
 {-# INLINE a_ #-}
-a_ :: IsElementChildren a state => [NodePatch DOM.HTMLAnchorElement state] -> a -> Node state
+a_ :: IsElementChildren a context state => [NodePatch DOM.HTMLAnchorElement context state] -> a -> Node context state
 a_ = el "a" DOM.HTMLAnchorElement
 
 {-# INLINE p_ #-}
-p_ :: IsElementChildren a state => [NodePatch DOM.HTMLParagraphElement state] -> a -> Node state
+p_ :: IsElementChildren a context state => [NodePatch DOM.HTMLParagraphElement context state] -> a -> Node context state
 p_ = el "p" DOM.HTMLParagraphElement
 
 {-# INLINE input_ #-}
-input_ :: IsElementChildren a state => [NodePatch DOM.HTMLInputElement state] -> a -> Node state
+input_ :: IsElementChildren a context state => [NodePatch DOM.HTMLInputElement context state] -> a -> Node context state
 input_ = el "input" DOM.HTMLInputElement
 
 {-# INLINE form_ #-}
-form_ :: IsElementChildren a state => [NodePatch DOM.HTMLFormElement state] -> a -> Node state
+form_ :: IsElementChildren a context state => [NodePatch DOM.HTMLFormElement context state] -> a -> Node context state
 form_ = el "form" DOM.HTMLFormElement
 
 {-# INLINE button_ #-}
-button_ :: IsElementChildren a state => [NodePatch DOM.HTMLButtonElement state] -> a -> Node state
+button_ :: IsElementChildren a context state => [NodePatch DOM.HTMLButtonElement context state] -> a -> Node context state
 button_ = el "button" DOM.HTMLButtonElement
 
 {-# INLINE ul_ #-}
-ul_ :: IsElementChildren a state => [NodePatch DOM.HTMLUListElement state] -> a -> Node state
+ul_ :: IsElementChildren a context state => [NodePatch DOM.HTMLUListElement context state] -> a -> Node context state
 ul_ = el "ul" DOM.HTMLUListElement
 
 {-# INLINE li_ #-}
-li_ :: IsElementChildren a state => [NodePatch DOM.HTMLLIElement state] -> a -> Node state
+li_ :: IsElementChildren a context state => [NodePatch DOM.HTMLLIElement context state] -> a -> Node context state
 li_ = el "li" DOM.HTMLLIElement
 
 {-# INLINE h2_ #-}
-h2_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
+h2_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
 h2_ = el "h2" DOM.HTMLHeadingElement
 
 {-# INLINE h5_ #-}
-h5_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
+h5_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
 h5_ = el "h5" DOM.HTMLHeadingElement
 
 {-# INLINE select_ #-}
-select_ :: IsElementChildren a state => [NodePatch DOM.HTMLSelectElement state] -> a -> Node state
+select_ :: IsElementChildren a context state => [NodePatch DOM.HTMLSelectElement context state] -> a -> Node context state
 select_ = el "select" DOM.HTMLSelectElement
 
 {-# INLINE option_ #-}
-option_ :: IsElementChildren a state => [NodePatch DOM.HTMLOptionElement state] -> a -> Node state
+option_ :: IsElementChildren a context state => [NodePatch DOM.HTMLOptionElement context state] -> a -> Node context state
 option_ = el "option" DOM.HTMLOptionElement
 
 {-# INLINE label_ #-}
-label_ :: IsElementChildren a state => [NodePatch DOM.HTMLLabelElement state] -> a -> Node state
+label_ :: IsElementChildren a context state => [NodePatch DOM.HTMLLabelElement context state] -> a -> Node context state
 label_ = el "label" DOM.HTMLLabelElement
 
 {-# INLINE nav_ #-}
-nav_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
+nav_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
 nav_ = el "nav" DOM.HTMLElement
 
 {-# INLINE h1_ #-}
-h1_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
+h1_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
 h1_ = el "h1" DOM.HTMLHeadingElement
 
 {-# INLINE h4_ #-}
-h4_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
+h4_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
 h4_ = el "h4" DOM.HTMLHeadingElement
 
 {-# INLINE h6_ #-}
-h6_ :: IsElementChildren a state => [NodePatch DOM.HTMLHeadingElement state] -> a -> Node state
+h6_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
 h6_ = el "h6" DOM.HTMLHeadingElement
 
 {-# INLINE small_ #-}
-small_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
+small_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
 small_ = el "small" DOM.HTMLElement
 
 {-# INLINE pre_ #-}
-pre_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
+pre_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
 pre_ = el "pre" DOM.HTMLElement
 
 {-# INLINE code_ #-}
-code_ :: IsElementChildren a state => [NodePatch DOM.HTMLElement state] -> a -> Node state
+code_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
 code_ = el "code" DOM.HTMLElement
 
 {-# INLINE iframe_ #-}
-iframe_ :: IsElementChildren a state => [NodePatch DOM.HTMLIFrameElement state] -> a -> Node state
+iframe_ :: IsElementChildren a context state => [NodePatch DOM.HTMLIFrameElement context state] -> a -> Node context state
 iframe_ = el "iframe" DOM.HTMLIFrameElement
 
 -- Properties
 -- --------------------------------------------------------------------
 
 {-# INLINE property #-}
-property :: Text -> DOM.JSVal -> NodePatch el state
+property :: Text -> DOM.JSVal -> NodePatch el context state
 property k v = NPProperty k (return v)
 
 {-# INLINE style #-}
-style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el state
+style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el context state
 style = NPStyle
 
-class_ :: Text -> NodePatch el state
+class_ :: Text -> NodePatch el context state
 class_ txt = NPProperty "className" (DOM.toJSVal txt)
 
-id_ ::  Text -> NodePatch el state
+id_ ::  Text -> NodePatch el context state
 id_ txt = NPProperty "id" (DOM.toJSVal txt)
 
-type_ :: Text -> NodePatch el state
+type_ :: Text -> NodePatch el context state
 type_ txt = NPProperty "type" (DOM.toJSVal txt)
 
-href_ :: Text -> NodePatch el state
+href_ :: Text -> NodePatch el context state
 href_ txt = NPProperty "href" (DOM.toJSVal txt)
 
-value_ :: Text -> NodePatch el state
+value_ :: Text -> NodePatch el context state
 value_ txt = NPProperty "value" (DOM.toJSVal txt)
 
-checked_ :: Bool -> NodePatch el state
+checked_ :: Bool -> NodePatch el context state
 checked_ b = NPProperty "checked" (DOM.toJSVal b)
 
-selected_ :: Bool -> NodePatch DOM.HTMLOptionElement state
+selected_ :: Bool -> NodePatch el context state
 selected_ b = NPProperty "selected" (DOM.toJSVal b)
 
-disabled_ :: Bool -> NodePatch el state
+disabled_ :: Bool -> NodePatch el context state
 disabled_ b = NPProperty "disabled" (DOM.toJSVal b)
 
 {-# INLINE rawAttribute #-}
-rawAttribute :: Text -> DOM.JSVal -> NodePatch el state
+rawAttribute :: Text -> DOM.JSVal -> NodePatch el context state
 rawAttribute k v = NPAttribute k (return v)
 
 {-# INLINE attribute #-}
-attribute :: Text -> Text -> NodePatch el state
+attribute :: Text -> Text -> NodePatch el context state
 attribute k v = NPAttribute k (DOM.toJSVal v)
 
-placeholder_ :: Text -> NodePatch el state
+placeholder_ :: Text -> NodePatch el context state
 placeholder_ txt = NPProperty "placeholder" (DOM.toJSVal txt)
 
 {-# INLINE for_ #-}
-for_ :: Text -> NodePatch DOM.HTMLLabelElement state
+for_ :: Text -> NodePatch el context state
 for_ txt = NPProperty "for" (DOM.toJSVal txt)
 
 {-# INLINE multiple_ #-}
-multiple_ :: Bool -> NodePatch el state
+multiple_ :: Bool -> NodePatch el context state
 multiple_ txt = NPProperty "multiple" (DOM.toJSVal txt)
 
 {-# INLINE src_ #-}
-src_ :: Text -> NodePatch el state
+src_ :: Text -> NodePatch el context state
 src_ txt = NPProperty "src" (DOM.toJSVal txt)
 
 {-# INLINE onEvent #-}
 onEvent ::
-     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction state m, MonadUnliftIO m)
+     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction context state m, MonadUnliftIO m)
   => t -> DOM.EventM.EventName t e -> (e -> m ()) -> m (DOM.JSM ())
 onEvent el_ evName f = do
   u <- askUnliftIO
@@ -876,36 +1007,36 @@ onEvent el_ evName f = do
 
 onclick_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.MouseEvent -> Action state ()) -> NodePatch el state
+  => (el -> DOM.MouseEvent -> Action context state ()) -> NodePatch el context state
 onclick_ = NPEvent . SomeEventAction DOM.click
 
 onchange_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action state ()) -> NodePatch el state
+  => (el -> DOM.Event -> Action context state ()) -> NodePatch el context state
 onchange_ = NPEvent . SomeEventAction DOM.change
 
 oninput_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action state ()) -> NodePatch el state
+  => (el -> DOM.Event -> Action context state ()) -> NodePatch el context state
 oninput_ = NPEvent . SomeEventAction DOM.input
 
 onsubmit_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action state ()) -> NodePatch el state
+  => (el -> DOM.Event -> Action context state ()) -> NodePatch el context state
 onsubmit_ = NPEvent . SomeEventAction DOM.submit
 
 onselect_ ::
      (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.UIEvent -> Action state ()) -> NodePatch el state
+  => (el -> DOM.UIEvent -> Action context state ()) -> NodePatch el context state
 onselect_ = NPEvent . SomeEventAction DOM.select
 
 -- simple rendering
 -- --------------------------------------------------------------------
 
-simpleNode :: forall state. state ->  Node state -> DOM.JSM (V.Node V.SomeVDomNode)
+simpleNode :: forall state. state ->  Node () state -> DOM.JSM (V.Node V.SomeVDomNode)
 simpleNode st node0 = do
   comp <- newComponent st (\() -> node0)
-  (_, vdom) <- unAnapoM
+  (_, vdom) <- unDomM
     (do
       node <- _componentNode comp ()
       V.forSomeNodeBody node $ \node' -> do
@@ -914,15 +1045,22 @@ simpleNode st node0 = do
     ActionEnv
       { aeRegisterThread = \_ -> fail "Trying to register a thread from the simpleRenderNode"
       , aeHandleException = \_ -> fail "Trying to handle an exception from the simpleRenderNode"
-      , aeDispatch = Dispatch (\_ _ -> fail "Trying to dispatch from the simpleRenderNode")
-      , aeTraverseToComp = id
-      , aeTraverseToState = id
+      , aeDispatch = Dispatch (\_ _ _ -> fail "Trying to dispatch from the simpleRenderNode")
       }
-    AnapoEnv
-      { aeReversePath = []
-      , aePrevState = Nothing
-      , aeState = st
-      , aeDirtyPath = False
+    ActionTraverse
+      { atToComp = id
+      , atToState = id
+      , atToCompContext = noContext
+      , atToContext = id
+      }
+    DomEnv
+      { domEnvReversePath = []
+      , domEnvDirtyPath = False
+      , domEnvPrevState = Nothing
+      }
+    DomCurrent
+      { domCurrentState = st
+      , domCurrentContext = ()
       }
     ()
   return vdom
@@ -930,7 +1068,7 @@ simpleNode st node0 = do
 -- when we want a quick render of a component, e.g. inside a raw node.
 -- any attempt to use dispatch will result in an exception; e.g. this
 -- will never redraw anything, it's just to quickly draw some elements
-simpleRenderNode :: state -> Node state -> DOM.JSM DOM.Node
+simpleRenderNode :: state -> Node () state -> DOM.JSM DOM.Node
 simpleRenderNode st node = do
   vdom <- simpleNode st node
   renderVirtualDom vdom (return . renderedVDomNodeDom . V.nodeBody)
@@ -949,38 +1087,38 @@ unliftJSM :: (DOM.MonadJSM n) => UnliftJSM m -> m a -> n a
 unliftJSM u m = DOM.liftJSM (liftIO (unliftIO u m))
 
 {-# INLINE actionUnliftJSM #-}
-actionUnliftJSM :: (MonadAction state m) => m (UnliftJSM (Action state))
+actionUnliftJSM :: (MonadAction context state m) => m (UnliftJSM (Action context state))
 actionUnliftJSM = liftAction askUnliftJSM
 
 -- Components
 -- --------------------------------------------------------------------
 
-data Component props state = Component
+data Component props context state = Component
   { _componentState :: state
-  , _componentNode :: props -> Node state
+  , _componentNode :: props -> Node context state
   , _componentPositions :: IORef (HMS.HashMap VDomPath props)
   }
 
-{-# INLINE componentState #-}
-componentState :: Lens' (Component props state) state
-componentState = lens _componentState (\comp st -> comp{ _componentState = st })
+{-# INLINE compState #-}
+compState :: Lens' (Component props context state) state
+compState = lens _componentState (\comp st -> comp{ _componentState = st })
 
-{-# INLINE componentNode #-}
-componentNode :: Lens' (Component props state) (props -> Node state)
-componentNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
+{-# INLINE compNode #-}
+compNode :: Lens' (Component props context state) (props -> Node context state)
+compNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 
 {-# INLINE newComponent #-}
-newComponent :: MonadIO m => state -> (props -> Node state) -> m (Component props state)
+newComponent :: MonadIO m => state -> (props -> Node context state) -> m (Component props context state)
 newComponent st node = do
   posRef <- liftIO (newIORef mempty)
   return (Component st node posRef)
 
-registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> AnapoM dom a [NodePatch el state]
-registerComponent ref props = AnapoM $ \_acEnv anEnv dom -> do
+registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> DomM dom a b [NodePatch el ctx st]
+registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _curr dom -> do
   let add = \_ -> do
-        liftIO (modifyIORef' ref (HMS.insert (reverse (aeReversePath anEnv)) props))
+        liftIO (modifyIORef' ref (HMS.insert (reverse (domEnvReversePath anEnv)) props))
   let remove = \_ -> do
-        liftIO (modifyIORef' ref (HMS.delete (reverse (aeReversePath anEnv))))
+        liftIO (modifyIORef' ref (HMS.delete (reverse (domEnvReversePath anEnv))))
   return
     ( dom
     , [ NPWillMount add
@@ -991,37 +1129,41 @@ registerComponent ref props = AnapoM $ \_acEnv anEnv dom -> do
     )
 
 {-# INLINE component #-}
-component :: props -> Node (Component props state)
+component :: props -> Node ctx (Component props ctx st)
 component props = do
-  AnapoM $ \_acEnv aeEnv dom ->
-    if aeDirtyPath aeEnv
+  DomM $ \_acEnv _acTrav aeEnv _curr dom ->
+    if domEnvDirtyPath aeEnv
       then return ((), dom)
-      else error ("Trying to insert component immediately inside another component at path " <> show (reverse (aeReversePath aeEnv)) <> ", please wrap the inner component in a node.")
-  comp <- ask
-  node <- AnapoM $ \acEnv anEnv dom ->
-    unAnapoM
-      (_componentNode (aeState anEnv) props)
+      else error ("Trying to insert component immediately inside another component at path " <> show (reverse (domEnvReversePath aeEnv)) <> ", please wrap the inner component in a node.")
+  comp <- asks domCurrentState
+  node <- DomM $ \acEnv acTrav anEnv curr dom ->
+    unDomM
+      (_componentNode (domCurrentState curr) props)
       acEnv
-        { aeTraverseToComp = aeTraverseToComp acEnv.componentState.aeTraverseToState acEnv
-        , aeTraverseToState = id
+      acTrav
+        { atToComp = atToComp acTrav . compState . atToState acTrav
+        , atToCompContext = atToCompContext acTrav . atToContext acTrav
+        , atToState = id
+        , atToContext = id
         }
       anEnv
-        { aeState = _componentState (aeState anEnv) }
+      curr
+        { domCurrentState = _componentState (domCurrentState curr) }
       dom
   V.forSomeNodeBody node $ \node' -> do
     patches <- registerComponent (_componentPositions comp) props
     patchNode patches node'
 
 {-# INLINE componentL #-}
-componentL :: Lens' out (Component props state) -> props -> Node out
-componentL l props = zoomL l (component props)
+componentL :: Lens' out (Component props context state) -> props -> Node context out
+componentL l props = zoomStL l (component props)
 
 {-# INLINE componentT #-}
 componentT ::
      HasCallStack
-  => Component props state
-  -> AffineTraversal' out (Component props state)
+  => Component props context state
+  -> AffineTraversal' out (Component props context state)
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> props
-  -> Node out
-componentT st l props = zoomT st l (component props)
+  -> Node context out
+componentT st l props = zoomStT st l (component props)

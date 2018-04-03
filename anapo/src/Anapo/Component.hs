@@ -13,23 +13,26 @@ module Anapo.Component
     -- * affine traversals
   , AffineTraversal
   , AffineTraversal'
+  , AffineFold
   , toMaybeOf
 
     -- * Register / handler
   , RegisterThread
   , HandleException
   , forkRegistered
-  , Action(..)
-  , ActionEnv(..)
+  , Action
   , dispatch
-  , dispatchInside
-  , actionFork
-  , actionZoom
-  , actionComponent
+  , actFork
+  , actZoomSt
+  , actZoomCtx
+  , noContext
   , MonadAction(..)
 
     -- * AnapoM
-  , AnapoM
+  , DomM
+  , DomCurrent
+  , context
+  , state
   , Dom
   , Dom'
   , DomState
@@ -44,8 +47,10 @@ module Anapo.Component
   , askRegisterThread
   , askHandleException
   , askPreviousState
-  , zoomL
-  , zoomT
+  , zoomStL
+  , zoomStT
+  , zoomCtxL
+  , zoomCtxF
   , UnliftJSM
   , askUnliftJSM
   , unliftJSM
@@ -53,8 +58,8 @@ module Anapo.Component
 
     -- * Component
   , Component
-  , componentState
-  , componentNode
+  , compState
+  , compNode
   , newComponent
   , component
   , componentT

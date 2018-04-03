@@ -53,12 +53,12 @@ youTubeInit videoId = liftJSM $ do
 
 -- it's important to have this as a generic element since we'll replace
 -- it with a iframe
-youTubeNode :: Node YouTubeState
+youTubeNode :: Node a YouTubeState
 youTubeNode = do
-  st <- ask
+  st <- view state
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
   let
-    onDidMount el = void $ actionFork $ liftJSM $ do
+    onDidMount el = void $ actFork $ liftJSM $ do
       logInfo "Creating new YouTube object"
       -- We create the you tube element in the div _inside_ the
       -- top-level element otherwise anapo will choke on the fact that
@@ -102,11 +102,11 @@ youTubeNode = do
     ]
 
 -- | Never rerender the node
-youTubeComponent :: Dom YouTubeState
-youTubeComponent = do
+youTubeComponent :: Dom a YouTubeState
+youTubeComponent = zoomCtxF () noContext $ do
   -- TODO this causes a linking error with GHC! see TODO on 'marked'
   n$ marked
-    (\mbPrevSt _ st -> case mbPrevSt of
+    (\_ mbPrevSt _ _ st -> case mbPrevSt of
       Just prevSt -> if prevSt^.ytsToken == st^.ytsToken
         then UnsafeDontRerender
         else Rerender
@@ -114,7 +114,7 @@ youTubeComponent = do
     (static (\_ -> youTubeNode))
     ()
   u <- liftAction askUnliftJSM
-  zoomL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
+  zoomStL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
     n$ simpleTextInput
       STIP
         { stipButtonText = "Choose video"

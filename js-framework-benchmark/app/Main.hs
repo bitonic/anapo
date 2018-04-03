@@ -9,11 +9,10 @@ import qualified Anapo.Text as T
 import qualified GHCJS.DOM.Types as DOM
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
-import Control.Monad.Reader (ask)
 import Control.Monad.IO.Class (liftIO)
 import System.Random (randomRIO)
 import Data.Monoid ((<>))
-import Control.Lens (makeLenses, (.=), use, (%~))
+import Control.Lens (makeLenses, (.=), use, (%~), view)
 
 #if defined(ghcjs_HOST_OS)
 runJSM :: DOM.JSM () -> IO ()
@@ -84,7 +83,7 @@ updateData rows = do
       else return ()
   go 0
 
-rowsComponent :: Node State
+rowsComponent :: Node a State
 rowsComponent =
   div_ [class_ "container"] $ do
     n$ div_ [class_ "jumbotron"] $ do
@@ -146,9 +145,9 @@ rowsComponent =
           then liftIO (MV.swap rows 1 998)
           else return ()
 
-    rowsDom :: KeyedDom State
+    rowsDom :: KeyedDom a State
     rowsDom = do
-      State{..} <- ask
+      State{..} <- view state
       let len = MV.length _stateRows
       let
         go !ix = if ix < len

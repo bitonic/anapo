@@ -5,9 +5,9 @@ module Anapo.TestApps.Bump (BumpsState, bumpsNode, bumpsInit) where
 import Anapo
 import Anapo.TestApps.Prelude
 
-bumpNode :: Text -> Node Int
+bumpNode :: Text -> Node a Int
 bumpNode title = do
-  count <- ask
+  count <- view state
   div_ [] $ do
     n$ text (title <> ": ")
     n$ button_
@@ -23,17 +23,17 @@ data BumpsCycle =
   | BCThree
 
 data BumpsState = BumpsState
-  { _bumps1 :: Component Text Int
-  , _bumps2 :: Component Text Int
+  { _bumps1 :: Component Text () Int
+  , _bumps2 :: Component Text () Int
   , _bumpsCycle :: BumpsCycle
   }
 makeLenses ''BumpsState
 
-bumpsNode :: Node BumpsState
+bumpsNode :: Node a BumpsState
 bumpsNode =
-  div_ [] $ do
+  zoomCtxF () noContext $ div_ [] $ do
     n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $ do
-      bs <- view bumpsCycle
+      bs <- view (state.bumpsCycle)
       case bs of
         BCOne -> do
           n$ componentL bumps1 "1"
@@ -57,7 +57,7 @@ bumpsNode =
         ]
         (n$ "Swap")
 
-bumpsInit :: Action BumpsState BumpsState
+bumpsInit :: Action () BumpsState BumpsState
 bumpsInit = BumpsState
   <$> newComponent 0 bumpNode
   <*> newComponent 0 bumpNode
