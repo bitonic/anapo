@@ -1053,10 +1053,11 @@ onselect_ = NPEvent . SomeEventAction DOM.select
 
 simpleNode :: forall state. state -> Node () state -> DOM.JSM (V.Node V.SomeVDomNode)
 simpleNode st node0 = do
-  comp <- newComponent st (\() () -> node0)
+  comp <- newComponent st (\() -> node0)
+  liftIO (writeIORef (_componentContext comp) (Just ()))
   (_, vdom) <- unDomM
     (do
-      node <- _componentNode comp () ()
+      node <- _componentNode comp ()
       V.forSomeNodeBody node $ \node' -> do
         patches <- registerComponent (_componentPositions comp) ()
         patchNode patches node')
@@ -1110,7 +1111,7 @@ actionUnliftJSM = liftAction askUnliftJSM
 
 data Component props ctx st = Component
   { _componentState :: st
-  , _componentNode :: props -> ctx -> Node ctx st
+  , _componentNode :: props -> Node ctx st
   , _componentPositions :: IORef (HMS.HashMap VDomPath props)
   , _componentContext :: IORef (Maybe ctx)
   }
@@ -1122,14 +1123,14 @@ compState :: Lens' (Component props context state) state
 compState = lens _componentState (\comp st -> comp{ _componentState = st })
 
 {-# INLINE compNode #-}
-compNode :: Lens' (Component props context state) (props -> context -> Node context state)
+compNode :: Lens' (Component props context state) (props -> Node context state)
 compNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 
 {-# INLINE newComponent #-}
 newComponent ::
      MonadIO m
   => state
-  -> (props -> context -> Node context state)
+  -> (props -> Node context state)
   -> m (Component props context state)
 newComponent st node = do
   posRef <- liftIO (newIORef mempty)
@@ -1140,9 +1141,9 @@ newComponent st node = do
 newComponent_ ::
      MonadIO m
   => st
-  -> (ctx -> Node ctx st)
+  -> Node ctx st
   -> m (Component () ctx st)
-newComponent_ st comp = newComponent st (\() ctx -> comp ctx)
+newComponent_ st comp = newComponent st (\() -> comp)
 
 {-# INLINE registerComponent #-}
 registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> DomM dom a b [NodePatch el ctx st]
@@ -1179,7 +1180,7 @@ component props (ComponentToken tok) = do
       Nothing -> error "Context not initialized!"
       Just ctx -> return ctx
     (dom', node) <- unDomM
-      (_componentNode comp props ctx)
+      (_componentNode comp props)
       acEnv
       acTrav
         { atToComp = atToComp acTrav . compState . atToState acTrav

@@ -90,7 +90,7 @@ todoComponent = div_ [] $ do
 
 todoInit :: Action a TodoState TodoState
 todoInit = do
-  inp <- newComponent_ "" simpleTextInput
+  inp <- newComponent_ "" (simpleTextInput =<< askContext)
   return TodoState
     { _tsShowCompleted = True
     , _tsTodoElements = Map.fromList

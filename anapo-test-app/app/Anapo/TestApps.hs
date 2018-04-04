@@ -173,12 +173,12 @@ testAppsWith cont = do
             st <- TestAppsState
               <$> pure app
               <*> pure app
-              <*> newComponent_ todo (\() -> todoComponent)
+              <*> newComponent_ todo todoComponent
               <*> timerInit
               <*> pure False
               <*> youTubeInit "3yQObSCXyoo"
-              <*> newComponent_ bumps (\() -> bumpsNode)
-              <*> newComponent_ keyedList (\() -> keyedListComponent)
+              <*> newComponent_ bumps bumpsNode
+              <*> newComponent_ keyedList keyedListComponent
               <*> componentDifferentNodesInit
-              <*> newComponent_ False (\() -> rawHtmlComponent)
+              <*> newComponent_ False rawHtmlComponent
             cont (TASOEOk st))

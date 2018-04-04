@@ -10,7 +10,7 @@ componentDifferentNodesInit ::
      MonadJSM m
   => m (Component () () Bool)
 componentDifferentNodesInit = do
-  newComponent_ True $ \_ -> do
+  newComponent_ True $ do
     b <- ask
     let toggle = do
           n$ a_

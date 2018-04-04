@@ -5,8 +5,9 @@ module Anapo.TestApps.Bump (BumpsState, bumpsNode, bumpsInit) where
 import Anapo
 import Anapo.TestApps.Prelude
 
-bumpNode :: Text -> Node a Int
-bumpNode title = do
+bumpNode :: Node Text Int
+bumpNode = do
+  title <- askContext
   count <- ask
   div_ [] $ do
     n$ text (title <> ": ")

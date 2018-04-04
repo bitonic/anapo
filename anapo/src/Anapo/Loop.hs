@@ -109,7 +109,7 @@ nodeLoop withState node excComp root = do
       Just ctx <- liftIO (readIORef (_componentContext comp))
       ((_, vdom), vdomDt) <- timeIt $ unDomM
         (do
-          node0 <- _componentNode comp props ctx
+          node0 <- _componentNode comp props
           V.forSomeNodeBody node0 $ \node' -> do
             patches <- registerComponent (_componentPositions comp) props
             patchNode patches node')
@@ -193,7 +193,7 @@ nodeLoop withState node excComp root = do
       finally
         (do
           -- run for the first time
-          comp <- newComponent st0 (\() () -> node)
+          comp <- newComponent st0 (\() -> node)
           liftIO (writeIORef (_componentContext comp) (Just ()))
           vdom <- runComp Nothing [] id comp ()
           rendered0 <- renderVirtualDom vdom $ \rendered -> do
