@@ -1191,13 +1191,14 @@ initComponent comp ctx = liftIO $ do
 component :: props -> ComponentToken props ctx st -> Node ctx0 (Component props ctx st)
 component props (ComponentToken tok) = do
   (node, pos) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
+    let name = _componentName comp
     when (_componentContext comp /= tok) $
-      error "Initialized component does not match state component!"
+      error (T.unpack name <> ": Initialized component does not match state component!")
     unless (domEnvDirtyPath anEnv) $
-      error ("Trying to insert component immediately inside another component at path " <> show (reverse (domEnvReversePath anEnv)) <> ", please wrap the inner component in a node.")
+      error (T.unpack name <> ": Trying to insert component immediately inside another component at path " <> show (reverse (domEnvReversePath anEnv)) <> ", please wrap the inner component in a node.")
     mbCtx <- liftIO (readIORef (_componentContext comp))
     ctx <- case mbCtx of
-      Nothing -> error "Context not initialized!"
+      Nothing -> error (T.unpack name <> ": Context not initialized!")
       Just ctx -> return ctx
     (dom', node) <- unDomM
       (_componentNode comp props)
