@@ -39,7 +39,7 @@ todoItemNode = do
 data TodoState = TodoState
   { _tsShowCompleted :: Bool
   , _tsTodoElements :: Map.Map Int TodoItemState
-  , _tsInput :: Component SimpleTextInputProps () Text
+  , _tsInput :: Component () SimpleTextInputProps Text
   }
 makeLenses ''TodoState
 

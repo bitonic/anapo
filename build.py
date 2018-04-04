@@ -18,7 +18,7 @@ def build(project, ghcjs):
 
 def repl(project, ghcjs):
   print("### REPLing project {}, ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))
-  run(project, ghcjs, "repl")
+  run(project, ghcjs, "repl --ghc-options='-fobject-code -O0'")
 
 def build_nix(project, ghcjs):
   print("### Building project {} (nix), ".format(project) + ("using GHCjs." if ghcjs else "using GHC."))

@@ -23,8 +23,8 @@ data BumpsCycle =
   | BCThree
 
 data BumpsState = BumpsState
-  { _bumps1 :: Component Text () Int
-  , _bumps2 :: Component Text () Int
+  { _bumps1 :: Component () Text Int
+  , _bumps2 :: Component () Text Int
   , _bumpsCycle :: BumpsCycle
   }
 makeLenses ''BumpsState

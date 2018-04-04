@@ -1102,10 +1102,10 @@ newComponent st node = do
 {-# INLINE newComponent_ #-}
 newComponent_ ::
      MonadIO m
-  => state
-  -> (props -> Node () state)
-  -> m (Component props () state)
-newComponent_ st comp = newComponent st (\props () -> comp props)
+  => st
+  -> (ctx -> Node ctx st)
+  -> m (Component () ctx st)
+newComponent_ st comp = newComponent st (\() ctx -> comp ctx)
 
 {-# INLINE registerComponent #-}
 registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> DomM dom a b [NodePatch el ctx st]
@@ -1157,23 +1157,23 @@ component props (ComponentToken tok) = do
     patchNode patches node'
 
 {-# INLINE component_ #-}
-component_ :: forall props ctx st. props -> Node ctx (Component props () st)
-component_ props = do
+component_ :: forall ctx0 ctx st. ctx -> Node ctx0 (Component () ctx st)
+component_ ctx = do
   comp <- ask
-  tok <- initComponent comp ()
-  component props tok
+  tok <- initComponent comp ctx
+  component () tok
 
 {-# INLINE componentL #-}
-componentL :: Lens' out (Component props () state) -> props -> Node context out
+componentL :: Lens' out (Component () ctx state) -> ctx -> Node ctx0 out
 componentL l props = zoomL l (component_ props)
 
 {-# INLINE componentT #-}
 componentT ::
      HasCallStack
-  => Component props () state
-  -> AffineTraversal' out (Component props () state)
+  => Component () ctx state
+  -> AffineTraversal' out (Component () ctx state)
   -- ^ note: if the traversal is not affine you'll get crashes.
-  -> props
-  -> Node context out
+  -> ctx
+  -> Node ctx0 out
 componentT st l props = zoomT st l (component_ props)
 
