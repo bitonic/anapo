@@ -21,6 +21,7 @@ module Anapo.Component
   , HandleException
   , forkRegistered
   , Action
+  , DispatchM(..)
   , dispatch
   , actFork
   , actZoomSt
