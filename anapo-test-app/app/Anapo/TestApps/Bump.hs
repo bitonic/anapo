@@ -36,17 +36,17 @@ bumpsNode =
       bs <- view bumpsCycle
       case bs of
         BCOne -> do
-          n$ componentL bumps1 "1"
-          n$ componentL bumps1 "1"
-          n$ componentL bumps2 "2"
+          n$ componentL_ bumps1 "1"
+          n$ componentL_ bumps1 "1"
+          n$ componentL_ bumps2 "2"
         BCTwo -> do
-          n$ componentL bumps1 "1"
+          n$ componentL_ bumps1 "1"
           n$ text "Blah"
-          n$ componentL bumps2 "2"
+          n$ componentL_ bumps2 "2"
         BCThree -> do
-          n$ componentL bumps1 "1"
-          n$ componentL bumps2 "2"
-          n$ componentL bumps2 "2"
+          n$ componentL_ bumps1 "1"
+          n$ componentL_ bumps2 "2"
+          n$ componentL_ bumps2 "2"
     n$ div_ [class_ "row mt-2"] $ n$ div_ [class_ "col"] $ do
       n$ button_
         [ onclick_ $ \_ _ -> dispatch $ do

@@ -106,9 +106,9 @@ nodeLoop withState node excComp root = do
       -> props
       -> DOM.JSM (V.Node V.SomeVDomNode)
     runComp mbPrevComp path travComp comp props = do
+      Just ctx <- liftIO (readIORef (_componentContext comp))
       ((_, vdom), vdomDt) <- timeIt $ unDomM
         (do
-          Just ctx <- liftIO (readIORef (_componentContext comp))
           node0 <- _componentNode comp props ctx
           V.forSomeNodeBody node0 $ \node' -> do
             patches <- registerComponent (_componentPositions comp) props
@@ -120,7 +120,8 @@ nodeLoop withState node excComp root = do
           , domEnvPrevState = mbPrevComp
           , domEnvDirtyPath = False
           }
-          (_componentState comp)
+        ctx
+        (_componentState comp)
         ()
       DOM.syncPoint
       logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")

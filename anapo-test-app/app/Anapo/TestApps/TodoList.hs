@@ -49,7 +49,7 @@ todoComponent = div_ [] $ do
   u <- liftAction askUnliftJSM
   n$ div_ [class_ "row align-items-center"] $ do
     n$ div_ [class_ "col-md-auto"] $ do
-      n$ componentL tsInput STIP
+      n$ componentL_ tsInput STIP
         { stipButtonText = "Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)
         , stipOnSubmit = unliftJSM u $ dispatch $ do
             curText <- use (tsInput.compState)

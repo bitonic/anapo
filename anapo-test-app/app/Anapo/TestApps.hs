@@ -138,13 +138,13 @@ testAppsComponent = do
               n$ "Stop timer app when changing app"
       n$ div_ [class_ "row m-2"] $ n$ div_ [class_ "col"] $ case st^.tasApp of
         Blank -> return ()
-        Todo -> n$ componentL tasTodo ()
+        Todo -> n$ componentL_ tasTodo ()
         Timer -> zoomL tasTimer timerComponent
         YouTube -> zoomL tasYouTube youTubeComponent
-        Bumps -> n$ componentL tasBumps ()
-        KeyedList -> n$ componentL tasKeyedList ()
-        DifferentNodes -> n$ componentL tasDifferentNodes ()
-        RawHtml -> n$ componentL tasRawHtml ()
+        Bumps -> n$ componentL_ tasBumps ()
+        KeyedList -> n$ componentL_ tasKeyedList ()
+        DifferentNodes -> n$ componentL_ tasDifferentNodes ()
+        RawHtml -> n$ componentL_ tasRawHtml ()
 
 testAppsWith ::
      (TestAppsStateOrError -> Action () TestAppsStateOrError a)

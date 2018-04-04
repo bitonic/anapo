@@ -10,7 +10,7 @@
 module Anapo.Component.Internal where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Lens (Lens', view, lens)
+import Control.Lens (Lens', view, lens, (^.))
 import qualified Control.Lens as Lens
 import qualified Control.Lens.Internal.Zoom as Lens
 import Control.Monad (ap, when, unless)
@@ -313,6 +313,7 @@ newtype DomM dom context state a = DomM
          ActionEnv rootState
       -> ActionTraverse rootState compProps compContext compState context state
       -> DomEnv rootState
+      -> context
       -> state
       -> dom
       -> DOM.JSM (dom, a)
@@ -338,22 +339,22 @@ type Node' ctx st a = DomM () ctx st (V.Node V.SomeVDomNode, a)
 
 instance MonadIO (DomM dom ctx st) where
   {-# INLINE liftIO #-}
-  liftIO m = DomM $ \_actEnv _acTrav _anEnv _curr dom -> do
+  liftIO m = DomM $ \_actEnv _acTrav _anEnv _ctx _st dom -> do
     x <- liftIO m
     return (dom, x)
 
 #if !defined(ghcjs_HOST_OS)
 instance JSaddle.MonadJSM (DomM dom ctx st) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = DomM $ \_actEnv _acTrav _anEnv _curr dom -> do
+  liftJSM' m = DomM $ \_actEnv _acTrav _anEnv _ctx _st dom -> do
     x <- m
     return (dom, x)
 #endif
 
 instance Functor (DomM dom ctx st) where
   {-# INLINE fmap #-}
-  fmap f (DomM g) = DomM $ \acEnv acTrav aeEnv curr dom -> do
-    (dom', x) <- g acEnv acTrav aeEnv curr dom
+  fmap f (DomM g) = DomM $ \acEnv acTrav aeEnv ctx st dom -> do
+    (dom', x) <- g acEnv acTrav aeEnv ctx st dom
     return (dom', f x)
 
 instance Applicative (DomM dom ctx st) where
@@ -364,11 +365,11 @@ instance Applicative (DomM dom ctx st) where
 
 instance Monad (DomM dom ctx st) where
   {-# INLINE return #-}
-  return x = DomM (\_acEnv _acTrav _aeEnv _curr dom -> return (dom, x))
+  return x = DomM (\_acEnv _acTrav _aeEnv _ctx _st dom -> return (dom, x))
   {-# INLINE (>>=) #-}
-  ma >>= mf = DomM $ \acEnv acTrav anEnv curr dom0 -> do
-    (dom1, x) <- unDomM ma acEnv acTrav anEnv curr dom0
-    (dom2, y) <- unDomM (mf x) acEnv acTrav anEnv curr dom1
+  ma >>= mf = DomM $ \acEnv acTrav anEnv ctx st dom0 -> do
+    (dom1, x) <- unDomM ma acEnv acTrav anEnv ctx st dom0
+    (dom2, y) <- unDomM (mf x) acEnv acTrav anEnv ctx st dom1
     return (dom2, y)
 
 instance (a ~ ()) => Monoid (DomM dom ctx st a) where
@@ -379,34 +380,43 @@ instance (a ~ ()) => Monoid (DomM dom ctx st a) where
 
 instance MonadAction ctx st (DomM dom ctx st) where
   {-# INLINE liftAction #-}
-  liftAction (Action f) = DomM $ \acEnv acTrav _anEnv _curr dom -> do
+  liftAction (Action f) = DomM $ \acEnv acTrav _anEnv _ctx _st dom -> do
     x <- f acEnv acTrav
     return (dom, x)
 
 instance MonadReader st (DomM dom ctx st) where
   {-# INLINE ask #-}
-  ask = DomM (\_acEnv _acTrav _anEnv curr dom -> return (dom, curr))
+  ask = DomM (\_acEnv _acTrav _anEnv _ctx st dom -> return (dom, st))
   {-# INLINE local #-}
-  local f m = DomM $ \acEnv acTrav anEnv curr dom -> do
-    unDomM m acEnv acTrav anEnv (f curr) dom
+  local f m = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+    unDomM m acEnv acTrav anEnv ctx (f st) dom
 
 {-# INLINE askPreviousState #-}
 askPreviousState :: DomM dom ctx st (Maybe st)
 askPreviousState =
-  DomM $ \_acEnv acTrav anEnv _curr dom ->
+  DomM $ \_acEnv acTrav anEnv _ctx _st dom ->
     return
       ( dom
       , toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState anEnv
       )
 
+{-# INLINE askContext #-}
+askContext :: DomM dom ctx st ctx
+askContext = DomM (\_acEnv _acTrav _anEnv ctx _st dom -> return (dom, ctx))
+
+{-# INLINE viewContext #-}
+viewContext :: Lens.Getting a ctx a -> DomM dom ctx st a
+viewContext l = DomM (\_acEnv _acTrav _anEnv ctx _st dom -> return (dom, ctx ^. l))
+
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
-zoomL l m = DomM $ \acEnv acTrav anEnv curr dom ->
+zoomL l m = DomM $ \acEnv acTrav anEnv ctx st dom ->
   unDomM m
     acEnv
     acTrav{ atToState = atToState acTrav . l }
     anEnv
-    (view l curr)
+    ctx
+    (view l st)
     dom
 
 {-# INLINE zoomT #-}
@@ -417,11 +427,12 @@ zoomT ::
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> DomM dom ctx in_ a
   -> DomM dom ctx out a
-zoomT st l m = DomM $ \acEnv acTrav anEnv _curr dom ->
+zoomT st l m = DomM $ \acEnv acTrav anEnv ctx _st dom ->
   unDomM m
     acEnv
     acTrav{ atToState = atToState acTrav . l }
     anEnv
+    ctx
     st
     dom
 
@@ -437,19 +448,36 @@ zoomCtxL l m = DomM $ \acEnv acTrav anEnv curr dom ->
     dom
 -}
 
-{-# INLINE zoomCtx #-}
-zoomCtx ::
+{-# INLINE zoomCtxF #-}
+zoomCtxF ::
      HasCallStack
-  => AffineFold out in_
+  => in_
+  -> AffineFold out in_
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> DomM dom in_ st a
   -> DomM dom out st a
-zoomCtx l m = DomM $ \acEnv acTrav anEnv curr dom ->
+zoomCtxF ctx l m = DomM $ \acEnv acTrav anEnv _ctx st dom ->
   unDomM m
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
-    curr
+    ctx
+    st
+    dom
+
+{-# INLINE zoomCtxL #-}
+zoomCtxL ::
+     HasCallStack
+  => Lens' out in_
+  -> DomM dom in_ st a
+  -> DomM dom out st a
+zoomCtxL l m = DomM $ \acEnv acTrav anEnv ctx st dom ->
+  unDomM m
+    acEnv
+    acTrav{ atToContext = atToContext acTrav . l }
+    anEnv
+    (view l ctx)
+    st
     dom
 
 -- to manipulate nodes
@@ -480,7 +508,7 @@ willRemove = NPWillRemove
 
 {-# INLINE n #-}
 n :: Node ctx st -> Dom ctx st
-n getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
+n getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
   (_, nod) <- unDomM
     getNode
     acEnv
@@ -489,7 +517,8 @@ n getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
       { domEnvReversePath = VDPSNormal (domStateLength dom) : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
-    curr
+    ctx
+    st
     ()
   return
     ( dom
@@ -501,7 +530,7 @@ n getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
 
 {-# INLINE n' #-}
 n' :: Node' ctx st a -> Dom' ctx st a
-n' getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
+n' getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
   (_, (nod, x)) <- unDomM
     getNode
     acEnv
@@ -510,7 +539,8 @@ n' getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
       { domEnvReversePath = VDPSNormal (domStateLength dom) : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
-    curr
+    ctx
+    st
     ()
   return
     ( dom
@@ -522,7 +552,7 @@ n' getNode = DomM $ \acEnv acTrav anEnv curr dom -> do
 
 {-# INLINE key #-}
 key :: Text -> Node ctx st -> KeyedDom ctx st
-key k getNode = DomM $ \acEnv acTrav anEnv curr (KeyedDomState dom) -> do
+key k getNode = DomM $ \acEnv acTrav anEnv ctx st (KeyedDomState dom) -> do
   (_, nod) <- unDomM
     getNode
     acEnv
@@ -531,13 +561,14 @@ key k getNode = DomM $ \acEnv acTrav anEnv curr (KeyedDomState dom) -> do
       { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
-    curr
+    ctx
+    st
     ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE key' #-}
 key' :: Text -> Node' ctx st a -> KeyedDom' ctx st a
-key' k getNode = DomM $ \acEnv acTrav anEnv curr (KeyedDomState dom) -> do
+key' k getNode = DomM $ \acEnv acTrav anEnv ctx st (KeyedDomState dom) -> do
   (_, (nod, x)) <- unDomM
     getNode
     acEnv
@@ -546,13 +577,14 @@ key' k getNode = DomM $ \acEnv acTrav anEnv curr (KeyedDomState dom) -> do
       { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
-    curr
+    ctx
+    st
     ()
   return (KeyedDomState (dom <> DList.singleton (k, nod)), x)
 
 {-# INLINE ukey #-}
 ukey :: Text -> Node ctx st -> MapDom ctx st
-ukey k getNode = DomM $ \acEnv acTrav anEnv curr (MapDomState dom) -> do
+ukey k getNode = DomM $ \acEnv acTrav anEnv ctx st (MapDomState dom) -> do
   (_, nod) <- unDomM
     getNode
     acEnv
@@ -561,13 +593,14 @@ ukey k getNode = DomM $ \acEnv acTrav anEnv curr (MapDomState dom) -> do
       { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
-    curr
+    ctx
+    st
     ()
   return (MapDomState (dom <> DList.singleton (k, nod)), ())
 
 {-# INLINE ukey' #-}
 ukey' :: Text -> Node' ctx st a -> MapDom' ctx st a
-ukey' k getNode = DomM $ \acEnv acTrav anEnv curr (MapDomState dom) -> do
+ukey' k getNode = DomM $ \acEnv acTrav anEnv ctx st (MapDomState dom) -> do
   (_, (nod, x)) <- unDomM
     getNode
     acEnv
@@ -576,7 +609,8 @@ ukey' k getNode = DomM $ \acEnv acTrav anEnv curr (MapDomState dom) -> do
       { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
-    curr
+    ctx
+    st
     ()
   return (MapDomState (dom <> DList.singleton (k, nod)), x)
 
@@ -644,14 +678,14 @@ rawNode wrap x patches = do
 marked ::
      (Maybe state -> props -> state -> V.Rerender)
   -> StaticPtr (props -> Node context state) -> props -> Node context state
-marked shouldRerender ptr props = DomM $ \acEnv acTrav domEnv curr dom -> do
+marked shouldRerender ptr props = DomM $ \acEnv acTrav domEnv ctx st dom -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender
         (toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState domEnv)
         props
-        curr
+        st
   (_, V.Node (V.SomeVDomNode nod) children) <-
-    unDomM (deRefStaticPtr ptr props) acEnv acTrav domEnv curr dom
+    unDomM (deRefStaticPtr ptr props) acEnv acTrav domEnv ctx st dom
   return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
 
 -- Utilities to quickly create nodes
@@ -679,18 +713,18 @@ instance IsElementChildren () ctx st where
   elementChildren _ = return (V.CNormal mempty)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM DomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv curr _ -> do
-    (DomState _ dom, _) <- f acEnv acTrav anEnv curr (DomState 0 mempty)
+  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
+    (DomState _ dom, _) <- f acEnv acTrav anEnv ctx st (DomState 0 mempty)
     return ((), V.CNormal (Vec.fromList (DList.toList dom)))
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM KeyedDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv curr _ -> do
-    (KeyedDomState dom, _) <- f acEnv acTrav anEnv curr (KeyedDomState mempty)
+  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
+    (KeyedDomState dom, _) <- f acEnv acTrav anEnv ctx st (KeyedDomState mempty)
     return ((), V.CKeyed (OHM.fromList (DList.toList dom)))
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM MapDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv curr _ -> do
-    (MapDomState dom, _) <- f acEnv acTrav anEnv curr (MapDomState mempty)
+  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
+    (MapDomState dom, _) <- f acEnv acTrav anEnv ctx st (MapDomState mempty)
     let kvs = DList.toList dom
     let numKvs = length kvs
     let hm = HMS.fromList kvs
@@ -1041,6 +1075,7 @@ simpleNode st node0 = do
       , domEnvDirtyPath = False
       , domEnvPrevState = Nothing
       }
+    ()
     st
     ()
   return vdom
@@ -1111,7 +1146,7 @@ newComponent_ st comp = newComponent st (\() ctx -> comp ctx)
 
 {-# INLINE registerComponent #-}
 registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> DomM dom a b [NodePatch el ctx st]
-registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _curr dom -> do
+registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _ctx _st dom -> do
   let add = \_ -> do
         liftIO (modifyIORef' ref (HMS.insert (reverse (domEnvReversePath anEnv)) props))
   let remove = \_ -> do
@@ -1134,7 +1169,7 @@ initComponent comp ctx = liftIO $ do
 {-# INLINE component #-}
 component :: props -> ComponentToken props ctx st -> Node ctx0 (Component props ctx st)
 component props (ComponentToken tok) = do
-  (node, pos) <- DomM $ \acEnv acTrav anEnv comp dom -> do
+  (node, pos) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
     when (_componentContext comp /= tok) $
       error "Initialized component does not match state component!"
     unless (domEnvDirtyPath anEnv) $
@@ -1152,6 +1187,7 @@ component props (ComponentToken tok) = do
         , atToContext = id
         }
       anEnv
+      ctx
       (_componentState comp)
       dom
     return (dom', (node, _componentPositions comp))
@@ -1166,17 +1202,31 @@ component_ ctx = do
   tok <- initComponent comp ctx
   component () tok
 
-{-# INLINE componentL #-}
-componentL :: Lens' out (Component () ctx state) -> ctx -> Node ctx0 out
-componentL l props = zoomL l (component_ props)
+{-# INLINE componentL_ #-}
+componentL_ :: Lens' out (Component () ctx state) -> ctx -> Node ctx0 out
+componentL_ l props = zoomL l (component_ props)
 
-{-# INLINE componentT #-}
-componentT ::
+{-# INLINE componentT_ #-}
+componentT_ ::
      HasCallStack
   => Component () ctx state
   -> AffineTraversal' out (Component () ctx state)
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> ctx
   -> Node ctx0 out
-componentT st l props = zoomT st l (component_ props)
+componentT_ st l props = zoomT st l (component_ props)
 
+{-# INLINE componentL #-}
+componentL :: Lens' out (Component props ctx state) -> props -> ComponentToken props ctx state -> Node ctx0 out
+componentL l props tok = zoomL l (component props tok)
+
+{-# INLINE componentT #-}
+componentT ::
+     HasCallStack
+  => Component props ctx state
+  -> AffineTraversal' out (Component props ctx state)
+  -- ^ note: if the traversal is not affine you'll get crashes.
+  -> props
+  -> ComponentToken props ctx state
+  -> Node ctx0 out
+componentT st l props tok = zoomT st l (component props tok)

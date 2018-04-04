@@ -47,7 +47,10 @@ module Anapo.Component
   , askPreviousState
   , zoomL
   , zoomT
-  , zoomCtx
+  , zoomCtxF
+  , zoomCtxL
+  , askContext
+  , viewContext
   , UnliftJSM
   , askUnliftJSM
   , unliftJSM
@@ -64,6 +67,8 @@ module Anapo.Component
   , component_
   , componentT
   , componentL
+  , componentT_
+  , componentL_
   , initComponent
 
     -- * basic combinators
