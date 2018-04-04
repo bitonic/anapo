@@ -176,7 +176,7 @@ noContext f x = f () *> pure x
 
 {-# INLINE actComponent #-}
 actComponent ::
-     MonadAction context (Component props context state) m
+     MonadAction context0 (Component props context state) m
   => Action context state a
   -> m a
 actComponent (Action m) = liftAction $ Action $ \env trav ->
