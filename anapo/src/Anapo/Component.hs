@@ -26,6 +26,7 @@ module Anapo.Component
   , actFork
   , actZoom
   , actZoomCtx
+  , noContext
   , actComponent
   , MonadAction(..)
 
