@@ -92,9 +92,9 @@ type HandleException = SomeException -> IO ()
 -- fires or as a fork in an event
 newtype Action context state a = Action
   { unAction ::
-         forall rootState compProps compState.
+         forall rootState compProps compContext compState.
          ActionEnv rootState
-      -> ActionTraverse rootState compProps context compState state
+      -> ActionTraverse rootState compProps compContext compState context state
       -- we keep this separate from ActionEnv because ActionTraverse
       -- changes all the time, ActionEnv never does.
       -> DOM.JSM a
@@ -106,9 +106,10 @@ data ActionEnv rootState = ActionEnv
   , aeDispatch :: Dispatch rootState
   }
 
-data ActionTraverse rootState compProps compContext compState state = ActionTraverse
+data ActionTraverse rootState compProps compContext compState context state = ActionTraverse
   { atToComp :: AffineTraversal' rootState (Component compProps compContext compState)
   , atToState :: AffineTraversal' compState state
+  , atToContext :: AffineFold compContext context
   }
 
 instance Functor (Action context state) where
@@ -163,7 +164,6 @@ actZoom :: MonadAction context out m => AffineTraversal' out in_ -> Action conte
 actZoom t m =
   liftAction (Action (\env trav -> unAction m env trav{atToState = atToState trav . t}))
 
-{-
 {-# INLINE actZoomCtx #-}
 actZoomCtx :: MonadAction out state m => AffineFold out in_ -> Action in_ state a -> m a
 actZoomCtx t m =
@@ -172,7 +172,6 @@ actZoomCtx t m =
 {-# INLINE noContext #-}
 noContext :: Lens.Fold a ()
 noContext f x = f () *> pure x
--}
 
 {-# INLINE actComponent #-}
 actComponent ::
@@ -183,6 +182,7 @@ actComponent (Action m) = liftAction $ Action $ \env trav ->
   m env trav
     { atToComp = atToComp trav . compState . atToState trav
     , atToState = id
+    , atToContext = id
     }
 
 {-# INLINE forkRegistered #-}
@@ -281,7 +281,9 @@ dispatch (DispatchM m) =
       (aeDispatch env)
       callStack
       (atToComp trav)
-      (\ctx -> atToState trav (\st' -> fmap snd (unAction (m ctx st') env trav)))
+      (\ctx st -> case toMaybeOf (atToContext trav) ctx of
+          Nothing -> return st
+          Just ctx' -> atToState trav (\st' -> fmap snd (unAction (m ctx' st') env trav)) st)
 
 {-# INLINE askRegisterThread #-}
 askRegisterThread :: (MonadAction context state m) => m RegisterThread
@@ -307,9 +309,9 @@ data DomEnv stateRoot = DomEnv
 
 newtype DomM dom context state a = DomM
   { unDomM ::
-         forall rootState compProps compState.
+         forall rootState compProps compContext compState.
          ActionEnv rootState
-      -> ActionTraverse rootState compProps context compState state
+      -> ActionTraverse rootState compProps compContext compState context state
       -> DomEnv rootState
       -> state
       -> dom
@@ -433,23 +435,22 @@ zoomCtxL l m = DomM $ \acEnv acTrav anEnv curr dom ->
     anEnv
     curr{ domCurrentContext = view l (domCurrentContext curr) }
     dom
+-}
 
-{-# INLINE zoomCtxF #-}
-zoomCtxF ::
+{-# INLINE zoomCtx #-}
+zoomCtx ::
      HasCallStack
-  => in_
-  -> AffineFold out in_
+  => AffineFold out in_
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> DomM dom in_ st a
   -> DomM dom out st a
-zoomCtxF st l m = DomM $ \acEnv acTrav anEnv curr dom ->
+zoomCtx l m = DomM $ \acEnv acTrav anEnv curr dom ->
   unDomM m
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
-    curr{ domCurrentContext = st }
+    curr
     dom
--}
 
 -- to manipulate nodes
 -- --------------------------------------------------------------------
@@ -1033,6 +1034,7 @@ simpleNode st node0 = do
     ActionTraverse
       { atToComp = id
       , atToState = id
+      , atToContext = id
       }
     DomEnv
       { domEnvReversePath = []
@@ -1147,6 +1149,7 @@ component props (ComponentToken tok) = do
       acTrav
         { atToComp = atToComp acTrav . compState . atToState acTrav
         , atToState = id
+        , atToContext = id
         }
       anEnv
       (_componentState comp)

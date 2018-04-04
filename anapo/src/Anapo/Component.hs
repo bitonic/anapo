@@ -25,6 +25,7 @@ module Anapo.Component
   , dispatch
   , actFork
   , actZoom
+  , actZoomCtx
   , actComponent
   , MonadAction(..)
 
@@ -46,6 +47,7 @@ module Anapo.Component
   , askPreviousState
   , zoomL
   , zoomT
+  , zoomCtx
   , UnliftJSM
   , askUnliftJSM
   , unliftJSM

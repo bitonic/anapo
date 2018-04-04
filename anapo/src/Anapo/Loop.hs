@@ -90,10 +90,11 @@ nodeLoop withState node excComp root = do
   let
     actionTrav ::
          AffineTraversal' (Component () () st) (Component props ctx' st')
-      -> ActionTraverse (Component () () st) props ctx' st' st'
+      -> ActionTraverse (Component () () st) props ctx' st' ctx' st'
     actionTrav travComp = ActionTraverse
       { atToComp = travComp
       , atToState = id
+      , atToContext = id
       }
   -- helper to run the component
   let
