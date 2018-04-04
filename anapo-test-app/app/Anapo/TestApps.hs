@@ -111,12 +111,12 @@ testAppsError err =
     n$ div_ [class_ "m-2 alert alert-danger"] (n$ text err)
 
 testAppsComponent ::
-  Node a TestAppsStateOrError
-testAppsComponent = zoomCtxF () noContext $ do
-  stoe <- view state
+  Node () TestAppsStateOrError
+testAppsComponent = do
+  stoe <- ask
   case stoe of
     TASOEError err -> testAppsError err
-    TASOEOk st -> div_ [class_ "container"] $ zoomStT st _TASOEOk $ do
+    TASOEOk st -> div_ [class_ "container"] $ zoomT st _TASOEOk $ do
       n$ div_ [class_ "row m-2 align-items-center"] $ do
         n$ div_ [class_ "col col-md-auto"] $ do
           n$ ul_ [class_ "nav nav-pills"] $ forM_ allTestApps $ \app -> do
@@ -131,7 +131,7 @@ testAppsComponent = zoomCtxF () noContext $ do
                   changeToApp True (Just app)
               ]
               (n$ text (tshow app))
-        n$ div_ [class_ "col"] $ zoomStL tasStopTimerOnAppChange $
+        n$ div_ [class_ "col"] $ zoomL tasStopTimerOnAppChange $
           n$ div_ [class_ "form-check"] $
             n$ label_ [class_ "form-check-label"] $ do
               n$ booleanCheckbox
@@ -139,16 +139,16 @@ testAppsComponent = zoomCtxF () noContext $ do
       n$ div_ [class_ "row m-2"] $ n$ div_ [class_ "col"] $ case st^.tasApp of
         Blank -> return ()
         Todo -> n$ componentL tasTodo ()
-        Timer -> zoomStL tasTimer timerComponent
-        YouTube -> zoomStL tasYouTube youTubeComponent
+        Timer -> zoomL tasTimer timerComponent
+        YouTube -> zoomL tasYouTube youTubeComponent
         Bumps -> n$ componentL tasBumps ()
         KeyedList -> n$ componentL tasKeyedList ()
         DifferentNodes -> n$ componentL tasDifferentNodes ()
         RawHtml -> n$ componentL tasRawHtml ()
 
 testAppsWith ::
-     (TestAppsStateOrError -> Action b TestAppsStateOrError a)
-  -> Action b TestAppsStateOrError a
+     (TestAppsStateOrError -> Action () TestAppsStateOrError a)
+  -> Action () TestAppsStateOrError a
 testAppsWith cont = do
   path <- liftJSM (DOM.getPathname =<< DOM.getLocation =<< DOM.currentWindowUnchecked)
   case testAppFromPath path of
@@ -162,24 +162,23 @@ testAppsWith cont = do
             ev <- ask
             st <- DOM.PopStateEvent.getState ev
             mbApp <- liftJSM (fmap (read . T.unpack) <$> fromJSVal st)
-            liftIO (unliftIO u (actZoomSt _TASOEOk (changeToApp False mbApp)))
+            liftIO (unliftIO u (actZoom _TASOEOk (changeToApp False mbApp)))
           liftJSM (DOM.addListener window DOM.popState listener False)
           return listener)
         (\listener -> unliftIO u (liftJSM (DOM.removeListener window DOM.popState listener False)))
         (\_ -> unliftIO u $ do
-            st <- actZoomCtx noContext $ do
-              todo <- actZoomSt (_TASOEOk.tasTodo.compState) todoInit
-              bumps <- actZoomSt (_TASOEOk.tasBumps.compState) bumpsInit
-              keyedList <- actZoomSt (_TASOEOk.tasKeyedList.compState) keyedListInit
-              TestAppsState
-                <$> pure app
-                <*> pure app
-                <*> newComponent todo (\() -> todoComponent)
-                <*> timerInit
-                <*> pure False
-                <*> youTubeInit "3yQObSCXyoo"
-                <*> newComponent bumps (\() -> bumpsNode)
-                <*> newComponent keyedList (\() -> keyedListComponent)
-                <*> componentDifferentNodesInit
-                <*> newComponent False (\() -> rawHtmlComponent)
+            todo <- actZoom (_TASOEOk.tasTodo.compState) todoInit
+            bumps <- actZoom (_TASOEOk.tasBumps.compState) bumpsInit
+            keyedList <- actZoom (_TASOEOk.tasKeyedList.compState) keyedListInit
+            st <- TestAppsState
+              <$> pure app
+              <*> pure app
+              <*> newComponent_ todo (\() -> todoComponent)
+              <*> timerInit
+              <*> pure False
+              <*> youTubeInit "3yQObSCXyoo"
+              <*> newComponent_ bumps (\() -> bumpsNode)
+              <*> newComponent_ keyedList (\() -> keyedListComponent)
+              <*> componentDifferentNodesInit
+              <*> newComponent_ False (\() -> rawHtmlComponent)
             cont (TASOEOk st))

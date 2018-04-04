@@ -23,7 +23,7 @@ makeLenses ''TodoItemState
 
 todoItemNode :: Node a TodoItemState
 todoItemNode = do
-  st <- view state
+  st <- ask
   let aClass = if st^.tisCompleted
         then "list-group-item active"
         else "list-group-item"
@@ -43,13 +43,13 @@ data TodoState = TodoState
   }
 makeLenses ''TodoState
 
-todoComponent :: Node a TodoState
+todoComponent :: Node () TodoState
 todoComponent = div_ [] $ do
-  st <- view state
+  st <- ask
   u <- liftAction askUnliftJSM
   n$ div_ [class_ "row align-items-center"] $ do
     n$ div_ [class_ "col-md-auto"] $ do
-      n$ zoomCtxF () noContext $ componentL tsInput STIP
+      n$ componentL tsInput STIP
         { stipButtonText = "Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)
         , stipOnSubmit = unliftJSM u $ dispatch $ do
             curText <- use (tsInput.compState)
@@ -78,7 +78,7 @@ todoComponent = div_ [] $ do
   let (done, active) = partition (_tisCompleted . snd) (Map.toAscList (st ^. tsTodoElements))
   let renderItems items =
         n$ div_ [class_ "list-group mx-1 my-2"] $ forM_ items $ \(itemKey, itemState) ->
-          zoomStT itemState (tsTodoElements . ix itemKey) $
+          zoomT itemState (tsTodoElements . ix itemKey) $
             key (tshow itemKey) todoItemNode
   n$ div_ [class_ "row"] $ do
     n$ div_ [class_ "col"] $ do
@@ -90,7 +90,7 @@ todoComponent = div_ [] $ do
 
 todoInit :: Action a TodoState TodoState
 todoInit = do
-  inp <- newComponent "" simpleTextInput
+  inp <- newComponent_ "" simpleTextInput
   return TodoState
     { _tsShowCompleted = True
     , _tsTodoElements = Map.fromList

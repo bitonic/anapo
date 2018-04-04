@@ -55,7 +55,7 @@ youTubeInit videoId = liftJSM $ do
 -- it with a iframe
 youTubeNode :: Node a YouTubeState
 youTubeNode = do
-  st <- view state
+  st <- ask
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
   let
     onDidMount el = void $ actFork $ liftJSM $ do
@@ -102,11 +102,11 @@ youTubeNode = do
     ]
 
 -- | Never rerender the node
-youTubeComponent :: Dom a YouTubeState
-youTubeComponent = zoomCtxF () noContext $ do
+youTubeComponent :: Dom () YouTubeState
+youTubeComponent = do
   -- TODO this causes a linking error with GHC! see TODO on 'marked'
   n$ marked
-    (\_ mbPrevSt _ _ st -> case mbPrevSt of
+    (\mbPrevSt _ st -> case mbPrevSt of
       Just prevSt -> if prevSt^.ytsToken == st^.ytsToken
         then UnsafeDontRerender
         else Rerender
@@ -114,7 +114,7 @@ youTubeComponent = zoomCtxF () noContext $ do
     (static (\_ -> youTubeNode))
     ()
   u <- liftAction askUnliftJSM
-  zoomStL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
+  zoomL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
     n$ simpleTextInput
       STIP
         { stipButtonText = "Choose video"

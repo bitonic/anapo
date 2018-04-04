@@ -13,7 +13,7 @@ import Data.Monoid ((<>))
 import Control.Exception.Safe (throwIO, tryAsync, SomeException, bracket, finally)
 import Control.Exception (BlockedIndefinitelyOnMVar)
 import Control.Concurrent (MVar, newEmptyMVar, tryPutMVar, readMVar)
-import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef)
+import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef, writeIORef)
 import qualified Control.Concurrent.Async as Async
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
@@ -41,15 +41,14 @@ timeIt m = do
   return (x, diffUTCTime t1 t0)
 
 data DispatchMsg stateRoot = forall props context state. DispatchMsg
-  { _dispatchMsgTraverseComp :: AffineTraversal' (Component () stateRoot stateRoot) (Component props context state)
-  , _dispatchMsgTraverseContext :: AffineFold (Component () stateRoot stateRoot) context
+  { _dispatchMsgTraverseComp :: AffineTraversal' (Component () () stateRoot) (Component props context state)
   , _dispatchMsgModify :: context -> state -> DOM.JSM state
   , _dispatchCallStack :: CallStack
   }
 
 nodeLoop :: forall st.
-     (forall a. (st -> DOM.JSM a) -> Action st st a)
-  -> Node st st
+     (forall a. (st -> DOM.JSM a) -> Action () st a)
+  -> Node () st
   -- ^ how to render the state
   -> (SomeException -> Node () ())
   -- ^ how to render exceptions
@@ -82,52 +81,45 @@ nodeLoop withState node excComp root = do
         (\_ -> atomicModifyIORef' tidsRef (\tids -> (HS.delete tid tids, ())))
         (\_ -> m)
   let
-    actionEnv :: ActionEnv (Component () st st)
+    actionEnv :: ActionEnv (Component () () st)
     actionEnv = ActionEnv
       { aeRegisterThread = register
       , aeHandleException = handler
-      , aeDispatch = Dispatch (\stack travComp travCtx modify -> writeChan dispatchChan (DispatchMsg travComp travCtx modify stack))
+      , aeDispatch = Dispatch (\stack travComp modify -> writeChan dispatchChan (DispatchMsg travComp modify stack))
       }
   let
     actionTrav ::
-         AffineTraversal' (Component () st st) (Component props ctx' st')
-      -> AffineFold (Component () st st) ctx'
-      -> ActionTraverse (Component () st st) props ctx' st' ctx' st'
-    actionTrav travComp travCtx = ActionTraverse
+         AffineTraversal' (Component () () st) (Component props ctx' st')
+      -> ActionTraverse (Component () () st) props ctx' st' st'
+    actionTrav travComp = ActionTraverse
       { atToComp = travComp
-      , atToCompContext = travCtx
       , atToState = id
-      , atToContext = id
       }
   -- helper to run the component
   let
     runComp ::
-         Maybe (Component () st st)
+         Maybe (Component () () st)
       -> VDomPath
-      -> AffineTraversal' (Component () st st) (Component props ctx' st')
-      -> AffineFold (Component () st st) ctx'
+      -> AffineTraversal' (Component () () st) (Component props ctx' st')
       -> Component props ctx' st'
-      -> ctx'
       -> props
       -> DOM.JSM (V.Node V.SomeVDomNode)
-    runComp mbPrevComp path travComp travCtx comp ctx props = do
+    runComp mbPrevComp path travComp comp props = do
       ((_, vdom), vdomDt) <- timeIt $ unDomM
         (do
-          node0 <- _componentNode comp props
+          Just ctx <- liftIO (readIORef (_componentContext comp))
+          node0 <- _componentNode comp props ctx
           V.forSomeNodeBody node0 $ \node' -> do
             patches <- registerComponent (_componentPositions comp) props
             patchNode patches node')
         actionEnv
-        (actionTrav travComp travCtx)
+        (actionTrav travComp)
         DomEnv
           { domEnvReversePath = reverse path
           , domEnvPrevState = mbPrevComp
           , domEnvDirtyPath = False
           }
-        DomCurrent
-          { domCurrentContext = ctx
-          , domCurrentState = _componentState comp
-          }
+          (_componentState comp)
         ()
       DOM.syncPoint
       logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
@@ -138,7 +130,7 @@ nodeLoop withState node excComp root = do
       -- main loop
       let
         go ::
-             Component () st st
+             Component () () st
           -- ^ the previous state
           -> V.Node RenderedVDomNode
           -- ^ the previous rendered node
@@ -159,7 +151,7 @@ nodeLoop withState node excComp root = do
             Right Nothing -> do
               logInfo "No state update received, terminating component loop"
               return rendered
-            Right (Just (DispatchMsg travComp travCtx modif stack)) -> do
+            Right (Just (DispatchMsg travComp modif stack)) -> do
               logDebug (addCallStack stack "About to update state")
               -- traverse to the component using StateT, failing
               -- if we reach anything twice (it'd mean it's not an
@@ -173,13 +165,11 @@ nodeLoop withState node excComp root = do
                           -- fail if we already visited
                           fail "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
-                          case toMaybeOf travCtx compRoot of
-                            Nothing -> return comp
-                            Just ctx -> do
-                              st <- DOM.liftJSM (modif ctx (_componentState comp))
-                              let comp' = comp{ _componentState = st }
-                              put (Just (comp', ctx))
-                              return comp')
+                          Just ctx <- liftIO (readIORef (_componentContext comp))
+                          st <- DOM.liftJSM (modif ctx (_componentState comp))
+                          let comp' = comp{ _componentState = st }
+                          put (Just comp')
+                          return comp')
                   compRoot)
                 Nothing
               logDebug ("State updated (" <> pack (show updateDt) <> "), might re render")
@@ -187,12 +177,12 @@ nodeLoop withState node excComp root = do
                 Nothing -> do
                   logInfo "The component was not found, not rerendering"
                   go compRoot' rendered
-                Just (comp, ctx) -> do
+                Just comp -> do
                   positions <- liftIO (readIORef (_componentPositions comp))
                   logDebug ("Rendering at " <> pack (show (HMS.size positions)) <> " positions")
                   rendered' <- foldM
                     (\rendered' (pos, props) -> do
-                        vdom <- runComp (Just compRoot) pos travComp travCtx comp ctx props
+                        vdom <- runComp (Just compRoot) pos travComp comp props
                         reconciliateVirtualDom rendered' pos vdom)
                     rendered
                     (HMS.toList positions)
@@ -201,8 +191,9 @@ nodeLoop withState node excComp root = do
       finally
         (do
           -- run for the first time
-          comp <- newComponent st0 (\() -> node)
-          vdom <- runComp Nothing [] id compState comp (_componentState comp) ()
+          comp <- newComponent st0 (\() () -> node)
+          liftIO (writeIORef (_componentContext comp) (Just ()))
+          vdom <- runComp Nothing [] id comp ()
           rendered0 <- renderVirtualDom vdom $ \rendered -> do
             DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
             return rendered
@@ -210,11 +201,11 @@ nodeLoop withState node excComp root = do
           go comp rendered0)
         (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid')))))
     actionEnv
-    (actionTrav id compState)
+    (actionTrav id)
 
 installNodeBody ::
-     (forall a. (st -> DOM.JSM a) -> Action st st a)
-  -> Node st st
+     (forall a. (st -> DOM.JSM a) -> Action () st a)
+  -> Node () st
   -> (SomeException -> Node () ())
   -> DOM.JSM ()
 installNodeBody getSt vdom0 excVdom = do

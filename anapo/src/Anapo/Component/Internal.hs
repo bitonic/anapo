@@ -13,7 +13,7 @@ import qualified Data.HashMap.Strict as HMS
 import Control.Lens (Lens', view, lens)
 import qualified Control.Lens as Lens
 import qualified Control.Lens.Internal.Zoom as Lens
-import Control.Monad (ap)
+import Control.Monad (ap, when, unless)
 import Data.Monoid ((<>), Endo)
 import qualified Data.DList as DList
 import Data.String (IsString(..))
@@ -26,8 +26,8 @@ import Control.Exception.Safe (SomeException, uninterruptibleMask, tryAny)
 import Control.Concurrent (ThreadId, forkIO, myThreadId)
 import Control.Monad.Trans (lift)
 import Data.DList (DList)
-import Data.IORef (IORef, newIORef, modifyIORef')
-import Control.Monad.Reader (MonadReader(..), asks)
+import Data.IORef (IORef, newIORef, modifyIORef', readIORef, writeIORef)
+import Control.Monad.Reader (MonadReader(..))
 import qualified Data.Vector as Vec
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM
@@ -71,7 +71,6 @@ newtype Dispatch stateRoot = Dispatch
   { unDispatch :: forall state context props.
       CallStack ->
       AffineTraversal' stateRoot (Component props context state) ->
-      AffineFold stateRoot context ->
       (context -> state -> DOM.JSM state) ->
       IO ()
   }
@@ -93,9 +92,9 @@ type HandleException = SomeException -> IO ()
 -- fires or as a fork in an event
 newtype Action context state a = Action
   { unAction ::
-         forall rootState compProps compContext compState.
+         forall rootState compProps compState.
          ActionEnv rootState
-      -> ActionTraverse rootState compProps compContext compState context state
+      -> ActionTraverse rootState compProps context compState state
       -- we keep this separate from ActionEnv because ActionTraverse
       -- changes all the time, ActionEnv never does.
       -> DOM.JSM a
@@ -107,11 +106,9 @@ data ActionEnv rootState = ActionEnv
   , aeDispatch :: Dispatch rootState
   }
 
-data ActionTraverse rootState compProps compContext compState context state = ActionTraverse
+data ActionTraverse rootState compProps compContext compState state = ActionTraverse
   { atToComp :: AffineTraversal' rootState (Component compProps compContext compState)
-  , atToCompContext :: AffineFold rootState compContext
   , atToState :: AffineTraversal' compState state
-  , atToContext :: AffineFold compContext context
   }
 
 instance Functor (Action context state) where
@@ -161,11 +158,12 @@ instance (MonadAction context state m) => MonadAction context state (StateT s m)
   {-# INLINE liftAction #-}
   liftAction m = lift (liftAction m)
 
-{-# INLINE actZoomSt #-}
-actZoomSt :: MonadAction context out m => AffineTraversal' out in_ -> Action context in_ a -> m a
-actZoomSt t m =
+{-# INLINE actZoom #-}
+actZoom :: MonadAction context out m => AffineTraversal' out in_ -> Action context in_ a -> m a
+actZoom t m =
   liftAction (Action (\env trav -> unAction m env trav{atToState = atToState trav . t}))
 
+{-
 {-# INLINE actZoomCtx #-}
 actZoomCtx :: MonadAction out state m => AffineFold out in_ -> Action in_ state a -> m a
 actZoomCtx t m =
@@ -174,6 +172,7 @@ actZoomCtx t m =
 {-# INLINE noContext #-}
 noContext :: Lens.Fold a ()
 noContext f x = f () *> pure x
+-}
 
 {-# INLINE actComponent #-}
 actComponent ::
@@ -183,9 +182,7 @@ actComponent ::
 actComponent (Action m) = liftAction $ Action $ \env trav ->
   m env trav
     { atToComp = atToComp trav . compState . atToState trav
-    , atToCompContext = atToCompContext trav . atToContext trav
     , atToState = id
-    , atToContext = id
     }
 
 {-# INLINE forkRegistered #-}
@@ -284,10 +281,7 @@ dispatch (DispatchM m) =
       (aeDispatch env)
       callStack
       (atToComp trav)
-      (atToCompContext trav)
-      (\ctx st -> case toMaybeOf (atToContext trav) ctx of
-          Nothing -> return st
-          Just ctx' -> atToState trav (\st' -> fmap snd (unAction (m ctx' st') env trav)) st)
+      (\ctx -> atToState trav (\st' -> fmap snd (unAction (m ctx st') env trav)))
 
 {-# INLINE askRegisterThread #-}
 askRegisterThread :: (MonadAction context state m) => m RegisterThread
@@ -311,24 +305,13 @@ data DomEnv stateRoot = DomEnv
   , domEnvPrevState :: Maybe stateRoot
   }
 
-data DomCurrent context state = DomCurrent
-  { domCurrentContext :: ~context
-  , domCurrentState :: ~state
-  }
-
-context :: Lens' (DomCurrent context state) context
-context = lens domCurrentContext (\comp st -> comp{ domCurrentContext = st })
-
-state :: Lens' (DomCurrent context state) state
-state = lens domCurrentState (\comp st -> comp{ domCurrentState = st })
-
 newtype DomM dom context state a = DomM
   { unDomM ::
-         forall rootState compProps compContext compState.
+         forall rootState compProps compState.
          ActionEnv rootState
-      -> ActionTraverse rootState compProps compContext compState context state
+      -> ActionTraverse rootState compProps context compState state
       -> DomEnv rootState
-      -> DomCurrent context state
+      -> state
       -> dom
       -> DOM.JSM (dom, a)
   }
@@ -398,7 +381,7 @@ instance MonadAction ctx st (DomM dom ctx st) where
     x <- f acEnv acTrav
     return (dom, x)
 
-instance MonadReader (DomCurrent ctx st) (DomM dom ctx st) where
+instance MonadReader st (DomM dom ctx st) where
   {-# INLINE ask #-}
   ask = DomM (\_acEnv _acTrav _anEnv curr dom -> return (dom, curr))
   {-# INLINE local #-}
@@ -414,32 +397,33 @@ askPreviousState =
       , toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState anEnv
       )
 
-{-# INLINE zoomStL #-}
-zoomStL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
-zoomStL l m = DomM $ \acEnv acTrav anEnv curr dom ->
+{-# INLINE zoomL #-}
+zoomL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
+zoomL l m = DomM $ \acEnv acTrav anEnv curr dom ->
   unDomM m
     acEnv
     acTrav{ atToState = atToState acTrav . l }
     anEnv
-    curr{ domCurrentState = view l (domCurrentState curr) }
+    (view l curr)
     dom
 
-{-# INLINE zoomStT #-}
-zoomStT ::
+{-# INLINE zoomT #-}
+zoomT ::
      HasCallStack
   => in_
   -> AffineTraversal' out in_
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> DomM dom ctx in_ a
   -> DomM dom ctx out a
-zoomStT st l m = DomM $ \acEnv acTrav anEnv curr dom ->
+zoomT st l m = DomM $ \acEnv acTrav anEnv _curr dom ->
   unDomM m
     acEnv
     acTrav{ atToState = atToState acTrav . l }
     anEnv
-    curr{ domCurrentState = st }
+    st
     dom
 
+{-
 {-# INLINE zoomCtxL #-}
 zoomCtxL :: Lens' out in_ -> DomM dom in_ st a -> DomM dom out st a
 zoomCtxL l m = DomM $ \acEnv acTrav anEnv curr dom ->
@@ -465,6 +449,7 @@ zoomCtxF st l m = DomM $ \acEnv acTrav anEnv curr dom ->
     anEnv
     curr{ domCurrentContext = st }
     dom
+-}
 
 -- to manipulate nodes
 -- --------------------------------------------------------------------
@@ -656,16 +641,14 @@ rawNode wrap x patches = do
 -- at call site (see for example Anapo.TestApps.YouTube)
 {-# INLINE marked #-}
 marked ::
-     (Maybe context -> Maybe state -> props -> context -> state -> V.Rerender)
+     (Maybe state -> props -> state -> V.Rerender)
   -> StaticPtr (props -> Node context state) -> props -> Node context state
 marked shouldRerender ptr props = DomM $ \acEnv acTrav domEnv curr dom -> do
   let !fprint = staticKey ptr
   let !rer = shouldRerender
-        (toMaybeOf (atToCompContext acTrav . atToContext acTrav) =<< domEnvPrevState domEnv)
         (toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState domEnv)
         props
-        (domCurrentContext curr)
-        (domCurrentState curr)
+        curr
   (_, V.Node (V.SomeVDomNode nod) children) <-
     unDomM (deRefStaticPtr ptr props) acEnv acTrav domEnv curr dom
   return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
@@ -1033,12 +1016,12 @@ onselect_ = NPEvent . SomeEventAction DOM.select
 -- simple rendering
 -- --------------------------------------------------------------------
 
-simpleNode :: forall state. state ->  Node () state -> DOM.JSM (V.Node V.SomeVDomNode)
+simpleNode :: forall state. state -> Node () state -> DOM.JSM (V.Node V.SomeVDomNode)
 simpleNode st node0 = do
-  comp <- newComponent st (\() -> node0)
+  comp <- newComponent st (\() () -> node0)
   (_, vdom) <- unDomM
     (do
-      node <- _componentNode comp ()
+      node <- _componentNode comp () ()
       V.forSomeNodeBody node $ \node' -> do
         patches <- registerComponent (_componentPositions comp) ()
         patchNode patches node')
@@ -1050,18 +1033,13 @@ simpleNode st node0 = do
     ActionTraverse
       { atToComp = id
       , atToState = id
-      , atToCompContext = noContext
-      , atToContext = id
       }
     DomEnv
       { domEnvReversePath = []
       , domEnvDirtyPath = False
       , domEnvPrevState = Nothing
       }
-    DomCurrent
-      { domCurrentState = st
-      , domCurrentContext = ()
-      }
+    st
     ()
   return vdom
 
@@ -1093,26 +1071,43 @@ actionUnliftJSM = liftAction askUnliftJSM
 -- Components
 -- --------------------------------------------------------------------
 
-data Component props context state = Component
-  { _componentState :: state
-  , _componentNode :: props -> Node context state
+data Component props ctx st = Component
+  { _componentState :: st
+  , _componentNode :: props -> ctx -> Node ctx st
   , _componentPositions :: IORef (HMS.HashMap VDomPath props)
+  , _componentContext :: IORef (Maybe ctx)
   }
+
+newtype ComponentToken props ctx st = ComponentToken (IORef (Maybe ctx))
 
 {-# INLINE compState #-}
 compState :: Lens' (Component props context state) state
 compState = lens _componentState (\comp st -> comp{ _componentState = st })
 
 {-# INLINE compNode #-}
-compNode :: Lens' (Component props context state) (props -> Node context state)
+compNode :: Lens' (Component props context state) (props -> context -> Node context state)
 compNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 
 {-# INLINE newComponent #-}
-newComponent :: MonadIO m => state -> (props -> Node context state) -> m (Component props context state)
+newComponent ::
+     MonadIO m
+  => state
+  -> (props -> context -> Node context state)
+  -> m (Component props context state)
 newComponent st node = do
   posRef <- liftIO (newIORef mempty)
-  return (Component st node posRef)
+  ctxRef <- liftIO (newIORef Nothing)
+  return (Component st node posRef ctxRef)
 
+{-# INLINE newComponent_ #-}
+newComponent_ ::
+     MonadIO m
+  => state
+  -> (props -> Node () state)
+  -> m (Component props () state)
+newComponent_ st comp = newComponent st (\props () -> comp props)
+
+{-# INLINE registerComponent #-}
 registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> DomM dom a b [NodePatch el ctx st]
 registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _curr dom -> do
   let add = \_ -> do
@@ -1128,42 +1123,57 @@ registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _curr dom -> do
       ]
     )
 
+{-# INLINE initComponent #-}
+initComponent :: Component props ctx st -> ctx -> DomM dom ctx0 st0 (ComponentToken props ctx st)
+initComponent comp ctx = liftIO $ do
+  writeIORef (_componentContext comp) (Just ctx)
+  return (ComponentToken (_componentContext comp))
+
 {-# INLINE component #-}
-component :: props -> Node ctx (Component props ctx st)
-component props = do
-  DomM $ \_acEnv _acTrav aeEnv _curr dom ->
-    if domEnvDirtyPath aeEnv
-      then return ((), dom)
-      else error ("Trying to insert component immediately inside another component at path " <> show (reverse (domEnvReversePath aeEnv)) <> ", please wrap the inner component in a node.")
-  comp <- asks domCurrentState
-  node <- DomM $ \acEnv acTrav anEnv curr dom ->
-    unDomM
-      (_componentNode (domCurrentState curr) props)
+component :: props -> ComponentToken props ctx st -> Node ctx0 (Component props ctx st)
+component props (ComponentToken tok) = do
+  (node, pos) <- DomM $ \acEnv acTrav anEnv comp dom -> do
+    when (_componentContext comp /= tok) $
+      error "Initialized component does not match state component!"
+    unless (domEnvDirtyPath anEnv) $
+      error ("Trying to insert component immediately inside another component at path " <> show (reverse (domEnvReversePath anEnv)) <> ", please wrap the inner component in a node.")
+    mbCtx <- liftIO (readIORef (_componentContext comp))
+    ctx <- case mbCtx of
+      Nothing -> error "Context not initialized!"
+      Just ctx -> return ctx
+    (dom', node) <- unDomM
+      (_componentNode comp props ctx)
       acEnv
       acTrav
         { atToComp = atToComp acTrav . compState . atToState acTrav
-        , atToCompContext = atToCompContext acTrav . atToContext acTrav
         , atToState = id
-        , atToContext = id
         }
       anEnv
-      curr
-        { domCurrentState = _componentState (domCurrentState curr) }
+      (_componentState comp)
       dom
+    return (dom', (node, _componentPositions comp))
   V.forSomeNodeBody node $ \node' -> do
-    patches <- registerComponent (_componentPositions comp) props
+    patches <- registerComponent pos props
     patchNode patches node'
 
+{-# INLINE component_ #-}
+component_ :: forall props ctx st. props -> Node ctx (Component props () st)
+component_ props = do
+  comp <- ask
+  tok <- initComponent comp ()
+  component props tok
+
 {-# INLINE componentL #-}
-componentL :: Lens' out (Component props context state) -> props -> Node context out
-componentL l props = zoomStL l (component props)
+componentL :: Lens' out (Component props () state) -> props -> Node context out
+componentL l props = zoomL l (component_ props)
 
 {-# INLINE componentT #-}
 componentT ::
      HasCallStack
-  => Component props context state
-  -> AffineTraversal' out (Component props context state)
+  => Component props () state
+  -> AffineTraversal' out (Component props () state)
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> props
   -> Node context out
-componentT st l props = zoomStT st l (component props)
+componentT st l props = zoomT st l (component_ props)
+

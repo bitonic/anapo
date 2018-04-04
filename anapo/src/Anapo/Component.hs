@@ -24,17 +24,12 @@ module Anapo.Component
   , DispatchM(..)
   , dispatch
   , actFork
-  , actZoomSt
-  , actZoomCtx
+  , actZoom
   , actComponent
-  , noContext
   , MonadAction(..)
 
     -- * AnapoM
   , DomM
-  , DomCurrent
-  , context
-  , state
   , Dom
   , Dom'
   , DomState
@@ -49,10 +44,8 @@ module Anapo.Component
   , askRegisterThread
   , askHandleException
   , askPreviousState
-  , zoomStL
-  , zoomStT
-  , zoomCtxL
-  , zoomCtxF
+  , zoomL
+  , zoomT
   , UnliftJSM
   , askUnliftJSM
   , unliftJSM
@@ -60,12 +53,16 @@ module Anapo.Component
 
     -- * Component
   , Component
+  , ComponentToken
   , compState
   , compNode
   , newComponent
+  , newComponent_
   , component
+  , component_
   , componentT
   , componentL
+  , initComponent
 
     -- * basic combinators
   , n

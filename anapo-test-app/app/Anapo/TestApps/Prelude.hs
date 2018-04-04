@@ -13,6 +13,7 @@ import Control.Lens as X (makePrisms, makeLenses, over, (^.), set, ix, (%=), use
 import GHCJS.DOM.Types as X (JSM, liftJSM, MonadJSM)
 import Anapo.Text as X (Text)
 import Control.Monad.State as X (put, get, modify)
+import Control.Monad.Reader as X (ask)
 import Control.Monad.IO.Unlift as X (unliftIO, askUnliftIO)
 import Data.Monoid as X ((<>))
 
@@ -28,7 +29,7 @@ tshow = T.pack . show
 
 booleanCheckbox :: Node a Bool
 booleanCheckbox = do
-  st <- view state
+  st <- ask
   input_
     [ class_ "form-check-input mr-1"
     , type_ "checkbox"
@@ -48,7 +49,7 @@ simpleTextInput ::
      SimpleTextInputProps
   -> Node a Text
 simpleTextInput STIP{..} = do
-  currentTxt <- view state
+  currentTxt <- ask
   form_
     [ class_ "form-inline mx-1 my-2"
     , onsubmit_ $ \_ ev -> liftJSM $ do

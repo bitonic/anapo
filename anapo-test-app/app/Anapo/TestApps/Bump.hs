@@ -1,13 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Anapo.TestApps.Bump (BumpsState, bumpsNode, bumpsInit) where
-  
+
 import Anapo
 import Anapo.TestApps.Prelude
 
 bumpNode :: Text -> Node a Int
 bumpNode title = do
-  count <- view state
+  count <- ask
   div_ [] $ do
     n$ text (title <> ": ")
     n$ button_
@@ -29,11 +29,11 @@ data BumpsState = BumpsState
   }
 makeLenses ''BumpsState
 
-bumpsNode :: Node a BumpsState
+bumpsNode :: Node () BumpsState
 bumpsNode =
-  zoomCtxF () noContext $ div_ [] $ do
+  div_ [] $ do
     n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $ do
-      bs <- view (state.bumpsCycle)
+      bs <- view bumpsCycle
       case bs of
         BCOne -> do
           n$ componentL bumps1 "1"
@@ -59,6 +59,6 @@ bumpsNode =
 
 bumpsInit :: Action () BumpsState BumpsState
 bumpsInit = BumpsState
-  <$> newComponent 0 bumpNode
-  <*> newComponent 0 bumpNode
+  <$> newComponent_ 0 bumpNode
+  <*> newComponent_ 0 bumpNode
   <*> pure BCOne

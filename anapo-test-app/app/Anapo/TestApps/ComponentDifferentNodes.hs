@@ -10,8 +10,8 @@ componentDifferentNodesInit ::
      MonadJSM m
   => m (Component () () Bool)
 componentDifferentNodesInit = do
-  newComponent True $ \_ -> do
-    b <- view state
+  newComponent_ True $ \_ -> do
+    b <- ask
     let toggle = do
           n$ a_
             [ href_ "#"

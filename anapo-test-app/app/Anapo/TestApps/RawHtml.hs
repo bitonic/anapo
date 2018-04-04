@@ -8,7 +8,7 @@ import Anapo.TestApps.Prelude
 
 rawHtmlComponent :: Node a Bool
 rawHtmlComponent = div_ [] $ do
-  b <- view state
+  b <- ask
   n$ a_
     [ href_ "#"
     , onclick_ $ \_ ev -> do

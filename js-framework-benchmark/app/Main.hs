@@ -12,7 +12,8 @@ import qualified Data.Vector as V
 import Control.Monad.IO.Class (liftIO)
 import System.Random (randomRIO)
 import Data.Monoid ((<>))
-import Control.Lens (makeLenses, (.=), use, (%~), view)
+import Control.Lens (makeLenses, (.=), use, (%~))
+import Control.Monad.Reader (ask)
 
 #if defined(ghcjs_HOST_OS)
 runJSM :: DOM.JSM () -> IO ()
@@ -147,7 +148,7 @@ rowsComponent =
 
     rowsDom :: KeyedDom a State
     rowsDom = do
-      State{..} <- view state
+      State{..} <- ask
       let len = MV.length _stateRows
       let
         go !ix = if ix < len
@@ -192,5 +193,4 @@ mainJSM = installNodeBody
 
 main :: IO ()
 main = do
-  putStrLn "FOOBAR"
   runJSM mainJSM
