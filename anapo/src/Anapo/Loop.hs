@@ -181,7 +181,7 @@ nodeLoop withState node excComp root = do
                   go compRoot' rendered
                 Just comp -> do
                   positions <- liftIO (readIORef (_componentPositions comp))
-                  logDebug ("Rendering at " <> pack (show (HMS.size positions)) <> " positions")
+                  logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
                   rendered' <- foldM
                     (\rendered' (pos, props) -> do
                         vdom <- runComp (Just compRoot) pos travComp comp props
@@ -193,7 +193,7 @@ nodeLoop withState node excComp root = do
       finally
         (do
           -- run for the first time
-          comp <- newComponent st0 (\() -> node)
+          comp <- newNamedComponent "root" st0 (\() -> node)
           liftIO (writeIORef (_componentContext comp) (Just ()))
           vdom <- runComp Nothing [] id comp ()
           rendered0 <- renderVirtualDom vdom $ \rendered -> do

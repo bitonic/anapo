@@ -62,7 +62,9 @@ module Anapo.Component
   , ComponentToken
   , compState
   , compNode
+  , newNamedComponent
   , newComponent
+  , newNamedComponent_
   , newComponent_
   , component
   , component_

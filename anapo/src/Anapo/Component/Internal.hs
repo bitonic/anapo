@@ -1114,6 +1114,8 @@ data Component props ctx st = Component
   , _componentNode :: props -> Node ctx st
   , _componentPositions :: IORef (HMS.HashMap VDomPath props)
   , _componentContext :: IORef (Maybe ctx)
+  , _componentName :: Text
+  -- ^ just for debugging
   }
 
 newtype ComponentToken props ctx st = ComponentToken (IORef (Maybe ctx))
@@ -1126,16 +1128,34 @@ compState = lens _componentState (\comp st -> comp{ _componentState = st })
 compNode :: Lens' (Component props context state) (props -> Node context state)
 compNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 
+{-# INLINE newNamedComponent #-}
+newNamedComponent ::
+     MonadIO m
+  => Text
+  -> state
+  -> (props -> Node context state)
+  -> m (Component props context state)
+newNamedComponent name st node = do
+  posRef <- liftIO (newIORef mempty)
+  ctxRef <- liftIO (newIORef Nothing)
+  return (Component st node posRef ctxRef name)
+
 {-# INLINE newComponent #-}
 newComponent ::
      MonadIO m
   => state
   -> (props -> Node context state)
   -> m (Component props context state)
-newComponent st node = do
-  posRef <- liftIO (newIORef mempty)
-  ctxRef <- liftIO (newIORef Nothing)
-  return (Component st node posRef ctxRef)
+newComponent = newNamedComponent "<no-name>"
+
+{-# INLINE newNamedComponent_ #-}
+newNamedComponent_ ::
+     MonadIO m
+  => Text
+  -> st
+  -> Node ctx st
+  -> m (Component () ctx st)
+newNamedComponent_ name st comp = newNamedComponent name st (\() -> comp)
 
 {-# INLINE newComponent_ #-}
 newComponent_ ::
