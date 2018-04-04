@@ -1208,6 +1208,7 @@ component props (ComponentToken tok) = do
         , atToContext = id
         }
       anEnv
+        { domEnvDirtyPath = False }
       ctx
       (_componentState comp)
       dom
