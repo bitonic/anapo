@@ -38,7 +38,7 @@ booleanCheckbox = do
         preventDefault ev
         checked <- DOM.getChecked el
         dispatch (put checked)
-    ]()
+    ]
 
 data SimpleTextInputProps = STIP
   { stipButtonText :: Text
@@ -61,10 +61,10 @@ simpleTextInput STIP{..} = do
         [ type_ "text"
         , class_ "form-control mb-2 mr-sm-2 mb-sm-0"
         , value_ currentTxt
-        , oninput_ $ \inp _ -> do
+        , onchange_ $ \inp _ -> do
             txt <- DOM.getValue inp
             dispatch (put txt)
-        ]()
+        ]
       n$ button_
         [ type_ "submit"
         , class_ "btn btn-primary"

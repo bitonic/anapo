@@ -49,7 +49,7 @@ keyedListComponent = do
             , oninput_ $ \inp _ -> do
                 txt <- DOM.Input.getValue inp
                 dispatch (klsInput._2 .= txt)
-            ] ()
+            ]
           n$ input_
             [ type_ "number"
             , class_ "form-control ml-1 mr-1"
@@ -57,7 +57,7 @@ keyedListComponent = do
             , oninput_ $ \inp _ -> do
                 mbPrio <- readMaybe <$> DOM.Input.getValue inp
                 F.for_ mbPrio (\prio -> dispatch (klsInput._1 .= prio))
-            ] ()
+            ]
           n$ button_
             [ type_ "submit"
             , class_ "btn btn-primary ml-1"
@@ -74,7 +74,7 @@ keyedListComponent = do
               , onchange_ $ \inp _ -> do
                   mbPrio <- readMaybe <$> DOM.Input.getValue inp
                   F.for_ mbPrio (\prio' -> dispatch (put prio'))
-              ] ()
+              ]
             n$ div_ [class_ "col ml-1"] $ n$ a_
               [ href_ "#"
               , class_ "btn btn-primary"

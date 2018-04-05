@@ -30,7 +30,6 @@ import Data.IORef (IORef, newIORef, modifyIORef', readIORef, writeIORef)
 import Control.Monad.Reader (MonadReader(..))
 import qualified Data.Vector as Vec
 import qualified GHCJS.DOM.Types as DOM
-import qualified GHCJS.DOM.GlobalEventHandlers as DOM
 import qualified GHCJS.DOM.EventM as DOM.EventM
 
 import qualified Anapo.VDOM as V
@@ -845,170 +844,26 @@ el tag wrap patches isChildren = do
     , V.nodeChildren = Just children
     }
 
--- Elements
--- --------------------------------------------------------------------
-
-{-# INLINE div_ #-}
-div_ :: IsElementChildren a context state => [NodePatch DOM.HTMLDivElement context state] -> a -> Node context state
-div_ = el "div" DOM.HTMLDivElement
-
-{-# INLINE table_ #-}
-table_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableElement context state] -> a -> Node context state
-table_ = el "table" DOM.HTMLTableElement
-
-{-# INLINE tbody_ #-}
-tbody_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableSectionElement context state] -> a -> Node context state
-tbody_ = el "tbody" DOM.HTMLTableSectionElement
-
-{-# INLINE td_ #-}
-td_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableCellElement context state] -> a -> Node context state
-td_ = el "td" DOM.HTMLTableCellElement
-
-{-# INLINE tr_ #-}
-tr_ :: IsElementChildren a context state => [NodePatch DOM.HTMLTableRowElement context state] -> a -> Node context state
-tr_ = el "tr" DOM.HTMLTableRowElement
-
-{-# INLINE span_ #-}
-span_ :: IsElementChildren a context state => [NodePatch DOM.HTMLSpanElement context state] -> a -> Node context state
-span_ = el "span" DOM.HTMLSpanElement
-
-{-# INLINE a_ #-}
-a_ :: IsElementChildren a context state => [NodePatch DOM.HTMLAnchorElement context state] -> a -> Node context state
-a_ = el "a" DOM.HTMLAnchorElement
-
-{-# INLINE p_ #-}
-p_ :: IsElementChildren a context state => [NodePatch DOM.HTMLParagraphElement context state] -> a -> Node context state
-p_ = el "p" DOM.HTMLParagraphElement
-
-{-# INLINE input_ #-}
-input_ :: IsElementChildren a context state => [NodePatch DOM.HTMLInputElement context state] -> a -> Node context state
-input_ = el "input" DOM.HTMLInputElement
-
-{-# INLINE form_ #-}
-form_ :: IsElementChildren a context state => [NodePatch DOM.HTMLFormElement context state] -> a -> Node context state
-form_ = el "form" DOM.HTMLFormElement
-
-{-# INLINE button_ #-}
-button_ :: IsElementChildren a context state => [NodePatch DOM.HTMLButtonElement context state] -> a -> Node context state
-button_ = el "button" DOM.HTMLButtonElement
-
-{-# INLINE ul_ #-}
-ul_ :: IsElementChildren a context state => [NodePatch DOM.HTMLUListElement context state] -> a -> Node context state
-ul_ = el "ul" DOM.HTMLUListElement
-
-{-# INLINE li_ #-}
-li_ :: IsElementChildren a context state => [NodePatch DOM.HTMLLIElement context state] -> a -> Node context state
-li_ = el "li" DOM.HTMLLIElement
-
-{-# INLINE h2_ #-}
-h2_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
-h2_ = el "h2" DOM.HTMLHeadingElement
-
-{-# INLINE h5_ #-}
-h5_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
-h5_ = el "h5" DOM.HTMLHeadingElement
-
-{-# INLINE select_ #-}
-select_ :: IsElementChildren a context state => [NodePatch DOM.HTMLSelectElement context state] -> a -> Node context state
-select_ = el "select" DOM.HTMLSelectElement
-
-{-# INLINE option_ #-}
-option_ :: IsElementChildren a context state => [NodePatch DOM.HTMLOptionElement context state] -> a -> Node context state
-option_ = el "option" DOM.HTMLOptionElement
-
-{-# INLINE label_ #-}
-label_ :: IsElementChildren a context state => [NodePatch DOM.HTMLLabelElement context state] -> a -> Node context state
-label_ = el "label" DOM.HTMLLabelElement
-
-{-# INLINE nav_ #-}
-nav_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
-nav_ = el "nav" DOM.HTMLElement
-
-{-# INLINE h1_ #-}
-h1_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
-h1_ = el "h1" DOM.HTMLHeadingElement
-
-{-# INLINE h4_ #-}
-h4_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
-h4_ = el "h4" DOM.HTMLHeadingElement
-
-{-# INLINE h6_ #-}
-h6_ :: IsElementChildren a context state => [NodePatch DOM.HTMLHeadingElement context state] -> a -> Node context state
-h6_ = el "h6" DOM.HTMLHeadingElement
-
-{-# INLINE small_ #-}
-small_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
-small_ = el "small" DOM.HTMLElement
-
-{-# INLINE pre_ #-}
-pre_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
-pre_ = el "pre" DOM.HTMLElement
-
-{-# INLINE code_ #-}
-code_ :: IsElementChildren a context state => [NodePatch DOM.HTMLElement context state] -> a -> Node context state
-code_ = el "code" DOM.HTMLElement
-
-{-# INLINE iframe_ #-}
-iframe_ :: IsElementChildren a context state => [NodePatch DOM.HTMLIFrameElement context state] -> a -> Node context state
-iframe_ = el "iframe" DOM.HTMLIFrameElement
-
 -- Properties
 -- --------------------------------------------------------------------
 
 {-# INLINE property #-}
-property :: Text -> DOM.JSVal -> NodePatch el context state
-property k v = NPProperty k (return v)
+property :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
+property k v = NPProperty k (DOM.toJSVal v)
 
 {-# INLINE style #-}
 style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el context state
 style = NPStyle
 
-class_ :: Text -> NodePatch el context state
-class_ txt = NPProperty "className" (DOM.toJSVal txt)
-
-id_ ::  Text -> NodePatch el context state
-id_ txt = NPProperty "id" (DOM.toJSVal txt)
-
-type_ :: Text -> NodePatch el context state
-type_ txt = NPProperty "type" (DOM.toJSVal txt)
-
-href_ :: Text -> NodePatch el context state
-href_ txt = NPProperty "href" (DOM.toJSVal txt)
-
-value_ :: Text -> NodePatch el context state
-value_ txt = NPProperty "value" (DOM.toJSVal txt)
-
-checked_ :: Bool -> NodePatch el context state
-checked_ b = NPProperty "checked" (DOM.toJSVal b)
-
-selected_ :: Bool -> NodePatch el context state
-selected_ b = NPProperty "selected" (DOM.toJSVal b)
-
-disabled_ :: Bool -> NodePatch el context state
-disabled_ b = NPProperty "disabled" (DOM.toJSVal b)
-
 {-# INLINE rawAttribute #-}
-rawAttribute :: Text -> DOM.JSVal -> NodePatch el context state
-rawAttribute k v = NPAttribute k (return v)
+rawAttribute :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
+rawAttribute k v = NPAttribute k (DOM.toJSVal v)
 
 {-# INLINE attribute #-}
+-- | Note: for all standard HTML attributes (e.g. class, src, etc.), you
+-- should use @property@, not @attribute@.
 attribute :: Text -> Text -> NodePatch el context state
 attribute k v = NPAttribute k (DOM.toJSVal v)
-
-placeholder_ :: Text -> NodePatch el context state
-placeholder_ txt = NPProperty "placeholder" (DOM.toJSVal txt)
-
-{-# INLINE for_ #-}
-for_ :: Text -> NodePatch el context state
-for_ txt = NPProperty "for" (DOM.toJSVal txt)
-
-{-# INLINE multiple_ #-}
-multiple_ :: Bool -> NodePatch el context state
-multiple_ txt = NPProperty "multiple" (DOM.toJSVal txt)
-
-{-# INLINE src_ #-}
-src_ :: Text -> NodePatch el context state
-src_ txt = NPProperty "src" (DOM.toJSVal txt)
 
 {-# INLINE onEvent #-}
 onEvent ::
@@ -1019,34 +874,6 @@ onEvent el_ evName f = do
   DOM.liftJSM $ DOM.EventM.on el_ evName $ do
     ev <- ask
     liftIO (unliftIO u (f ev))
-
--- Events
--- --------------------------------------------------------------------
-
-onclick_ ::
-     (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.MouseEvent -> Action context state ()) -> NodePatch el context state
-onclick_ = NPEvent . SomeEventAction DOM.click
-
-onchange_ ::
-     (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action context state ()) -> NodePatch el context state
-onchange_ = NPEvent . SomeEventAction DOM.change
-
-oninput_ ::
-     (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action context state ()) -> NodePatch el context state
-oninput_ = NPEvent . SomeEventAction DOM.input
-
-onsubmit_ ::
-     (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.Event -> Action context state ()) -> NodePatch el context state
-onsubmit_ = NPEvent . SomeEventAction DOM.submit
-
-onselect_ ::
-     (DOM.IsElement el, DOM.IsGlobalEventHandlers el)
-  => (el -> DOM.UIEvent -> Action context state ()) -> NodePatch el context state
-onselect_ = NPEvent . SomeEventAction DOM.select
 
 -- simple rendering
 -- --------------------------------------------------------------------

@@ -26,6 +26,9 @@ library
     Anapo.CollectedThread
   other-modules:
     Anapo.Component.Internal
+    Anapo.Component.Elements
+    Anapo.Component.Attributes
+    Anapo.Component.Events
     Anapo.OrderedHashMap
   build-depends:
     base >= 4.7 && < 5,

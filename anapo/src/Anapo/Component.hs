@@ -102,59 +102,14 @@ module Anapo.Component
     -- * elements
   , IsElementChildren(..)
   , el
-  , div_
-  , span_
-  , a_
-  , p_
-  , input_
-  , form_
-  , h1_
-  , h2_
-  , h4_
-  , h5_
-  , h6_
-  , select_
-  , option_
-  , button_
-  , ul_
-  , li_
-  , label_
-  , iframe_
-  , small_
-  , pre_
-  , code_
-  , nav_
-  , table_
-  , tbody_
-  , tr_
-  , td_
 
-    -- * attributes
+    -- * attributes / properties
   , SomeEventAction(..)
+  , onEvent
   , style
-  , class_
-  , id_
-  , type_
-  , href_
-  , value_
-  , selected_
-  , checked_
-  , disabled_
-  , src_
-  , placeholder_
-  , multiple_
-  , for_
   , property
   , rawAttribute
   , attribute
-  , onEvent
-
-    -- * events
-  , onclick_
-  , onchange_
-  , onsubmit_
-  , oninput_
-  , onselect_
 
     -- * dom re-exports
   , DOM.Event.preventDefault
@@ -162,9 +117,20 @@ module Anapo.Component
     -- * simple rendering
   , simpleNode
   , simpleRenderNode
+
+    -- * defined elements
+  , module Anapo.Component.Elements
+    -- * defined attributes
+  , module Anapo.Component.Attributes
+    -- * defined events
+  , module Anapo.Component.Events
   ) where
 
 import qualified GHCJS.DOM.Event as DOM.Event
+import qualified Anapo.VDOM as V
 
 import Anapo.Component.Internal
-import qualified Anapo.VDOM as V
+import Anapo.Component.Elements
+import Anapo.Component.Attributes
+import Anapo.Component.Events
+
