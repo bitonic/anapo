@@ -56,7 +56,7 @@ colspan_ = property (T.pack "colSpan")
 content_ :: Text -> NodePatch el ctx st
 content_ = property (T.pack "content")
 
-contenteditable_ :: Text -> NodePatch el ctx st
+contenteditable_ :: Bool -> NodePatch el ctx st
 contenteditable_ = property (T.pack "contentEditable")
 
 contextmenu_ :: Text -> NodePatch el ctx st
@@ -83,13 +83,13 @@ defer_ = property (T.pack "defer")
 dir_ :: Text -> NodePatch el ctx st
 dir_ = property (T.pack "dir")
 
-disabled_ :: Text -> NodePatch el ctx st
+disabled_ :: Bool -> NodePatch el ctx st
 disabled_ = property (T.pack "disabled")
 
 download_ :: Text -> NodePatch el ctx st
 download_ = property (T.pack "download")
 
-draggable_ :: Text -> NodePatch el ctx st
+draggable_ :: Bool -> NodePatch el ctx st
 draggable_ = property (T.pack "draggable")
 
 enctype_ :: Text -> NodePatch el ctx st
@@ -182,16 +182,16 @@ method_ = property (T.pack "method")
 min_ :: Text -> NodePatch el ctx st
 min_ = property (T.pack "min")
 
-multiple_ :: Text -> NodePatch el ctx st
+multiple_ :: Bool -> NodePatch el ctx st
 multiple_ = property (T.pack "multiple")
 
 name_ :: Text -> NodePatch el ctx st
 name_ = property (T.pack "name")
 
-novalidate_ :: Text -> NodePatch el ctx st
+novalidate_ :: Bool -> NodePatch el ctx st
 novalidate_ = property (T.pack "noValidate")
 
-open_ :: Text -> NodePatch el ctx st
+open_ :: Bool -> NodePatch el ctx st
 open_ = property (T.pack "open")
 
 optimum_ :: Text -> NodePatch el ctx st
@@ -209,13 +209,13 @@ placeholder_ = property (T.pack "placeholder")
 preload_ :: Text -> NodePatch el ctx st
 preload_ = property (T.pack "preload")
 
-readonly_ :: Text -> NodePatch el ctx st
+readonly_ :: Bool -> NodePatch el ctx st
 readonly_ = property (T.pack "readonly")
 
 rel_ :: Text -> NodePatch el ctx st
 rel_ = property (T.pack "rel")
 
-required_ :: Text -> NodePatch el ctx st
+required_ :: Bool -> NodePatch el ctx st
 required_ = property (T.pack "required")
 
 reversed_ :: Text -> NodePatch el ctx st
@@ -236,7 +236,7 @@ sandbox_ = property (T.pack "sandbox")
 scope_ :: Text -> NodePatch el ctx st
 scope_ = property (T.pack "scope")
 
-selected_ :: Text -> NodePatch el ctx st
+selected_ :: Bool -> NodePatch el ctx st
 selected_ = property (T.pack "selected")
 
 shape_ :: Text -> NodePatch el ctx st
