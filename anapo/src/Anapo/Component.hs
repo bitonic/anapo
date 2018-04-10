@@ -22,6 +22,7 @@ module Anapo.Component
   , forkRegistered
   , Action
   , DispatchM(..)
+  , DispatchM'
   , dispatch
   , actFork
   , actZoom

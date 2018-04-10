@@ -208,6 +208,8 @@ actFork m =
 newtype DispatchM context0 state0 context state a =
   DispatchM {unDispatchM :: context -> state -> Action context0 state0 (a, state)}
 
+type DispatchM' ctx st = DispatchM ctx st ctx st
+
 instance Functor (DispatchM context0 state0 context state) where
   {-# INLINE fmap #-}
   fmap f (DispatchM g) = DispatchM (\ctx st -> do (x, st') <- g ctx st; return (f x, st'))
