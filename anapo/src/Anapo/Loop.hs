@@ -21,6 +21,7 @@ import Control.Concurrent (ThreadId, killThread, myThreadId)
 import Control.Monad.State (runStateT, put, get)
 import qualified Data.HashMap.Strict as HMS
 import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
+import Control.Exception.Safe (try)
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -129,6 +130,16 @@ nodeLoop withState node excComp root = do
   -- compute state
   unAction
     (withState $ \st0 -> do
+      -- what to do in case of exceptions
+      let
+        onErr :: V.Node RenderedVDomNode -> SomeException -> DOM.JSM a
+        onErr rendered err = do
+          -- if we got an exception, render one last time and shut down
+          logError ("Got exception, will render it and rethrow: " <> pack (show err))
+          vdom <- simpleNode () (excComp err)
+          void (reconciliateVirtualDom rendered [] vdom)
+          logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
+          liftIO (throwIO err)
       -- main loop
       let
         go ::
@@ -143,13 +154,7 @@ nodeLoop withState node excComp root = do
           -- there is a failure.
           fOrErr :: Either SomeException (Maybe (DispatchMsg st)) <- liftIO (Async.race (readMVar excVar) getMsg)
           case fOrErr of
-            Left err -> do
-              -- if we got an exception, render one last time and shut down
-              logError ("Got exception, will render it and rethrow: " <> pack (show err))
-              vdom <- simpleNode () (excComp err)
-              void (reconciliateVirtualDom rendered [] vdom)
-              logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
-              liftIO (throwIO err)
+            Left err -> onErr rendered err
             Right Nothing -> do
               logInfo "No state update received, terminating component loop"
               return rendered
@@ -168,10 +173,13 @@ nodeLoop withState node excComp root = do
                           fail "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
                           Just ctx <- liftIO (readIORef (_componentContext comp))
-                          st <- DOM.liftJSM (modif ctx (_componentState comp))
-                          let comp' = comp{ _componentState = st }
-                          put (Just comp')
-                          return comp')
+                          mbSt <- DOM.liftJSM (try (modif ctx (_componentState comp)))
+                          case mbSt of
+                            Left err -> DOM.liftJSM (onErr rendered err)
+                            Right st -> do
+                              let comp' = comp{ _componentState = st }
+                              put (Just comp')
+                              return comp')
                   compRoot)
                 Nothing
               logDebug ("State updated (" <> pack (show updateDt) <> "), might re render")
