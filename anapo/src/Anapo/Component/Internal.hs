@@ -869,7 +869,7 @@ attribute k v = NPAttribute k (DOM.toJSVal v)
 
 {-# INLINE onEvent #-}
 onEvent ::
-     (DOM.IsEventTarget t, DOM.IsEvent e, MonadAction context state m, MonadUnliftIO m)
+     (DOM.IsEventTarget t, DOM.IsEvent e, DOM.MonadJSM m, MonadUnliftIO m)
   => t -> DOM.EventM.EventName t e -> (e -> m ()) -> m (DOM.JSM ())
 onEvent el_ evName f = do
   u <- askUnliftIO
