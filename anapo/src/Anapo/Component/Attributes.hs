@@ -173,6 +173,9 @@ max_ = property (T.pack "max")
 maxlength_ :: Text -> NodePatch el ctx st
 maxlength_ = property (T.pack "maxLength")
 
+minlength_ :: Text -> NodePatch el ctx st
+minlength_ = property (T.pack "minLength")
+
 media_ :: Text -> NodePatch el ctx st
 media_ = property (T.pack "media")
 
