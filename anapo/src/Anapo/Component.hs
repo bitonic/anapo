@@ -24,6 +24,7 @@ module Anapo.Component
   , DispatchM(..)
   , DispatchM'
   , dispatch
+  , dispatchRerender
   , actFork
   , actZoom
   , actZoomCtx

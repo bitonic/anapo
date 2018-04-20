@@ -70,7 +70,7 @@ newtype Dispatch stateRoot = Dispatch
   { unDispatch :: forall state context props.
       CallStack ->
       AffineTraversal' stateRoot (Component props context state) ->
-      (context -> state -> DOM.JSM state) ->
+      (context -> state -> DOM.JSM (state, V.Rerender)) ->
       IO ()
   }
 
@@ -283,8 +283,37 @@ dispatch (DispatchM m) =
       callStack
       (atToComp trav)
       (\ctx st -> case toMaybeOf (atToContext trav) ctx of
-          Nothing -> return st
-          Just ctx' -> atToState trav (\st' -> fmap snd (unAction (m ctx' st') env trav)) st)
+          Nothing -> return (st, V.UnsafeDontRerender)
+          Just ctx' -> do
+            st' <- atToState trav (\st' -> fmap snd (unAction (m ctx' st') env trav)) st
+            return (st', V.Rerender))
+
+-- | Variant of dispatch that lets you decide whether the state update
+-- will trigger a rerender or not. Obviously must be used with care,
+-- since nothing will check that the UnsafeDontRerender is valid
+{-# INLINE dispatchRerender #-}
+dispatchRerender ::
+     (HasCallStack, MonadAction context state m)
+  => DispatchM context state context state V.Rerender
+  -> m ()
+dispatchRerender (DispatchM m) =
+  liftAction $ Action $ \env trav ->
+    liftIO $ unDispatch
+      (aeDispatch env)
+      callStack
+      (atToComp trav)
+      (\ctx st -> case toMaybeOf (atToContext trav) ctx of
+          Nothing -> return (st, V.UnsafeDontRerender)
+          Just ctx' -> do
+            (st', rerender) <- runStateT
+              (atToState trav
+                (\st' -> do
+                  (rerender, st'') <- lift (unAction (m ctx' st') env trav)
+                  put rerender
+                  return st'')
+                st)
+              V.UnsafeDontRerender
+            return (st', rerender))
 
 {-# INLINE askRegisterThread #-}
 askRegisterThread :: (MonadAction context state m) => m RegisterThread

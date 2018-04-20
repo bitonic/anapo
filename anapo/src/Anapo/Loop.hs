@@ -43,7 +43,7 @@ timeIt m = do
 
 data DispatchMsg stateRoot = forall props context state. DispatchMsg
   { _dispatchMsgTraverseComp :: AffineTraversal' (Component () () stateRoot) (Component props context state)
-  , _dispatchMsgModify :: context -> state -> DOM.JSM state
+  , _dispatchMsgModify :: context -> state -> DOM.JSM (state, V.Rerender)
   , _dispatchCallStack :: CallStack
   }
 
@@ -176,9 +176,9 @@ nodeLoop withState node excComp root = do
                           mbSt <- DOM.liftJSM (try (modif ctx (_componentState comp)))
                           case mbSt of
                             Left err -> DOM.liftJSM (onErr rendered err)
-                            Right st -> do
+                            Right (st, rerender) -> do
                               let comp' = comp{ _componentState = st }
-                              put (Just comp')
+                              put (Just (comp', rerender))
                               return comp')
                   compRoot)
                 Nothing
@@ -187,15 +187,18 @@ nodeLoop withState node excComp root = do
                 Nothing -> do
                   logInfo "The component was not found, not rerendering"
                   go compRoot' rendered
-                Just comp -> do
-                  positions <- liftIO (readIORef (_componentPositions comp))
-                  logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
-                  rendered' <- foldM
-                    (\rendered' (pos, props) -> do
-                        vdom <- runComp (Just compRoot) pos travComp comp props
-                        reconciliateVirtualDom rendered' pos vdom)
-                    rendered
-                    (HMS.toList positions)
+                Just (comp, rerender) -> do
+                  rendered' <- case rerender of
+                    V.UnsafeDontRerender -> return rendered
+                    V.Rerender -> do
+                      positions <- liftIO (readIORef (_componentPositions comp))
+                      logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
+                      foldM
+                        (\rendered' (pos, props) -> do
+                            vdom <- runComp (Just compRoot) pos travComp comp props
+                            reconciliateVirtualDom rendered' pos vdom)
+                        rendered
+                        (HMS.toList positions)
                   go compRoot' rendered'
       tid <- liftIO myThreadId
       finally
