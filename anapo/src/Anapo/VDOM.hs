@@ -7,6 +7,8 @@ import Data.DList (DList)
 import GHC.Fingerprint.Type (Fingerprint)
 import qualified Data.HashMap.Strict as HMS
 import Data.Vector (Vector)
+import Data.Semigroup (Semigroup(..))
+import Data.Monoid (Monoid(..))
 
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM
@@ -39,6 +41,15 @@ data Children body =
 
 data Rerender = Rerender | UnsafeDontRerender
   deriving (Eq, Show)
+
+instance Semigroup Rerender where
+  Rerender <> _ = Rerender
+  _ <> Rerender = Rerender
+  _ <> _ = UnsafeDontRerender
+
+instance Monoid Rerender where
+  mempty = UnsafeDontRerender
+  mappend = (<>)
 
 data SomeVDomNode = forall el. (DOM.IsNode el) => SomeVDomNode (VDomNode el)
 
