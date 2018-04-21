@@ -11,6 +11,9 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Anapo.Text
 import GHC.Stack
 import Data.Monoid ((<>))
+import Control.Monad (when)
+
+import Anapo.Debug
 
 #if defined(ghcjs_HOST_OS)
 
@@ -40,11 +43,17 @@ logWarn = liftIO . js_consoleWarn . addCallStack callStack
 
 {-# INLINE logInfo #-}
 logInfo :: (HasCallStack, MonadIO m) => Text -> m ()
-logInfo = liftIO . js_consoleInfo . addCallStack callStack
+logInfo x = liftIO $ do
+  debug <- debuggingEnabled
+  when debug $
+    js_consoleInfo (addCallStack callStack x)
 
 {-# INLINE logDebug #-}
 logDebug :: (HasCallStack, MonadIO m) => Text -> m ()
-logDebug = liftIO . js_consoleDebug . addCallStack callStack
+logDebug x = liftIO $ do
+  debug <- debuggingEnabled
+  when debug $ do
+    js_consoleDebug (addCallStack callStack x)
 
 #else
 
@@ -66,10 +75,16 @@ logWarn :: (HasCallStack, MonadIO m) => Text -> m ()
 logWarn x = liftIO (withLogLock (T.putStrLn (addCallStack callStack ("[WARN] " <> x))))
 
 logInfo :: (HasCallStack, MonadIO m) => Text -> m ()
-logInfo x = liftIO (withLogLock (T.putStrLn (addCallStack callStack ("[INFO] " <> x))))
+logInfo x = liftIO $ do
+  debug <- debuggingEnabled
+  when debug $ do
+    withLogLock (T.putStrLn (addCallStack callStack ("[INFO] " <> x)))
 
 logDebug :: (HasCallStack, MonadIO m) => Text -> m ()
-logDebug x = liftIO (withLogLock (T.putStrLn (addCallStack callStack ("[DEBUG] " <> x))))
+logDebug x = liftIO $ do
+  debug <- debuggingEnabled
+  when debug $ do
+    withLogLock (T.putStrLn (addCallStack callStack ("[DEBUG] " <> x)))
 
 #endif
 

@@ -24,6 +24,7 @@ library
     Anapo.Text
     Anapo.Logging
     Anapo.CollectedThread
+    Anapo.Debug
   other-modules:
     Anapo.Component.Internal
     Anapo.Component.Elements
