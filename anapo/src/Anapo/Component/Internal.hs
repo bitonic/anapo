@@ -31,6 +31,8 @@ import Control.Monad.Reader (MonadReader(..))
 import qualified Data.Vector as Vec
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM.EventM
+import GHC.Fingerprint.Type (Fingerprint)
+import Control.Applicative ((<|>))
 
 import qualified Anapo.VDOM as V
 import Anapo.Render
@@ -972,6 +974,7 @@ data Component props ctx st = Component
   , _componentNode :: props -> Node ctx st
   , _componentPositions :: IORef (HMS.HashMap VDomPath props)
   , _componentContext :: IORef (Maybe ctx)
+  , _componentFingerprint :: Maybe Fingerprint
   , _componentName :: Text
   -- ^ just for debugging
   }
@@ -986,7 +989,6 @@ compState = lens _componentState (\comp st -> comp{ _componentState = st })
 compNode :: Lens' (Component props context state) (props -> Node context state)
 compNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 
-{-# INLINE newNamedComponent #-}
 newNamedComponent ::
      MonadIO m
   => Text
@@ -996,9 +998,23 @@ newNamedComponent ::
 newNamedComponent name st node = do
   posRef <- liftIO (newIORef mempty)
   ctxRef <- liftIO (newIORef Nothing)
-  return (Component st node posRef ctxRef name)
+  return (Component st node posRef ctxRef Nothing name)
 
-{-# INLINE newComponent #-}
+-- | this is useful since a marked component will never be patched with
+-- another component -- a new redraw will always retrigger, which comes
+-- in handy when attaching specific actions using didMount / willRemove
+-- and friends.
+newMarkedComponent ::
+     MonadIO m
+  => Text
+  -> state
+  -> StaticPtr (props -> Node context state)
+  -> m (Component props context state)
+newMarkedComponent name st node = do
+  posRef <- liftIO (newIORef mempty)
+  ctxRef <- liftIO (newIORef Nothing)
+  return (Component st (deRefStaticPtr node) posRef ctxRef (Just (staticKey node)) name)
+
 newComponent ::
      MonadIO m
   => state
@@ -1006,7 +1022,6 @@ newComponent ::
   -> m (Component props context state)
 newComponent = newNamedComponent "<no-name>"
 
-{-# INLINE newNamedComponent_ #-}
 newNamedComponent_ ::
      MonadIO m
   => Text
@@ -1015,7 +1030,6 @@ newNamedComponent_ ::
   -> m (Component () ctx st)
 newNamedComponent_ name st comp = newNamedComponent name st (\() -> comp)
 
-{-# INLINE newComponent_ #-}
 newComponent_ ::
      MonadIO m
   => st
@@ -1048,7 +1062,7 @@ initComponent comp ctx = liftIO $ do
 {-# INLINE component #-}
 component :: props -> ComponentToken props ctx st -> Node ctx0 (Component props ctx st)
 component props (ComponentToken tok) = do
-  (node, pos) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
+  (node, pos, mbFprint) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
     let name = _componentName comp
     when (_componentContext comp /= tok) $
       error (T.unpack name <> ": Initialized component does not match state component!")
@@ -1071,10 +1085,11 @@ component props (ComponentToken tok) = do
       ctx
       (_componentState comp)
       dom
-    return (dom', (node, _componentPositions comp))
+    return (dom', (node, _componentPositions comp, _componentFingerprint comp))
   V.forSomeNodeBody node $ \node' -> do
     patches <- registerComponent pos props
-    patchNode patches node'
+    node'' <- patchNode patches node'
+    return node''{ V.vdomMark = V.vdomMark node'' <|> fmap (\fprint -> V.Mark fprint V.Rerender) mbFprint }
 
 {-# INLINE component_ #-}
 component_ :: forall ctx0 ctx st. ctx -> Node ctx0 (Component () ctx st)

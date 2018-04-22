@@ -65,6 +65,7 @@ module Anapo.Component
   , compState
   , compNode
   , newNamedComponent
+  , newMarkedComponent
   , newComponent
   , newNamedComponent_
   , newComponent_
