@@ -47,6 +47,7 @@ data DispatchMsg stateRoot = forall props context state. DispatchMsg
   , _dispatchCallStack :: CallStack
   }
 
+{-# INLINABLE nodeLoop #-}
 nodeLoop :: forall st.
      (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st
@@ -107,7 +108,10 @@ nodeLoop withState node excComp root = do
       -> props
       -> DOM.JSM (V.Node V.SomeVDomNode)
     runComp mbPrevComp path travComp comp props = do
-      Just ctx <- liftIO (readIORef (_componentContext comp))
+      mbCtx <- liftIO (readIORef (_componentContext comp))
+      ctx <- case mbCtx of
+        Nothing -> error ("Couldn't get context for component " <> _componentContext comp <> ", you probably forgot to initialize it.")
+        Just ctx -> return ctx
       ((_, vdom), vdomDt) <- timeIt $ unDomM
         (do
           node0 <- _componentNode comp props
@@ -216,6 +220,7 @@ nodeLoop withState node excComp root = do
     actionEnv
     (actionTrav id)
 
+{-# INLINABLE installNodeBody #-}
 installNodeBody ::
      (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st

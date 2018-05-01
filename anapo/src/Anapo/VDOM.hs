@@ -53,6 +53,7 @@ instance Monoid Rerender where
 
 data SomeVDomNode = forall el. (DOM.IsNode el) => SomeVDomNode (VDomNode el)
 
+{-# INLINE forSomeNodeBody #-}
 forSomeNodeBody ::
      Monad m
   => Node SomeVDomNode

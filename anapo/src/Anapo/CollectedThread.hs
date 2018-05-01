@@ -27,17 +27,19 @@ import Anapo
 newtype CollectedThreadId = CollectedThreadId { _unCollectedThreadId :: IORef (ThreadId) }
 
 instance Show CollectedThreadId where
+  {-# INLINE showsPrec #-}
   showsPrec d (CollectedThreadId ref) = unsafePerformIO $ do
     tid <- readIORef ref
     return (showString "CollectedThreadId " . showsPrec d tid)
 
 instance Eq CollectedThreadId where
+  {-# INLINE (==) #-}
   CollectedThreadId ref1 == CollectedThreadId ref2 = unsafePerformIO $ do
     tid1 <- readIORef ref1
     tid2 <- readIORef ref2
     return (tid1 == tid2)
 
-{-# INLINE forkCollected #-}
+{-# INLINABLE forkCollected #-}
 forkCollected :: MonadAction context state m => Action context state () -> m CollectedThreadId
 forkCollected m = liftAction $ do
   -- we use an IORef because we do not have a function that attaches

@@ -10,6 +10,7 @@ foreign import javascript unsafe
   "window.anapoDebug"
   js_isDebug :: IO JSVal
 
+{-# INLINE debuggingEnabled #-}
 debuggingEnabled :: IO Bool
 debuggingEnabled = do
   v <- js_isDebug
@@ -17,6 +18,7 @@ debuggingEnabled = do
 
 #else
 
+{-# INLINE debuggingEnabled #-}
 debuggingEnabled :: IO Bool
 debuggingEnabled = return True
 

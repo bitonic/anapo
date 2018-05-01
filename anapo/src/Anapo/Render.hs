@@ -60,6 +60,7 @@ data RenderedVDomNode = RenderedVDomNode
   , rvdnAttributes :: V.ElementAttributes
   }
 
+{-# INLINABLE renderedVDomNodeDom #-}
 renderedVDomNodeDom :: RenderedVDomNode -> DOM.Node
 renderedVDomNodeDom = rvdnDom
 
@@ -87,7 +88,6 @@ instance Hashable VDomPathSegment where
   hashWithSalt salt (VDPSNormal i) = salt `hashWithSalt` (0::Int) `hashWithSalt` i
   hashWithSalt salt (VDPSKeyed i) = salt `hashWithSalt` (1::Int) `hashWithSalt` i
 
-{-# INLINE addEvents #-}
 addEvents ::
      (DOM.IsElement el)
   => el
@@ -98,9 +98,8 @@ addEvents el evts = forM (DList.toList evts) $ \(V.SomeEvent evtName evt) -> do
   DOM.EventM.addListener el evtName safel False
   return (SomeSaferEventListener evtName safel)
 
-{-# INLINE addProperties #-}
 addProperties ::
-     (DOM.IsElement el)
+     (DOM.ToJSVal el)
   => el
   -> V.ElementProperties
   -> HMS.HashMap V.ElementPropertyName ExistingProperty
@@ -148,7 +147,6 @@ addStyle el style prevStyle = do
       Just prop' -> when (prop /= prop') set
   return style
 
-{-# INLINE addAttributes #-}
 addAttributes ::
      (DOM.IsElement el)
   => el
@@ -172,7 +170,6 @@ addAttributes el attrs prevAttrs = do
         unless eq set
   return attrs
 
-{-# INLINE renderDom #-}
 renderDom ::
      (DOM.IsNode el, Traversable t)
   => DOM.Document
@@ -186,7 +183,6 @@ renderDom doc container vdoms =
       DOM.Node.appendChild_ container (rvdnDom (V.nodeBody rendered))
       return rendered
 
-{-# INLINE renderChildren #-}
 renderChildren ::
      (DOM.IsElement el)
   => DOM.Document
@@ -389,7 +385,6 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
               return ((k, rendered') : rendereds)
       fmap HMS.fromList (go prevVDoms0 (HMS.toList vdoms0))
 
-    {-# INLINE patchChildren #-}
     patchChildren ::
          (DOM.IsElement el)
       => el -- ^ the containing node

@@ -20,9 +20,11 @@ instance Hashable JSString where
   hashWithSalt salt str = unsafePerformIO (js_stringFnvHash salt str)
 
 instance Aeson.ToJSON JSString where
+  {-# INLINE toJSON #-}
   toJSON = Aeson.String . textFromJSString
 
 instance Aeson.FromJSON JSString where
+  {-# INLINE parseJSON #-}
   parseJSON = Aeson.withText "JSString" (return . textToJSString)
 
 type Text = JSString

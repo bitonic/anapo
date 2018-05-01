@@ -58,7 +58,7 @@ type AffineTraversal' a b = Lens.Traversal' a b
 type AffineFold a b = Lens.Fold a b
 
 -- | to be used with 'AffineTraversal' and 'AffineFold'
-{-# INLINE toMaybeOf #-}
+{-# INLINABLE toMaybeOf #-}
 toMaybeOf :: (HasCallStack) => Lens.Getting (Endo [a]) s a -> s -> Maybe a
 toMaybeOf l x = case Lens.toListOf l x of
   [] -> Nothing
@@ -186,7 +186,7 @@ actComponent (Action m) = liftAction $ Action $ \env trav ->
     , atToContext = id
     }
 
-{-# INLINE forkRegistered #-}
+{-# INLINABLE forkRegistered #-}
 forkRegistered :: MonadUnliftIO m => RegisterThread -> HandleException -> m () -> m ThreadId
 forkRegistered register handler m = do
   u <- askUnliftIO
@@ -273,7 +273,7 @@ instance Lens.Zoom (DispatchM ctx0 state0 ctx in_) (DispatchM ctx0 state0 ctx ou
   zoom l (DispatchM m) =
     DispatchM (\ctx st -> Lens.unfocusing (l (\st' -> Lens.Focusing (m ctx st')) st))
 
-{-# INLINE dispatch #-}
+{-# INLINABLE dispatch #-}
 dispatch ::
      (HasCallStack, MonadAction context state m)
   => DispatchM context state context state ()
@@ -293,7 +293,7 @@ dispatch (DispatchM m) =
 -- | Variant of dispatch that lets you decide whether the state update
 -- will trigger a rerender or not. Obviously must be used with care,
 -- since nothing will check that the UnsafeDontRerender is valid
-{-# INLINE dispatchRerender #-}
+{-# INLINABLE dispatchRerender #-}
 dispatchRerender ::
      (HasCallStack, MonadAction context state m)
   => DispatchM context state context state V.Rerender
@@ -467,18 +467,6 @@ zoomT st l m = DomM $ \acEnv acTrav anEnv ctx _st dom ->
     ctx
     st
     dom
-
-{-
-{-# INLINE zoomCtxL #-}
-zoomCtxL :: Lens' out in_ -> DomM dom in_ st a -> DomM dom out st a
-zoomCtxL l m = DomM $ \acEnv acTrav anEnv curr dom ->
-  unDomM m
-    acEnv
-    acTrav{ atToContext = atToContext acTrav . l }
-    anEnv
-    curr{ domCurrentContext = view l (domCurrentContext curr) }
-    dom
--}
 
 {-# INLINE zoomCtxF #-}
 zoomCtxF ::
@@ -706,7 +694,7 @@ rawNode wrap x patches = do
 -- @
 --
 -- at call site (see for example Anapo.TestApps.YouTube)
-{-# INLINE marked #-}
+{-# INLINABLE marked #-}
 marked ::
      (Maybe state -> props -> state -> V.Rerender)
   -> StaticPtr (props -> Node context state) -> props -> Node context state
@@ -754,7 +742,7 @@ instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM KeyedDomSta
     (KeyedDomState dom, _) <- f acEnv acTrav anEnv ctx st (KeyedDomState mempty)
     return ((), V.CKeyed (OHM.fromList (DList.toList dom)))
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM MapDomState ctx1 st1 a) ctx2 st2 where
-  {-# INLINE elementChildren #-}
+  {-# INLINABLE elementChildren #-}
   elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
     (MapDomState dom, _) <- f acEnv acTrav anEnv ctx st (MapDomState mempty)
     let kvs = DList.toList dom
@@ -767,7 +755,7 @@ instance IsElementChildren UnsafeRawHtml ctx st where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)
 
-{-# INLINE patchNode #-}
+{-# INLINABLE patchNode #-}
 patchNode ::
      (HasCallStack, DOM.IsNode el)
   => [NodePatch el ctx state] -> V.VDomNode el -> DomM () ctx state (V.VDomNode el)
@@ -846,7 +834,7 @@ patchNode patches00 node00 = do
           patches
   go node00 patches00
 
-{-# INLINE el #-}
+{-# INLINABLE el #-}
 el ::
      ( IsElementChildren a ctx st
      , DOM.IsElement el, DOM.IsElementCSSInlineStyle el
@@ -911,6 +899,7 @@ onEvent el_ evName f = do
 -- simple rendering
 -- --------------------------------------------------------------------
 
+{-# INLINABLE simpleNode #-}
 simpleNode :: forall state. state -> Node () state -> DOM.JSM (V.Node V.SomeVDomNode)
 simpleNode st node0 = do
   comp <- newComponent st (\() -> node0)
@@ -944,6 +933,7 @@ simpleNode st node0 = do
 -- when we want a quick render of a component, e.g. inside a raw node.
 -- any attempt to use dispatch will result in an exception; e.g. this
 -- will never redraw anything, it's just to quickly draw some elements
+{-# INLINABLE simpleRenderNode #-}
 simpleRenderNode :: state -> Node () state -> DOM.JSM DOM.Node
 simpleRenderNode st node = do
   vdom <- simpleNode st node
@@ -989,6 +979,7 @@ compState = lens _componentState (\comp st -> comp{ _componentState = st })
 compNode :: Lens' (Component props context state) (props -> Node context state)
 compNode = lens _componentNode (\comp st -> comp{ _componentNode = st })
 
+{-# INLINABLE newNamedComponent #-}
 newNamedComponent ::
      MonadIO m
   => Text
@@ -1004,6 +995,7 @@ newNamedComponent name st node = do
 -- another component -- a new redraw will always retrigger, which comes
 -- in handy when attaching specific actions using didMount / willRemove
 -- and friends.
+{-# INLINABLE newMarkedComponent #-}
 newMarkedComponent ::
      MonadIO m
   => Text
@@ -1015,6 +1007,7 @@ newMarkedComponent name st node = do
   ctxRef <- liftIO (newIORef Nothing)
   return (Component st (deRefStaticPtr node) posRef ctxRef (Just (staticKey node)) name)
 
+{-# INLINABLE newComponent #-}
 newComponent ::
      MonadIO m
   => state
@@ -1022,6 +1015,7 @@ newComponent ::
   -> m (Component props context state)
 newComponent = newNamedComponent "<no-name>"
 
+{-# INLINABLE newNamedComponent_ #-}
 newNamedComponent_ ::
      MonadIO m
   => Text
@@ -1030,6 +1024,7 @@ newNamedComponent_ ::
   -> m (Component () ctx st)
 newNamedComponent_ name st comp = newNamedComponent name st (\() -> comp)
 
+{-# INLINABLE newComponent_ #-}
 newComponent_ ::
      MonadIO m
   => st
@@ -1037,7 +1032,7 @@ newComponent_ ::
   -> m (Component () ctx st)
 newComponent_ st comp = newComponent st (\() -> comp)
 
-{-# INLINE registerComponent #-}
+{-# INLINABLE registerComponent #-}
 registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> DomM dom a b [NodePatch el ctx st]
 registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _ctx _st dom -> do
   let add = \_ -> do
@@ -1059,7 +1054,7 @@ initComponent comp ctx = liftIO $ do
   writeIORef (_componentContext comp) (Just ctx)
   return (ComponentToken (_componentContext comp))
 
-{-# INLINE component #-}
+{-# INLINABLE component #-}
 component :: props -> ComponentToken props ctx st -> Node ctx0 (Component props ctx st)
 component props (ComponentToken tok) = do
   (node, pos, mbFprint) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
