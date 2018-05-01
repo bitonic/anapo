@@ -1084,6 +1084,7 @@ component props (ComponentToken tok) = do
   V.forSomeNodeBody node $ \node' -> do
     patches <- registerComponent pos props
     node'' <- patchNode patches node'
+    -- keep in sync with similar code in Anapo.Loop.nodeLoop.runComp
     return node''{ V.vdomMark = V.vdomMark node'' <|> fmap (\fprint -> V.Mark fprint V.Rerender) mbFprint }
 
 {-# INLINE component_ #-}

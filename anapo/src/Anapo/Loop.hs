@@ -22,6 +22,7 @@ import Control.Monad.State (runStateT, put, get)
 import qualified Data.HashMap.Strict as HMS
 import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
 import Control.Exception.Safe (try)
+import Control.Applicative ((<|>))
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -130,7 +131,9 @@ nodeLoop withState node excComp root = do
         ()
       DOM.syncPoint
       logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
-      return vdom
+      V.forSomeNodeBody vdom $ \node' -> do
+        -- keep in sync with similar code in Anapo.Component.Internal.component
+        return node'{ V.vdomMark = V.vdomMark node' <|> fmap (\fprint -> V.Mark fprint V.Rerender) (_componentFingerprint comp) }
   -- compute state
   unAction
     (withState $ \st0 -> do
