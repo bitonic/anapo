@@ -31,7 +31,7 @@ import qualified GHCJS.DOM.Document as DOM.Document
 import qualified Anapo.VDOM as V
 import Anapo.Component.Internal
 import Anapo.Render
-import Anapo.Text (Text, pack)
+import Anapo.Text (Text, pack, unpack)
 import Anapo.Logging
 
 timeIt :: DOM.JSM a -> DOM.JSM (a, NominalDiffTime)
@@ -110,7 +110,7 @@ nodeLoop withState node excComp root = do
     runComp mbPrevComp path travComp comp props = do
       mbCtx <- liftIO (readIORef (_componentContext comp))
       ctx <- case mbCtx of
-        Nothing -> error ("Couldn't get context for component " <> _componentContext comp <> ", you probably forgot to initialize it.")
+        Nothing -> error ("Couldn't get context for component " <> unpack (_componentName comp) <> ", you probably forgot to initialize it.")
         Just ctx -> return ctx
       ((_, vdom), vdomDt) <- timeIt $ unDomM
         (do
