@@ -172,7 +172,11 @@ actZoomCtx t m =
 
 {-# INLINE noContext #-}
 noContext :: Lens.Fold a ()
-noContext f x = f () *> pure x
+noContext f x = x <$ f ()
+
+{-# INLINE noState #-}
+noState :: AffineTraversal' a ()
+noState f x = x <$ f ()
 
 {-# INLINE actComponent #-}
 actComponent ::
