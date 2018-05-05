@@ -24,6 +24,8 @@ import qualified Data.Vector as Vec
 import Data.Vector (Vector)
 import Data.Hashable (Hashable(..))
 import GHC.Stack (HasCallStack)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Control.Monad (join)
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Document as DOM.Document
@@ -269,6 +271,42 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
       -> DOM.JSM ()
     removeDom container vdoms = for_ vdoms (removeNode container)
 
+    -- | collect event listeners to free and call willRemove, but do not
+    -- remove the DOM.
+    cleanupNode ::
+         IORef (DOM.JSM ()) -- ^ how to cleanup the listeners
+      -> V.Node RenderedVDomNode
+      -> DOM.JSM ()
+    cleanupNode
+        releaseListenersRef
+        (V.Node RenderedVDomNode{rvdnVDom = V.SomeVDomNode V.VDomNode{..}, ..} mbChildren) = do
+      -- first call the will remove
+      V.callbacksWillRemove vdomCallbacks =<< DOM.unsafeCastTo vdomWrap rvdnDom
+      -- then recurse down
+      for_ mbChildren (cleanupChildren releaseListenersRef)
+      -- record how to cleanup the listeners
+      unless (null rvdnEvents) $ liftIO $ modifyIORef' releaseListenersRef $ \m -> do
+        m
+        for_ rvdnEvents (\(SomeSaferEventListener _ ev) -> DOM.EventM.releaseListener ev)
+
+    cleanupChildren ::
+         IORef (DOM.JSM ()) -- ^ how to cleanup the listeners
+      -> V.Children RenderedVDomNode
+      -> DOM.JSM ()
+    cleanupChildren releaseListenersRef = \case
+      V.CRawHtml{} -> return ()
+      V.CNormal vdoms -> cleanupDom releaseListenersRef vdoms
+      V.CKeyed vdoms -> cleanupDom releaseListenersRef vdoms
+      V.CMap vdoms -> cleanupDom releaseListenersRef vdoms
+
+    {-# INLINE cleanupDom #-}
+    cleanupDom ::
+         (Foldable t)
+      => IORef (DOM.JSM ())
+      -> t (V.Node RenderedVDomNode)
+      -> DOM.JSM ()
+    cleanupDom releaseListenersRef vdoms = for_ vdoms (cleanupNode releaseListenersRef)
+
     removeNode ::
          DOM.Node -- ^ the container
       -> V.Node RenderedVDomNode
@@ -278,10 +316,12 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
         (V.Node RenderedVDomNode{rvdnVDom = V.SomeVDomNode V.VDomNode{..}, ..} mbChildren) = do
       -- first call the will remove
       V.callbacksWillRemove vdomCallbacks =<< DOM.unsafeCastTo vdomWrap rvdnDom
-      -- then recurse down...
-      for_ mbChildren (removeChildren rvdnDom)
-      -- then remove the DOM thing and remove the children
+      -- cleanup the children
+      releaseListenersRef <- liftIO (newIORef (return ()))
+      for_ mbChildren (cleanupChildren releaseListenersRef)
+      -- then remove the DOM element and clean up the listeners
       DOM.Node.removeChild_ container rvdnDom
+      join (liftIO (readIORef releaseListenersRef))
       for_ rvdnEvents (\(SomeSaferEventListener _ ev) -> DOM.EventM.releaseListener ev)
 
     patchDom ::
