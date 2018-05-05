@@ -69,6 +69,7 @@ module Anapo.Component
   , newMarkedComponent
   , newComponent
   , newNamedComponent_
+  , newMarkedComponent_
   , newComponent_
   , component
   , component_

@@ -1011,6 +1011,18 @@ newMarkedComponent name st node = do
   ctxRef <- liftIO (newIORef Nothing)
   return (Component st (deRefStaticPtr node) posRef ctxRef (Just (staticKey node)) name)
 
+{-# INLINABLE newMarkedComponent_ #-}
+newMarkedComponent_ ::
+     MonadIO m
+  => Text
+  -> state
+  -> StaticPtr (Node context state)
+  -> m (Component () context state)
+newMarkedComponent_ name st node = do
+  posRef <- liftIO (newIORef mempty)
+  ctxRef <- liftIO (newIORef Nothing)
+  return (Component st (\() -> deRefStaticPtr node) posRef ctxRef (Just (staticKey node)) name)
+
 {-# INLINABLE newComponent #-}
 newComponent ::
      MonadIO m
