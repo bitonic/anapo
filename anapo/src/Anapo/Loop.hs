@@ -185,6 +185,7 @@ nodeLoop withState node excComp root = do
               ((compRoot', mbComp), updateDt) <- timeIt $ runStateT
                 (travComp
                   (\comp -> do
+                      logDebug ("Visiting component " <> _componentName comp)
                       mbComp <- get
                       case mbComp of
                         Just{} -> do
