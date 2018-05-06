@@ -11,7 +11,7 @@ import Control.Monad (void, when, foldM)
 import Data.Foldable (traverse_)
 import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
 import Data.Monoid ((<>))
-import Control.Exception.Safe (throwIO, tryAsync, SomeException, bracket, finally)
+import Control.Exception.Safe (throwIO, tryAsync, SomeException(..), bracket, finally, Exception, Typeable)
 import Control.Exception (BlockedIndefinitelyOnMVar)
 import Control.Concurrent (MVar, newEmptyMVar, tryPutMVar, readMVar)
 import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef, writeIORef)
@@ -19,7 +19,7 @@ import qualified Control.Concurrent.Async as Async
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 import Control.Concurrent (ThreadId, killThread, myThreadId)
-import Control.Monad.State (runStateT, put, get)
+import Control.Monad.State (runStateT, put, get, lift)
 import qualified Data.HashMap.Strict as HMS
 import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
 import Control.Exception.Safe (try)
@@ -55,6 +55,10 @@ data DispatchMsg stateRoot = forall props context state. DispatchMsg
   , _dispatchMsgModify :: context -> state -> DOM.JSM (state, V.Rerender)
   , _dispatchCallStack :: CallStack
   }
+
+newtype AnapoException = AnapoException Text
+  deriving (Eq, Show, Typeable)
+instance Exception AnapoException
 
 {-# INLINABLE nodeLoop #-}
 nodeLoop :: forall st.
@@ -185,9 +189,15 @@ nodeLoop withState node excComp root = do
                       case mbComp of
                         Just{} -> do
                           -- fail if we already visited
-                          fail "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
+                          lift $ onErr rendered $ SomeException $ AnapoException
+                            "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
-                          Just ctx <- liftIO (readIORef (_componentContext comp))
+                          mbCtx <- liftIO (readIORef (_componentContext comp))
+                          ctx <- case mbCtx of
+                            Nothing -> do
+                              lift $ onErr rendered $ SomeException $ AnapoException $
+                                "nodeLoop: failed to get component context for component " <> _componentName comp <> "!"
+                            Just ctx -> return ctx
                           -- run the state update synchronously: both
                           -- because we want it to be done asap, and
                           -- because we want to crash it if there are
