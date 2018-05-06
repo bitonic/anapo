@@ -96,7 +96,9 @@ addEvents ::
   -> V.ElementEvents el
   -> DOM.JSM [SomeSaferEventListener]
 addEvents el evts = forM (DList.toList evts) $ \(V.SomeEvent evtName evt) -> do
-  safel <- DOM.EventM.newListener (do ev <- ask; lift (evt el ev))
+  -- have listeners to be sync -- it's faster and we really do not
+  -- people to run blocking calls in them
+  safel <- DOM.EventM.newListenerSync (do ev <- ask; lift (evt el ev))
   DOM.EventM.addListener el evtName safel False
   return (SomeSaferEventListener evtName safel)
 

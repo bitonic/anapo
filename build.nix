@@ -8,7 +8,20 @@ let
   haskellPackagesBase = if ghcjs
     then pkgs.haskell.packages.${ghcjsVersion}
     else pkgs.haskell.packages.${ghcVersion};
-  haskellPackages = haskellPackagesBase.override {
+  # use what reflex-platform uses -- we need `synchronously` anyway
+  haskellPackages0 = if ghcjs
+    then haskellPackagesBase.override {
+      overrides = self: super: {
+        ghcjs-base = self.callCabal2nix "ghcjs-base" (pkgs.fetchFromGitHub {
+          owner = "ghcjs";
+          repo = "ghcjs-base";
+          rev = "43804668a887903d27caada85693b16673283c57";
+          sha256 = "1pqmgkan6xhpvsb64rh2zaxymxk4jg9c3hdxdb2cnn6jpx7jsl44";
+        }) {};
+      };
+    }
+    else haskellPackagesBase;
+  haskellPackages = haskellPackages0.override {
     overrides = self: super: {
       jsaddle = (jsaddleHEAD self).jsaddle;
       # the jsaddle-warp tests fail because phantomjs is not there

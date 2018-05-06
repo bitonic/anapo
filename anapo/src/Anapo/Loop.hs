@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 module Anapo.Loop
   ( nodeLoop
   , installNodeBody
@@ -34,6 +35,13 @@ import Anapo.Component.Internal
 import Anapo.Render
 import Anapo.Text (Text, pack, unpack)
 import Anapo.Logging
+
+#if defined(ghcjs_HOST_OS)
+import GHCJS.Concurrent (synchronously)
+#else
+synchronously :: DOM.JSM a -> DOM.JSM a
+synchronously = id
+#endif
 
 timeIt :: DOM.JSM a -> DOM.JSM (a, NominalDiffTime)
 timeIt m = do
@@ -180,7 +188,11 @@ nodeLoop withState node excComp root = do
                           fail "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
                           Just ctx <- liftIO (readIORef (_componentContext comp))
-                          mbSt <- DOM.liftJSM (try (modif ctx (_componentState comp)))
+                          -- run the state update synchronously: both
+                          -- because we want it to be done asap, and
+                          -- because we want to crash it if there are
+                          -- blocking calls
+                          mbSt <- DOM.liftJSM (try (synchronously (modif ctx (_componentState comp))))
                           case mbSt of
                             Left err -> DOM.liftJSM (onErr rendered err)
                             Right (st, rerender) -> do
@@ -200,12 +212,15 @@ nodeLoop withState node excComp root = do
                     V.Rerender -> do
                       positions <- liftIO (readIORef (_componentPositions comp))
                       logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
-                      foldM
-                        (\rendered' (pos, props) -> do
-                            vdom <- runComp (Just compRoot) pos travComp comp props
-                            reconciliateVirtualDom rendered' pos vdom)
-                        rendered
-                        (HMS.toList positions)
+                      -- do not leave half-done DOM in place, run
+                      -- everything synchronously
+                      synchronously $ do
+                        foldM
+                          (\rendered' (pos, props) -> do
+                              vdom <- runComp (Just compRoot) pos travComp comp props
+                              reconciliateVirtualDom rendered' pos vdom)
+                          rendered
+                          (HMS.toList positions)
                   go compRoot' rendered'
       tid <- liftIO myThreadId
       finally
