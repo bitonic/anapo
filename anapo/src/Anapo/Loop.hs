@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
 module Anapo.Loop
-  ( nodeLoop
-  , installNodeBody
+  ( installNodeBody
+  , installNode
+  , InstallMode(..)
   ) where
 
 import Control.Concurrent.Chan (Chan, writeChan, readChan, newChan)
@@ -60,6 +61,10 @@ newtype AnapoException = AnapoException Text
   deriving (Eq, Show, Typeable)
 instance Exception AnapoException
 
+data InstallMode =
+    IMAppend -- ^ append the node inside the the provided container
+  | IMEraseAndAppend -- ^ clear everything in the container and append
+
 {-# INLINABLE nodeLoop #-}
 nodeLoop :: forall st.
      (forall a. (st -> DOM.JSM a) -> Action () st a)
@@ -67,12 +72,14 @@ nodeLoop :: forall st.
   -- ^ how to render the state
   -> (SomeException -> Node () ())
   -- ^ how to render exceptions
+  -> InstallMode
+  -- ^ how to place the node
   -> DOM.Node
   -- ^ where to place the node
   -> DOM.JSM (V.Node RenderedVDomNode)
   -- ^ returns the final rendered node, when there is nothing left to
   -- do. might never terminate
-nodeLoop withState node excComp root = do
+nodeLoop withState node excComp injectMode root = do
   -- dispatch channel
   dispatchChan :: Chan (DispatchMsg st) <- liftIO newChan
   let
@@ -240,25 +247,54 @@ nodeLoop withState node excComp root = do
           comp <- newNamedComponent "root" st0 (\() -> node)
           liftIO (writeIORef (_componentContext comp) (Just ()))
           vdom <- runComp Nothing [] id comp ()
-          rendered0 <- renderVirtualDom vdom $ \rendered -> do
-            DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
-            return rendered
+          -- do this synchronously, too
+          rendered0 <- synchronously $ do
+            renderVirtualDom vdom $ \rendered -> do
+              case injectMode of
+                IMAppend -> return ()
+                IMEraseAndAppend -> removeAllChildren root
+              DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
+              return rendered
           -- now loop
           go comp rendered0)
         (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid')))))
     actionEnv
     (actionTrav id)
 
+removeAllChildren :: DOM.Node -> DOM.JSM ()
+removeAllChildren node = go
+  where
+    go = do
+      mbChild <- DOM.Node.getFirstChild node
+      case mbChild of
+        Nothing -> return ()
+        Just child -> do
+          DOM.Node.removeChild_ node child
+          go
+
 {-# INLINABLE installNodeBody #-}
 installNodeBody ::
      (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st
   -> (SomeException -> Node () ())
+  -> InstallMode
   -> DOM.JSM ()
-installNodeBody getSt vdom0 excVdom = do
+installNodeBody getSt vdom0 excVdom injectMode = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.Document.getBodyUnchecked doc
-  void (nodeLoop getSt vdom0 excVdom (DOM.toNode body))
+  void (nodeLoop getSt vdom0 excVdom injectMode (DOM.toNode body))
+
+{-# INLINABLE installNode #-}
+installNode ::
+     (DOM.IsNode el)
+  => (forall a. (st -> DOM.JSM a) -> Action () st a)
+  -> Node () st
+  -> (SomeException -> Node () ())
+  -> InstallMode
+  -> el
+  -> DOM.JSM ()
+installNode getSt vdom0 excVdom injectMode container = do
+  void (nodeLoop getSt vdom0 excVdom injectMode (DOM.toNode container))
 
 addCallStack :: CallStack -> Text -> Text
 addCallStack stack = case getCallStack stack of
