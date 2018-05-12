@@ -23,6 +23,7 @@ mainJSM = do
     (\cont -> testAppsWith (liftJSM . cont))
     testAppsComponent
     (\exc -> testAppsError (tshow exc))
+    IMAppend
 
 main :: IO ()
 main = run mainJSM
