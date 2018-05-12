@@ -51,7 +51,8 @@ library
   else
     build-depends:
       ghcjs-base,
-      aeson
+      aeson,
+      deepseq
     js-sources:
       jsbits/fnv.js,
       jsbits/eq.js

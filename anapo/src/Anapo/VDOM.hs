@@ -126,11 +126,13 @@ type ElementStyle = HMS.HashMap StylePropertyName StyleProperty
 type AttributeName = Text
 type AttributeBody = DOM.JSVal
 type ElementAttributes = HMS.HashMap AttributeName AttributeBody
+type ElementClasses = [Text]
 
 data Element el = Element
   { elementTag :: ElementTag
   , elementProperties :: ElementProperties
   , elementStyle :: ElementStyle
   , elementAttributes :: ElementAttributes
+  , elementClasses :: ElementClasses
   , elementEvents :: ElementEvents el
   }

@@ -1,9 +1,19 @@
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE JavaScriptFFI #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE GHCForeignImportPrim #-}
 module Anapo.Component.Attributes where
 
-import Anapo.Component.Internal (property, attribute, rawAttribute, NodePatch)
+import Anapo.Component.Internal (property, attribute, rawAttribute, NodePatch(NPClasses))
 import Anapo.Text (Text)
 import qualified Anapo.Text as T
 import Data.Monoid ((<>))
+
+#if defined(ghcjs_HOST_OS)
+import Unsafe.Coerce (unsafeCoerce)
+import Data.JSString (JSString)
+import qualified GHC.Exts as Exts
+#endif
 
 {-# INLINE accept_ #-}
 accept_ :: Text -> NodePatch el ctx st
@@ -55,11 +65,28 @@ checked_ = property (T.pack "checked")
 
 {-# INLINE class_ #-}
 class_ :: Text -> NodePatch el ctx st
-class_ = property (T.pack "className")
+class_ = NPClasses . textWords
+
+#if defined(ghcjs_HOST_OS)
+
+foreign import javascript unsafe
+  "h$toHsListJSVal($1.split(\" \"))"
+  js_textWords :: JSString -> Exts.Any
+
+{-# INLINE textWords #-}
+textWords :: JSString -> [JSString]
+textWords s = unsafeCoerce (js_textWords s)
+
+#else
+
+textWords :: Text -> [Text]
+textWords = T.words
+
+#endif
 
 {-# INLINE classes_ #-}
 classes_ :: [Text] -> NodePatch el ctx st
-classes_ = property (T.pack "className") . T.unwords
+classes_ = NPClasses . filter (not . T.null)
 
 {-# INLINE cols_ #-}
 cols_ :: Text -> NodePatch el ctx st

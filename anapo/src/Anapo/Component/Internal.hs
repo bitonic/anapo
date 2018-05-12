@@ -729,6 +729,7 @@ data NodePatch el ctx st =
   | NPAttribute V.AttributeName (DOM.JSM V.AttributeBody)
   | NPProperty V.ElementPropertyName (DOM.JSM V.ElementProperty)
   | NPEvent (SomeEventAction el ctx st)
+  | NPClasses V.ElementClasses
 
 class IsElementChildren a ctx st where
   elementChildren :: HasCallStack => a -> DomM () ctx st (V.Children V.SomeVDomNode)
@@ -836,6 +837,11 @@ patchNode patches00 node00 = do
                   liftIO (unliftIO u (evListener e ev)))
             })
           patches
+        NPClasses classes -> go
+          (modifyElement node $ \vel -> vel
+            { V.elementClasses = V.elementClasses vel <> classes
+            })
+          patches
   go node00 patches00
 
 {-# INLINABLE el #-}
@@ -860,6 +866,7 @@ el tag wrap patches isChildren = do
           , V.elementStyle = mempty
           , V.elementEvents = mempty
           , V.elementAttributes = mempty
+          , V.elementClasses = mempty
           }
       , V.vdomCallbacks = mempty
       , V.vdomWrap = wrap

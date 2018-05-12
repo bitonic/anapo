@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE GHCForeignImportPrim #-}
 module Anapo.Render
   ( RenderedVDomNode
   , VDomPath
@@ -39,9 +41,14 @@ import qualified GHCJS.DOM.EventM as DOM.EventM
 import qualified Anapo.VDOM as V
 import qualified Anapo.OrderedHashMap as OHM
 import Anapo.Text (Text, pack)
+import qualified Anapo.Text as T
 import Anapo.Logging
 
-#if !defined(ghcjs_HOST_OS)
+#if defined(ghcjs_HOST_OS)
+import Data.JSString (JSString)
+import qualified GHC.Exts as Exts
+import Control.DeepSeq (rnf)
+#else
 import qualified Language.Javascript.JSaddle as JSaddle
 import Control.Lens ((^.))
 import Control.Monad (void)
@@ -60,6 +67,7 @@ data RenderedVDomNode = RenderedVDomNode
   , rvdnProperties :: HMS.HashMap V.ElementPropertyName ExistingProperty
   , rvdnStyle :: V.ElementStyle
   , rvdnAttributes :: V.ElementAttributes
+  , rvdnClasses :: V.ElementClasses
   }
 
 {-# INLINABLE renderedVDomNodeDom #-}
@@ -75,7 +83,7 @@ data SomeSaferEventListener =
 {-# INLINE emptyOverlay #-}
 emptyOverlay :: V.SomeVDomNode -> DOM.Node -> V.Node RenderedVDomNode
 emptyOverlay vdom dom = V.Node
-  { nodeBody = RenderedVDomNode vdom dom mempty mempty mempty mempty
+  { nodeBody = RenderedVDomNode vdom dom mempty mempty mempty mempty mempty
   , nodeChildren = Nothing
   }
 
@@ -150,6 +158,20 @@ addStyle el style prevStyle = do
       Nothing -> set
       Just prop' -> when (prop /= prop') set
   return style
+
+{-# INLINE addClasses #-}
+addClasses ::
+     (DOM.IsElement el)
+  => el
+  -> V.ElementClasses
+  -> V.ElementClasses
+  -> DOM.JSM V.ElementClasses
+addClasses el classes0 prevClasses = do
+  let classes = filter (not . T.null) classes0 -- add barfs on empty strings
+  toks <- DOM.Element.getClassList el
+  tokenListRemove toks prevClasses
+  tokenListAdd toks classes
+  return classes
 
 addAttributes ::
      (DOM.IsElement el)
@@ -228,12 +250,13 @@ renderNode doc V.Node{nodeBody = vdom@(V.SomeVDomNode V.VDomNode{..}), nodeChild
       defProps <- addProperties el elementProperties mempty
       attrs <- addAttributes el elementAttributes mempty
       style <- addStyle el elementStyle mempty
+      classes <- addClasses el elementClasses mempty
       evts <- addEvents el elementEvents
       childrenRendered <- case nodeChildren of
         Nothing -> fail "renderNode: got no children for an element"
         Just children -> renderChildren doc el children
       cont el $ V.Node
-        (RenderedVDomNode vdom (DOM.toNode el) evts defProps style attrs)
+        (RenderedVDomNode vdom (DOM.toNode el) evts defProps style attrs classes)
         (Just childrenRendered)
 
 renderVirtualDom ::
@@ -500,6 +523,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
             newAttrs <- addAttributes dom' (V.elementAttributes element) (rvdnAttributes prevRendered)
             -- add style
             newStyle <- addStyle dom' (V.elementStyle element) (rvdnStyle prevRendered)
+            newClasses <- addClasses dom' (V.elementClasses element) (rvdnClasses prevRendered)
             -- add all events
             evts <- addEvents dom' (V.elementEvents element)
             -- patch children
@@ -516,6 +540,7 @@ reconciliateVirtualDom prevVdom000 path000 vdom000 = do
                   , rvdnProperties = newProps
                   , rvdnStyle = newStyle
                   , rvdnAttributes = newAttrs
+                  , rvdnClasses = newClasses
                   }
               , V.nodeChildren = Just newChildren
               }
@@ -633,5 +658,35 @@ getProperty el k = el JSaddle.! k
 
 setProperty :: DOM.JSVal -> Text -> DOM.JSVal -> DOM.JSM ()
 setProperty el k x = (el JSaddle.<# k) x
+
+#endif
+
+-- token list (the ghcjs one seems to be broken, passes the list in
+-- rather than as arguments)
+-- --------------------------------------------------------------------
+
+#if defined(ghcjs_HOST_OS)
+
+foreign import javascript unsafe
+  "$1.add.apply($1, h$fromHsListJSVal($2))"
+ js_tokenListAdd :: DOM.JSVal -> Exts.Any -> IO ()
+
+tokenListAdd :: DOM.DOMTokenList -> [JSString] -> IO ()
+tokenListAdd (DOM.DOMTokenList x) ss = rnf ss `seq` js_tokenListAdd x (unsafeCoerce ss)
+
+foreign import javascript unsafe
+  "$1.remove.apply($1, h$fromHsListJSVal($2))"
+ js_tokenListRemove :: DOM.JSVal -> Exts.Any -> IO ()
+
+tokenListRemove :: DOM.DOMTokenList -> [JSString] -> IO ()
+tokenListRemove (DOM.DOMTokenList x) ss = rnf ss `seq` js_tokenListRemove x (unsafeCoerce ss)
+
+#else
+
+tokenListAdd :: DOM.DOMTokenList -> [Text] -> DOM.JSM ()
+tokenListAdd x vals = void (x ^. JSaddle.jsf ("add" :: Text) vals)
+
+tokenListRemove :: DOM.DOMTokenList -> [Text] -> DOM.JSM ()
+tokenListRemove x vals = void (x ^. JSaddle.jsf ("remove" :: Text) vals)
 
 #endif
