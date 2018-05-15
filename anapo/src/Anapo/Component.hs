@@ -41,9 +41,6 @@ module Anapo.Component
   , KeyedDom
   , KeyedDom'
   , KeyedDomState
-  , MapDom
-  , MapDom'
-  , MapDomState
   , Node
   , Node'
   , askRegisterThread
@@ -84,11 +81,7 @@ module Anapo.Component
   , n'
   , key
   , key'
-  , ukey
-  , ukey'
   , text
-  , rawNode
-  , marked
 
     -- * callbacks
   , willMount
@@ -101,7 +94,6 @@ module Anapo.Component
   , UnsafeRawHtml(..)
 
     -- * node patching
-  , patchNode
   , NodePatch(..)
 
     -- * elements
@@ -110,7 +102,6 @@ module Anapo.Component
 
     -- * attributes / properties
   , SomeEventAction(..)
-  , onEvent
   , style
   , property
   , rawAttribute
@@ -134,7 +125,7 @@ module Anapo.Component
 import qualified GHCJS.DOM.Event as DOM.Event
 import qualified Anapo.VDOM as V
 
-import Anapo.Component.Internal
+import Anapo.JsComponent.Internal
 import Anapo.Component.Elements
 import Anapo.Component.Attributes
 import Anapo.Component.Events

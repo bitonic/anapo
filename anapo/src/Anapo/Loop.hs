@@ -8,8 +8,8 @@ module Anapo.Loop
 
 import Control.Concurrent.Chan (Chan, writeChan, readChan, newChan)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (void, when, foldM)
-import Data.Foldable (traverse_)
+import Control.Monad (void, when)
+import Data.Foldable (traverse_, for_)
 import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
 import Data.Monoid ((<>))
 import Control.Exception.Safe (throwIO, tryAsync, SomeException(..), bracket, finally, Exception, Typeable)
@@ -24,16 +24,15 @@ import Control.Monad.State (runStateT, put, get, lift)
 import qualified Data.HashMap.Strict as HMS
 import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
 import Control.Exception.Safe (try)
-import Control.Applicative ((<|>))
+import Data.List (foldl')
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Node as DOM.Node
 import qualified GHCJS.DOM.Document as DOM.Document
 
-import qualified Anapo.VDOM as V
-import Anapo.Component.Internal
-import Anapo.Render
+import qualified Anapo.JsVDOM as V
+import Anapo.JsComponent.Internal
 import Anapo.Text (Text, pack, unpack)
 import Anapo.Logging
 
@@ -53,7 +52,7 @@ timeIt m = do
 
 data DispatchMsg stateRoot = forall props context state. DispatchMsg
   { _dispatchMsgTraverseComp :: AffineTraversal' (Component () () stateRoot) (Component props context state)
-  , _dispatchMsgModify :: context -> state -> DOM.JSM (state, V.Rerender)
+  , _dispatchMsgModify :: context -> state -> DOM.JSM (state, Rerender)
   , _dispatchCallStack :: CallStack
   }
 
@@ -76,8 +75,8 @@ nodeLoop :: forall st.
   -- ^ how to place the node
   -> DOM.Node
   -- ^ where to place the node
-  -> DOM.JSM (V.Node RenderedVDomNode)
-  -- ^ returns the final rendered node, when there is nothing left to
+  -> DOM.JSM V.RenderedNode
+  -- ^ returns the rendered node, when there is nothing left to
   -- do. might never terminate
 nodeLoop withState node excComp injectMode root = do
   -- dispatch channel
@@ -122,22 +121,21 @@ nodeLoop withState node excComp injectMode root = do
   let
     runComp ::
          Maybe (Component () () st)
-      -> VDomPath
+      -> V.Path
       -> AffineTraversal' (Component () () st) (Component props ctx' st')
       -> Component props ctx' st'
       -> props
-      -> DOM.JSM (V.Node V.SomeVDomNode)
+      -> DOM.JSM V.Node
     runComp mbPrevComp path travComp comp props = do
       mbCtx <- liftIO (readIORef (_componentContext comp))
       ctx <- case mbCtx of
         Nothing -> error ("Couldn't get context for component " <> unpack (_componentName comp) <> ", you probably forgot to initialize it.")
         Just ctx -> return ctx
-      ((_, vdom), vdomDt) <- timeIt $ unDomM
+      (vdom, vdomDt) <- timeIt $ unDomM
         (do
           node0 <- _componentNode comp props
-          V.forSomeNodeBody node0 $ \node' -> do
-            patches <- registerComponent (_componentPositions comp) props
-            patchNode patches node')
+          patches <- registerComponent (_componentPositions comp) props
+          return (foldl' V.addNodeCallback node0 patches))
         actionEnv
         (actionTrav travComp)
         DomEnv
@@ -150,20 +148,21 @@ nodeLoop withState node excComp injectMode root = do
         ()
       DOM.syncPoint
       logDebug ("Vdom generated (" <> pack (show vdomDt) <> ")")
-      V.forSomeNodeBody vdom $ \node' -> do
-        -- keep in sync with similar code in Anapo.Component.Internal.component
-        return node'{ V.vdomMark = V.vdomMark node' <|> fmap (\fprint -> V.Mark fprint V.Rerender) (_componentFingerprint comp) }
+      -- keep in sync with similar code in Anapo.Component.Internal.component
+      return $ case _componentFingerprint comp of
+        Nothing -> vdom
+        Just fprint -> V.setNodeMark vdom (Just fprint)
   -- compute state
   unAction
     (withState $ \st0 -> do
       -- what to do in case of exceptions
       let
-        onErr :: V.Node RenderedVDomNode -> SomeException -> DOM.JSM a
+        onErr :: V.RenderedNode -> SomeException -> DOM.JSM a
         onErr rendered err = do
           -- if we got an exception, render one last time and shut down
           logError ("Got exception, will render it and rethrow: " <> pack (show err))
           vdom <- simpleNode () (excComp err)
-          void (reconciliateVirtualDom rendered [] vdom)
+          void (V.reconciliate rendered [] vdom)
           logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
           liftIO (throwIO err)
       -- main loop
@@ -171,9 +170,9 @@ nodeLoop withState node excComp injectMode root = do
         go ::
              Component () () st
           -- ^ the previous state
-          -> V.Node RenderedVDomNode
-          -- ^ the previous rendered node
-          -> DOM.JSM (V.Node RenderedVDomNode)
+          -> V.RenderedNode
+          -- ^ the rendered node
+          -> DOM.JSM ()
         go compRoot !rendered = do
           -- get the next update or the next exception. we are biased
           -- towards exceptions since we want to exit immediately when
@@ -183,7 +182,7 @@ nodeLoop withState node excComp injectMode root = do
             Left err -> onErr rendered err
             Right Nothing -> do
               logInfo "No state update received, terminating component loop"
-              return rendered
+              return ()
             Right (Just (DispatchMsg travComp modif stack)) -> do
               logDebug (addCallStack stack "About to update state")
               -- traverse to the component using StateT, failing
@@ -225,21 +224,17 @@ nodeLoop withState node excComp injectMode root = do
                   logInfo "The component was not found, not rerendering"
                   go compRoot' rendered
                 Just (comp, rerender) -> do
-                  rendered' <- case rerender of
-                    V.UnsafeDontRerender -> return rendered
-                    V.Rerender -> do
+                  case rerender of
+                    UnsafeDontRerender -> return ()
+                    Rerender -> do
                       positions <- liftIO (readIORef (_componentPositions comp))
                       logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
                       -- do not leave half-done DOM in place, run
                       -- everything synchronously
-                      synchronously $ do
-                        foldM
-                          (\rendered' (pos, props) -> do
-                              vdom <- runComp (Just compRoot) pos travComp comp props
-                              reconciliateVirtualDom rendered' pos vdom)
-                          rendered
-                          (HMS.toList positions)
-                  go compRoot' rendered'
+                      synchronously $ for_ (HMS.toList positions) $ \(pos, props) -> do
+                        vdom <- runComp (Just compRoot) pos travComp comp props
+                        V.reconciliate rendered pos vdom
+                  go compRoot' rendered
       tid <- liftIO myThreadId
       finally
         (do
@@ -249,14 +244,14 @@ nodeLoop withState node excComp injectMode root = do
           vdom <- runComp Nothing [] id comp ()
           -- do this synchronously, too
           rendered0 <- synchronously $ do
-            renderVirtualDom vdom $ \rendered -> do
+            V.render vdom $ \rendered -> do
               case injectMode of
                 IMAppend -> return ()
                 IMEraseAndAppend -> removeAllChildren root
-              DOM.Node.appendChild_ root (renderedVDomNodeDom (V.nodeBody rendered))
-              return rendered
+              DOM.Node.appendChild_ root =<< V.renderedNodeDom rendered
           -- now loop
-          go comp rendered0)
+          go comp rendered0
+          return rendered0)
         (liftIO (readIORef tidsRef >>= traverse_ (\tid' -> when (tid /= tid') (killThread tid')))))
     actionEnv
     (actionTrav id)

@@ -7,13 +7,13 @@
 -- or 1 positions to traverse. See
 -- <https://www.reddit.com/r/haskell/comments/60fha5/affine_traversal/>
 -- for why affine traversals do not play well with lens.
-module Anapo.Component.Internal where
+module Anapo.JsComponent.Internal where
 
 import qualified Data.HashMap.Strict as HMS
 import Control.Lens (Lens', view, lens, (^.))
 import qualified Control.Lens as Lens
 import qualified Control.Lens.Internal.Zoom as Lens
-import Control.Monad (ap, when, unless)
+import Control.Monad (ap, when, unless, void)
 import Data.Monoid ((<>), Endo)
 import qualified Data.DList as DList
 import Data.String (IsString(..))
@@ -33,17 +33,15 @@ import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.EventM as DOM.EventM
 import GHC.Fingerprint.Type (Fingerprint)
 import Control.Applicative ((<|>))
+import Data.List (foldl')
+import Data.Foldable (for_)
+import qualified Language.Javascript.JSaddle as JS
 
-import qualified Anapo.VDOM as V
-import Anapo.Render
+import qualified Anapo.JsVDOM as V
 import Anapo.Logging
 import Anapo.Text (Text, pack)
 import qualified Anapo.Text as T
 import qualified Anapo.OrderedHashMap as OHM
-
-#if !defined(ghcjs_HOST_OS)
-import qualified Language.Javascript.JSaddle as JSaddle
-#endif
 
 -- affine traversals
 -- --------------------------------------------------------------------
@@ -68,11 +66,14 @@ toMaybeOf l x = case Lens.toListOf l x of
 -- Dispatching and handling
 -- --------------------------------------------------------------------
 
+data Rerender = Rerender | UnsafeDontRerender
+  deriving (Eq, Show)
+
 newtype Dispatch stateRoot = Dispatch
   { unDispatch :: forall state context props.
       CallStack ->
       AffineTraversal' stateRoot (Component props context state) ->
-      (context -> state -> DOM.JSM (state, V.Rerender)) ->
+      (context -> state -> DOM.JSM (state, Rerender)) ->
       IO ()
   }
 
@@ -138,7 +139,7 @@ instance MonadIO (Action context state) where
   liftIO m = Action (\_env _trav -> liftIO m)
 
 #if !defined(ghcjs_HOST_OS)
-instance  JSaddle.MonadJSM (Action context state) where
+instance  JS.MonadJSM (Action context state) where
   {-# INLINE liftJSM' #-}
   liftJSM' m = Action (\_env _trav -> m)
 #endif
@@ -256,9 +257,9 @@ instance MonadIO (DispatchM context0 state0 context state) where
   liftIO m = DispatchM (\_ctx st -> do x <- liftIO m; return (x, st))
 
 #if !defined(ghcjs_HOST_OS)
-instance JSaddle.MonadJSM (DispatchM context0 state0 context state) where
+instance JS.MonadJSM (DispatchM context0 state0 context state) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = DispatchM (\_ctx st -> do x <- JSaddle.liftJSM' m; return (x, st))
+  liftJSM' m = DispatchM (\_ctx st -> do x <- JS.liftJSM' m; return (x, st))
 #endif
 
 instance MonadAction context0 state0 (DispatchM context0 state0 context state) where
@@ -289,10 +290,10 @@ dispatch (DispatchM m) =
       callStack
       (atToComp trav)
       (\ctx st -> case toMaybeOf (atToContext trav) ctx of
-          Nothing -> return (st, V.UnsafeDontRerender)
+          Nothing -> return (st, UnsafeDontRerender)
           Just ctx' -> do
             st' <- atToState trav (\st' -> fmap snd (unAction (m ctx' st') env trav)) st
-            return (st', V.Rerender))
+            return (st', Rerender))
 
 -- | Variant of dispatch that lets you decide whether the state update
 -- will trigger a rerender or not. Obviously must be used with care,
@@ -300,7 +301,7 @@ dispatch (DispatchM m) =
 {-# INLINABLE dispatchRerender #-}
 dispatchRerender ::
      (HasCallStack, MonadAction context state m)
-  => DispatchM context state context state V.Rerender
+  => DispatchM context state context state Rerender
   -> m ()
 dispatchRerender (DispatchM m) =
   liftAction $ Action $ \env trav ->
@@ -309,7 +310,7 @@ dispatchRerender (DispatchM m) =
       callStack
       (atToComp trav)
       (\ctx st -> case toMaybeOf (atToContext trav) ctx of
-          Nothing -> return (st, V.UnsafeDontRerender)
+          Nothing -> return (st, UnsafeDontRerender)
           Just ctx' -> do
             (st', rerender) <- runStateT
               (atToState trav
@@ -318,7 +319,7 @@ dispatchRerender (DispatchM m) =
                   put rerender
                   return st'')
                 st)
-              V.UnsafeDontRerender
+              UnsafeDontRerender
             return (st', rerender))
 
 {-# INLINE askRegisterThread #-}
@@ -333,7 +334,7 @@ askHandleException = liftAction (Action (\env _trav -> return (aeHandleException
 -- --------------------------------------------------------------------
 
 data DomEnv stateRoot = DomEnv
-  { domEnvReversePath :: [VDomPathSegment]
+  { domEnvReversePath :: V.Path
   -- ^ this is stored in _reverse_ order. IMPORTANT: updatedomDirtyPath
   -- every time you modify this.
   , domEnvDirtyPath :: Bool
@@ -355,43 +356,34 @@ newtype DomM dom context state a = DomM
       -> DOM.JSM a
   }
 
-data DomState = DomState
-  { domStateLength :: Int
-  , domStateDom :: ~(DList (V.Node V.SomeVDomNode))
-  }
+type DomState = V.NormalChildren
 
-newtype KeyedDomState = KeyedDomState (DList (Text, V.Node V.SomeVDomNode))
-
-newtype MapDomState = MapDomState (DList (Text, V.Node V.SomeVDomNode))
+type KeyedDomState = V.KeyedChildren
 
 type Dom ctx st = DomM DomState ctx st ()
 type Dom' ctx st a = DomM DomState ctx st a
 type KeyedDom ctx st = DomM KeyedDomState ctx st ()
 type KeyedDom' ctx st a = DomM KeyedDomState ctx st a
-type MapDom ctx st = DomM MapDomState ctx st ()
-type MapDom' ctx st a = DomM MapDomState ctx st a
-type Node ctx st = DomM () ctx st (V.Node V.SomeVDomNode)
-type Node' ctx st a = DomM () ctx st (V.Node V.SomeVDomNode, a)
+type Node ctx st = DomM () ctx st V.Node
+type Node' ctx st a = DomM () ctx st (V.Node, a)
 
 instance MonadIO (DomM dom ctx st) where
   {-# INLINE liftIO #-}
-  liftIO m = DomM $ \_actEnv _acTrav _anEnv _ctx _st dom -> do
+  liftIO m = DomM $ \_actEnv _acTrav _anEnv _ctx _st _dom -> do
     x <- liftIO m
-    return (dom, x)
+    return x
 
 #if !defined(ghcjs_HOST_OS)
-instance JSaddle.MonadJSM (DomM dom ctx st) where
+instance JS.MonadJSM (DomM dom ctx st) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = DomM $ \_actEnv _acTrav _anEnv _ctx _st dom -> do
-    x <- m
-    return (dom, x)
+  liftJSM' m = DomM (\_actEnv _acTrav _anEnv _ctx _st _dom -> m)
 #endif
 
 instance Functor (DomM dom ctx st) where
   {-# INLINE fmap #-}
   fmap f (DomM g) = DomM $ \acEnv acTrav aeEnv ctx st dom -> do
-    (dom', x) <- g acEnv acTrav aeEnv ctx st dom
-    return (dom', f x)
+    x <- g acEnv acTrav aeEnv ctx st dom
+    return (f x)
 
 instance Applicative (DomM dom ctx st) where
   {-# INLINE pure #-}
@@ -401,12 +393,12 @@ instance Applicative (DomM dom ctx st) where
 
 instance Monad (DomM dom ctx st) where
   {-# INLINE return #-}
-  return x = DomM (\_acEnv _acTrav _aeEnv _ctx _st dom -> return (dom, x))
+  return x = DomM (\_acEnv _acTrav _aeEnv _ctx _st _dom -> return x)
   {-# INLINE (>>=) #-}
-  ma >>= mf = DomM $ \acEnv acTrav anEnv ctx st dom0 -> do
-    (dom1, x) <- unDomM ma acEnv acTrav anEnv ctx st dom0
-    (dom2, y) <- unDomM (mf x) acEnv acTrav anEnv ctx st dom1
-    return (dom2, y)
+  ma >>= mf = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+    x <- unDomM ma acEnv acTrav anEnv ctx st dom
+    y <- unDomM (mf x) acEnv acTrav anEnv ctx st dom
+    return y
 
 instance (a ~ ()) => Monoid (DomM dom ctx st a) where
   {-# INLINE mempty #-}
@@ -416,13 +408,13 @@ instance (a ~ ()) => Monoid (DomM dom ctx st a) where
 
 instance MonadAction ctx st (DomM dom ctx st) where
   {-# INLINE liftAction #-}
-  liftAction (Action f) = DomM $ \acEnv acTrav _anEnv _ctx _st dom -> do
+  liftAction (Action f) = DomM $ \acEnv acTrav _anEnv _ctx _st _dom -> do
     x <- f acEnv acTrav
-    return (dom, x)
+    return x
 
 instance MonadReader st (DomM dom ctx st) where
   {-# INLINE ask #-}
-  ask = DomM (\_acEnv _acTrav _anEnv _ctx st dom -> return (dom, st))
+  ask = DomM (\_acEnv _acTrav _anEnv _ctx st _dom -> return st)
   {-# INLINE local #-}
   local f m = DomM $ \acEnv acTrav anEnv ctx st dom -> do
     unDomM m acEnv acTrav anEnv ctx (f st) dom
@@ -430,19 +422,17 @@ instance MonadReader st (DomM dom ctx st) where
 {-# INLINE askPreviousState #-}
 askPreviousState :: DomM dom ctx st (Maybe st)
 askPreviousState =
-  DomM $ \_acEnv acTrav anEnv _ctx _st dom ->
-    return
-      ( dom
-      , toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState anEnv
-      )
+  DomM $ \_acEnv acTrav anEnv _ctx _st _dom ->
+    return $
+      toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState anEnv
 
 {-# INLINE askContext #-}
 askContext :: DomM dom ctx st ctx
-askContext = DomM (\_acEnv _acTrav _anEnv ctx _st dom -> return (dom, ctx))
+askContext = DomM (\_acEnv _acTrav _anEnv ctx _st _dom -> return ctx)
 
 {-# INLINE viewContext #-}
 viewContext :: Lens.Getting a ctx a -> DomM dom ctx st a
-viewContext l = DomM (\_acEnv _acTrav _anEnv ctx _st dom -> return (dom, ctx ^. l))
+viewContext l = DomM (\_acEnv _acTrav _anEnv ctx _st _dom -> return (ctx ^. l))
 
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
@@ -533,122 +523,74 @@ willRemove = NPWillRemove
 {-# INLINE n #-}
 n :: Node ctx st -> Dom ctx st
 n getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
-  (_, nod) <- unDomM
+  ix <- DOM.liftJSM (V.normalChildrenLength dom)
+  nod <- unDomM
     getNode
     acEnv
     acTrav
     anEnv
-      { domEnvReversePath = VDPSNormal (domStateLength dom) : domEnvReversePath anEnv
+      { domEnvReversePath = V.PathNormal ix : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
     ctx
     st
     ()
-  return
-    ( dom
-        { domStateLength = domStateLength dom + 1
-        , domStateDom = domStateDom dom <> DList.singleton nod
-        }
-    , ()
-    )
+  DOM.liftJSM (V.pushNormalChild dom nod)
 
 {-# INLINE n' #-}
 n' :: Node' ctx st a -> Dom' ctx st a
 n' getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
-  (_, (nod, x)) <- unDomM
+  ix <- DOM.liftJSM (V.normalChildrenLength dom)
+  (nod, x) <- unDomM
     getNode
     acEnv
     acTrav
     anEnv
-      { domEnvReversePath = VDPSNormal (domStateLength dom) : domEnvReversePath anEnv
+      { domEnvReversePath = V.PathNormal ix : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
     ctx
     st
     ()
-  return
-    ( dom
-        { domStateLength = domStateLength dom + 1
-        , domStateDom = domStateDom dom <> DList.singleton nod
-        }
-    , x
-    )
+  DOM.liftJSM (V.pushNormalChild dom nod)
+  return x
 
 {-# INLINE key #-}
 key :: Text -> Node ctx st -> KeyedDom ctx st
-key k getNode = DomM $ \acEnv acTrav anEnv ctx st (KeyedDomState dom) -> do
-  (_, nod) <- unDomM
+key k getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+  nod <- unDomM
     getNode
     acEnv
     acTrav
     anEnv
-      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
+      { domEnvReversePath = V.PathKeyed k : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
     ctx
     st
     ()
-  return (KeyedDomState (dom <> DList.singleton (k, nod)), ())
+  DOM.liftJSM (V.pushKeyedChild dom k nod)
 
 {-# INLINE key' #-}
 key' :: Text -> Node' ctx st a -> KeyedDom' ctx st a
-key' k getNode = DomM $ \acEnv acTrav anEnv ctx st (KeyedDomState dom) -> do
-  (_, (nod, x)) <- unDomM
+key' k getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+  (nod, x) <- unDomM
     getNode
     acEnv
     acTrav
     anEnv
-      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
+      { domEnvReversePath = V.PathKeyed k : domEnvReversePath anEnv
       , domEnvDirtyPath = True
       }
     ctx
     st
     ()
-  return (KeyedDomState (dom <> DList.singleton (k, nod)), x)
-
-{-# INLINE ukey #-}
-ukey :: Text -> Node ctx st -> MapDom ctx st
-ukey k getNode = DomM $ \acEnv acTrav anEnv ctx st (MapDomState dom) -> do
-  (_, nod) <- unDomM
-    getNode
-    acEnv
-    acTrav
-    anEnv
-      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
-      , domEnvDirtyPath = True
-      }
-    ctx
-    st
-    ()
-  return (MapDomState (dom <> DList.singleton (k, nod)), ())
-
-{-# INLINE ukey' #-}
-ukey' :: Text -> Node' ctx st a -> MapDom' ctx st a
-ukey' k getNode = DomM $ \acEnv acTrav anEnv ctx st (MapDomState dom) -> do
-  (_, (nod, x)) <- unDomM
-    getNode
-    acEnv
-    acTrav
-    anEnv
-      { domEnvReversePath = VDPSKeyed k : domEnvReversePath anEnv
-      , domEnvDirtyPath = True
-      }
-    ctx
-    st
-    ()
-  return (MapDomState (dom <> DList.singleton (k, nod)), x)
+  DOM.liftJSM (V.pushKeyedChild dom k nod)
+  return x
 
 {-# INLINE text #-}
 text :: Text -> Node ctx st
-text txt = return $ V.Node
-  { V.nodeBody = V.SomeVDomNode $ V.VDomNode
-      { V.vdomMark = Nothing
-      , V.vdomBody = V.VDBText txt
-      , V.vdomCallbacks = mempty
-      , V.vdomWrap = DOM.Text
-      }
-  , V.nodeChildren = Nothing
-  }
+text txt = JS.liftJSM (V.node (V.NBText txt))
 
 instance (el ~ DOM.Text) => IsString (Node ctx st) where
   {-# INLINE fromString #-}
@@ -657,8 +599,8 @@ instance (el ~ DOM.Text) => IsString (Node ctx st) where
 {-
 {-# INLINE rawNode #-}
 rawNode ::
-     (DOM.IsNode el)
-  => (DOM.JSVal -> el) -> el
+     DOM.IsElement el
+  => el
   -> [NodePatch el ctx st]
   -> Node ctx st
 rawNode wrap x patches = do
@@ -675,6 +617,7 @@ rawNode wrap x patches = do
     }
 -}
 
+{-
 -- TODO this causes linking errors, sometimes. bizzarely, the linking
 -- errors seem to happen only if a closure is formed -- e.g. if we
 -- define the function as
@@ -712,12 +655,13 @@ marked shouldRerender ptr props = DomM $ \acEnv acTrav domEnv ctx st dom -> do
   (_, V.Node (V.SomeVDomNode nod) children) <-
     unDomM (deRefStaticPtr ptr props) acEnv acTrav domEnv ctx st dom
   return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
+-}
 
 -- Utilities to quickly create nodes
 -- --------------------------------------------------------------------
 
 data SomeEventAction el ctx st = forall e. (DOM.IsEvent e) =>
-  SomeEventAction (DOM.EventM.EventName el e) (el -> e -> Action ctx st ())
+  SomeEventAction Text (el -> e -> Action ctx st ())
 newtype UnsafeRawHtml = UnsafeRawHtml Text
 
 data NodePatch el ctx st =
@@ -726,27 +670,32 @@ data NodePatch el ctx st =
   | NPWillPatch (el -> Action ctx st ())
   | NPDidPatch (el -> Action ctx st ())
   | NPWillRemove (el -> Action ctx st ())
-  | NPStyle V.StylePropertyName V.StyleProperty
-  | NPAttribute V.AttributeName (DOM.JSM V.AttributeBody)
-  | NPProperty V.ElementPropertyName (DOM.JSM V.ElementProperty)
+  | NPStyle Text Text
+  | NPAttribute Text (DOM.JSM DOM.JSVal)
+  | NPProperty Text (DOM.JSM DOM.JSVal)
   | NPEvent (SomeEventAction el ctx st)
-  | NPClasses V.ElementClasses
+  | NPClasses [Text]
 
 class IsElementChildren a ctx st where
-  elementChildren :: HasCallStack => a -> DomM () ctx st (V.Children V.SomeVDomNode)
+  elementChildren :: HasCallStack => a -> DomM () ctx st V.Children
 instance IsElementChildren () ctx st where
   {-# INLINE elementChildren #-}
-  elementChildren _ = return (V.CNormal mempty)
+  elementChildren _ = do
+    dom <- DOM.liftJSM V.normalChildren
+    return (V.ChildrenNormal dom)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM DomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
   elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
-    (DomState _ dom, _) <- f acEnv acTrav anEnv ctx st (DomState 0 mempty)
-    return ((), V.CNormal (Vec.fromList (DList.toList dom)))
+    dom <- V.normalChildren
+    void (f acEnv acTrav anEnv ctx st dom)
+    return (V.ChildrenNormal dom)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM KeyedDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
   elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
-    (KeyedDomState dom, _) <- f acEnv acTrav anEnv ctx st (KeyedDomState mempty)
-    return ((), V.CKeyed (OHM.fromList (DList.toList dom)))
+    dom <- V.keyedChildren
+    void (f acEnv acTrav anEnv ctx st dom)
+    return (V.ChildrenKeyed dom)
+{-
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM MapDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINABLE elementChildren #-}
   elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
@@ -757,125 +706,73 @@ instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM MapDomState
     if numKvs /= HMS.size hm
       then error "duplicate keys when building map vdom!"
       else return ((), V.CMap (HMS.fromList kvs))
+-}
 instance IsElementChildren UnsafeRawHtml ctx st where
   {-# INLINE elementChildren #-}
-  elementChildren (UnsafeRawHtml txt) = return (V.CRawHtml txt)
-
-{-# INLINABLE patchNode #-}
-patchNode ::
-     (HasCallStack, DOM.IsNode el)
-  => [NodePatch el ctx state] -> V.VDomNode el -> DomM () ctx state (V.VDomNode el)
-patchNode patches00 node00 = do
-  u <- liftAction askUnliftIO
-  let
-    modifyCallbacks body f =
-      body{ V.vdomCallbacks = f (V.vdomCallbacks body) }
-  let
-    modifyElement ::
-         V.VDomNode el
-      -> ((DOM.IsElement el, DOM.IsElementCSSInlineStyle el) => V.Element el -> V.Element el)
-      -> V.VDomNode el
-    modifyElement body f = case V.vdomBody body of
-      V.VDBElement e -> body{ V.vdomBody = V.VDBElement (f e) }
-      V.VDBText{} -> error "got patch requiring an element body, but was NBText"
-      V.VDBRawNode{} -> error "got patch requiring an element body, but was NBRawNode"
-  let
-    go !node = \case
-      [] -> return node
-      patch : patches -> case patch of
-        NPWillMount cback -> go
-          (modifyCallbacks node $ \cbacks -> mappend
-            cbacks
-            mempty{ V.callbacksWillMount = \e -> liftIO (unliftIO u (cback e)) })
-          patches
-        NPDidMount cback -> go
-          (modifyCallbacks node $ \cbacks -> mappend
-            cbacks
-            mempty{ V.callbacksDidMount = \e -> liftIO (unliftIO u (cback e)) })
-          patches
-        NPWillPatch cback -> go
-          (modifyCallbacks node $ \cbacks -> mappend
-            cbacks
-            mempty{ V.callbacksWillPatch = \e -> liftIO (unliftIO u (cback e)) })
-          patches
-        NPDidPatch cback -> go
-          (modifyCallbacks node $ \cbacks -> mappend
-            cbacks
-            mempty{ V.callbacksDidPatch = \e -> liftIO (unliftIO u (cback e)) })
-          patches
-        NPWillRemove cback -> go
-          (modifyCallbacks node $ \cbacks -> mappend
-            cbacks
-            mempty{ V.callbacksWillRemove = \e -> liftIO (unliftIO u (cback e)) })
-          patches
-        NPStyle styleName styleBody -> go
-          (modifyElement node $ \vel -> vel
-            { V.elementStyle =
-                HMS.insert styleName styleBody (V.elementStyle vel)
-            })
-          patches
-        NPAttribute attrName attrBody -> do
-          attrBodyVal <- DOM.liftJSM attrBody
-          go
-            (modifyElement node $ \vel -> vel
-              { V.elementAttributes =
-                  HMS.insert attrName attrBodyVal (V.elementAttributes vel)
-              })
-            patches
-        NPProperty propName propBody -> do
-          propBodyVal <- DOM.liftJSM propBody
-          go
-            (modifyElement node $ \vel -> vel
-              { V.elementProperties =
-                  HMS.insert propName propBodyVal (V.elementProperties vel)
-              })
-            patches
-        NPEvent (SomeEventAction evName evListener) -> go
-          (modifyElement node $ \vel -> vel
-            { V.elementEvents = DList.snoc
-                (V.elementEvents vel)
-                (V.SomeEvent evName $ \e ev ->
-                  liftIO (unliftIO u (evListener e ev)))
-            })
-          patches
-        NPClasses classes -> go
-          (modifyElement node $ \vel -> vel
-            { V.elementClasses = V.elementClasses vel <> classes
-            })
-          patches
-  go node00 patches00
+  elementChildren (UnsafeRawHtml txt) = return (V.ChildrenRawHtml txt)
 
 {-# INLINABLE el #-}
-el ::
+el :: forall a ctx st el.
      ( IsElementChildren a ctx st
-     , DOM.IsElement el, DOM.IsElementCSSInlineStyle el
+     , DOM.IsElement el
+     , DOM.ToJSVal el
      , HasCallStack
      )
-  => V.ElementTag
-  -> (DOM.JSVal -> el)
+  => Text
   -> [NodePatch el ctx st]
   -> a
   -> Node ctx st
-el tag wrap patches isChildren = do
+el tag patches0 isChildren = do
   children <- elementChildren isChildren
-  vdom <- patchNode patches
-    V.VDomNode
-      { V.vdomMark = Nothing
-      , V.vdomBody = V.VDBElement V.Element
-          { V.elementTag = tag
-          , V.elementProperties = mempty
-          , V.elementStyle = mempty
-          , V.elementEvents = mempty
-          , V.elementAttributes = mempty
-          , V.elementClasses = mempty
-          }
-      , V.vdomCallbacks = mempty
-      , V.vdomWrap = wrap
-      }
-  return V.Node
-    { V.nodeBody = V.SomeVDomNode vdom
-    , V.nodeChildren = Just children
-    }
+  u <- liftAction askUnliftJSM
+  JS.liftJSM $ do
+    vel <- V.element tag children
+    node0 <- V.node (V.NBElement vel)
+    let
+      wrapCallback :: (el -> Action ctx st ()) -> (DOM.HTMLElement -> DOM.JSM ())
+      wrapCallback cback (DOM.HTMLElement el_) = unliftJSM u . cback =<< DOM.fromJSValUnchecked el_
+    let
+      mkPatches :: V.Node -> [NodePatch el ctx st] -> JS.JSM V.Node
+      mkPatches !node = \case
+        [] -> return node
+        patch : patches -> case patch of
+          NPWillMount cback -> mkPatches
+            (V.addNodeCallback node (V.ACWillMount (wrapCallback cback)))
+            patches
+          NPDidMount cback -> mkPatches
+            (V.addNodeCallback node (V.ACDidMount (wrapCallback cback)))
+            patches
+          NPWillPatch cback -> mkPatches
+            (V.addNodeCallback node (V.ACWillPatch (wrapCallback cback)))
+           patches
+          NPDidPatch cback -> mkPatches
+            (V.addNodeCallback node (V.ACDidPatch (wrapCallback cback)))
+            patches
+          NPWillRemove cback -> mkPatches
+            (V.addNodeCallback node (V.ACWillRemove (wrapCallback cback)))
+            patches
+          NPStyle styleName styleBody -> do
+            V.patchElement node (V.EPStyle styleName styleBody)
+            mkPatches node patches
+          NPAttribute attrName attrBody -> do
+            attrBodyVal <- attrBody
+            V.patchElement node (V.EPAttribute attrName attrBodyVal)
+            mkPatches node patches
+          NPProperty propName propBody -> do
+            propBodyVal <- DOM.liftJSM propBody
+            V.patchElement node (V.EPProperty propName propBodyVal)
+            mkPatches node patches
+          NPEvent (SomeEventAction evName evListener) -> do
+            V.patchElement node $ V.EPEvent evName $ \(DOM.HTMLElement el_) (DOM.Event ev_) -> do
+              el__ <- DOM.fromJSValUnchecked el_
+              ev__ <- DOM.fromJSValUnchecked ev_
+              unliftJSM u (evListener el__ ev__)
+            mkPatches node patches
+          NPClasses classes -> do
+            for_ classes $ \class_ ->
+              V.patchElement node (V.EPClass class_)
+            mkPatches node patches
+    mkPatches node0 patches0
 
 -- Properties
 -- --------------------------------------------------------------------
@@ -898,6 +795,7 @@ rawAttribute k v = NPAttribute k (DOM.toJSVal v)
 attribute :: Text -> Text -> NodePatch el context state
 attribute k v = NPAttribute k (DOM.toJSVal v)
 
+{-
 {-# INLINE onEvent #-}
 onEvent ::
      (DOM.IsEventTarget t, DOM.IsEvent e, DOM.MonadJSM m, MonadUnliftIO m)
@@ -907,21 +805,21 @@ onEvent el_ evName f = do
   DOM.liftJSM $ DOM.EventM.on el_ evName $ do
     ev <- ask
     liftIO (unliftIO u (f ev))
+-}
 
 -- simple rendering
 -- --------------------------------------------------------------------
 
 {-# INLINABLE simpleNode #-}
-simpleNode :: forall state. state -> Node () state -> DOM.JSM (V.Node V.SomeVDomNode)
+simpleNode :: forall state. state -> Node () state -> DOM.JSM V.Node
 simpleNode st node0 = do
   comp <- newComponent st (\() -> node0)
   liftIO (writeIORef (_componentContext comp) (Just ()))
-  (_, vdom) <- unDomM
+  vdom <- unDomM
     (do
       node <- _componentNode comp ()
-      V.forSomeNodeBody node $ \node' -> do
-        patches <- registerComponent (_componentPositions comp) ()
-        patchNode patches node')
+      patches <- registerComponent (_componentPositions comp) ()
+      return (foldl' V.addNodeCallback node patches))
     ActionEnv
       { aeRegisterThread = \_ -> fail "Trying to register a thread from the simpleRenderNode"
       , aeHandleException = \_ -> fail "Trying to handle an exception from the simpleRenderNode"
@@ -949,7 +847,7 @@ simpleNode st node0 = do
 simpleRenderNode :: state -> Node () state -> DOM.JSM DOM.Node
 simpleRenderNode st node = do
   vdom <- simpleNode st node
-  renderVirtualDom vdom (return . renderedVDomNodeDom . V.nodeBody)
+  V.renderedNodeDom =<< V.render vdom (\_ -> return ())
 
 -- utils
 -- --------------------------------------------------------------------
@@ -974,9 +872,9 @@ actionUnliftJSM = liftAction askUnliftJSM
 data Component props ctx st = Component
   { _componentState :: st
   , _componentNode :: props -> Node ctx st
-  , _componentPositions :: IORef (HMS.HashMap VDomPath props)
+  , _componentPositions :: IORef (HMS.HashMap V.Path props)
   , _componentContext :: IORef (Maybe ctx)
-  , _componentFingerprint :: Maybe Fingerprint
+  , _componentFingerprint :: Maybe Text
   , _componentName :: Text
   -- ^ just for debugging
   }
@@ -1017,7 +915,7 @@ newMarkedComponent ::
 newMarkedComponent name st node = do
   posRef <- liftIO (newIORef mempty)
   ctxRef <- liftIO (newIORef Nothing)
-  return (Component st (deRefStaticPtr node) posRef ctxRef (Just (staticKey node)) name)
+  return (Component st (deRefStaticPtr node) posRef ctxRef (Just (T.pack (show (staticKey node)))) name)
 
 {-# INLINABLE newMarkedComponent_ #-}
 newMarkedComponent_ ::
@@ -1029,7 +927,7 @@ newMarkedComponent_ ::
 newMarkedComponent_ name st node = do
   posRef <- liftIO (newIORef mempty)
   ctxRef <- liftIO (newIORef Nothing)
-  return (Component st (\() -> deRefStaticPtr node) posRef ctxRef (Just (staticKey node)) name)
+  return (Component st (\() -> deRefStaticPtr node) posRef ctxRef (Just (T.pack (show (staticKey node)))) name)
 
 {-# INLINABLE newComponent #-}
 newComponent ::
@@ -1057,20 +955,18 @@ newComponent_ ::
 newComponent_ st comp = newComponent st (\() -> comp)
 
 {-# INLINABLE registerComponent #-}
-registerComponent :: IORef (HMS.HashMap VDomPath props) -> props -> DomM dom a b [NodePatch el ctx st]
-registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _ctx _st dom -> do
+registerComponent :: IORef (HMS.HashMap V.Path props) -> props -> DomM dom a b [V.AddCallback]
+registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _ctx _st _dom -> do
   let add = \_ -> do
         liftIO (modifyIORef' ref (HMS.insert (reverse (domEnvReversePath anEnv)) props))
   let remove = \_ -> do
         liftIO (modifyIORef' ref (HMS.delete (reverse (domEnvReversePath anEnv))))
   return
-    ( dom
-    , [ NPWillMount add
-      , NPWillPatch remove
-      , NPDidPatch add
-      , NPWillRemove remove
-      ]
-    )
+    [ V.ACWillMount add
+    , V.ACWillPatch remove
+    , V.ACDidPatch add
+    , V.ACWillRemove remove
+    ]
 
 {-# INLINE initComponent #-}
 initComponent :: Component props ctx st -> ctx -> DomM dom ctx0 st0 (ComponentToken props ctx st)
@@ -1091,7 +987,7 @@ component props (ComponentToken tok) = do
     ctx <- case mbCtx of
       Nothing -> error (T.unpack name <> ": Context not initialized!")
       Just ctx -> return ctx
-    (dom', node) <- unDomM
+    node <- unDomM
       (_componentNode comp props)
       acEnv
       acTrav
@@ -1104,12 +1000,13 @@ component props (ComponentToken tok) = do
       ctx
       (_componentState comp)
       dom
-    return (dom', (node, _componentPositions comp, _componentFingerprint comp))
-  V.forSomeNodeBody node $ \node' -> do
-    patches <- registerComponent pos props
-    node'' <- patchNode patches node'
-    -- keep in sync with similar code in Anapo.Loop.nodeLoop.runComp
-    return node''{ V.vdomMark = V.vdomMark node'' <|> fmap (\fprint -> V.Mark fprint V.Rerender) mbFprint }
+    return (node, _componentPositions comp, _componentFingerprint comp)
+  patches <- registerComponent pos props
+  -- keep in sync with similar code in Anapo.Loop.nodeLoop.runComp
+  let node' = foldl' V.addNodeCallback node patches
+  return $ case mbFprint of
+    Nothing -> node'
+    Just fprint -> V.setNodeMark node' (Just fprint)
 
 {-# INLINE component_ #-}
 component_ :: forall ctx0 ctx st. ctx -> Node ctx0 (Component () ctx st)
