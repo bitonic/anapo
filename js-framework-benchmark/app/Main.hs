@@ -190,6 +190,7 @@ mainJSM = installNodeBody
       DOM.liftJSM (cont State{_stateRows = rows, _stateSelected = Nothing}))
   rowsComponent
   (\err -> text ("Got error: " <> T.pack (show err)))
+  IMAppend
 
 main :: IO ()
 main = do
