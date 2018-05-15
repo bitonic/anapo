@@ -20,8 +20,8 @@
 
 let
   platformHaskellDependencies = if ghc.isGhcjs or false
-    then [ ghcjs-base aeson ]
-    else [ jsaddle text ];
+    then [ ghcjs-base ]
+    else [ text ];
   haskellDependencies = [
     async
     base
@@ -34,6 +34,7 @@ let
     transformers
     unliftio-core
     unordered-containers
+    jsaddle
   ];
 in mkDerivation {
   pname = "anapo";

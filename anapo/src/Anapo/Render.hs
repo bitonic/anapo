@@ -690,3 +690,4 @@ tokenListRemove :: DOM.DOMTokenList -> [Text] -> DOM.JSM ()
 tokenListRemove x vals = void (x ^. JSaddle.jsf ("remove" :: Text) vals)
 
 #endif
+

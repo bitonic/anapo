@@ -4,7 +4,7 @@
 {-# LANGUAGE GHCForeignImportPrim #-}
 module Anapo.Component.Attributes where
 
-import Anapo.Component.Internal (property, attribute, rawAttribute, NodePatch(NPClasses))
+import Anapo.JsComponent.Internal (property, attribute, rawAttribute, NodePatch(NPClasses))
 import Anapo.Text (Text)
 import qualified Anapo.Text as T
 import Data.Monoid ((<>))
@@ -65,7 +65,7 @@ checked_ = property (T.pack "checked")
 
 {-# INLINE class_ #-}
 class_ :: Text -> NodePatch el ctx st
-class_ = NPClasses . textWords
+class_ = NPClasses . filter (not . T.null) . textWords
 
 #if defined(ghcjs_HOST_OS)
 

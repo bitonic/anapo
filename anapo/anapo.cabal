@@ -17,16 +17,15 @@ library
   hs-source-dirs:      src
   exposed-modules:
     Anapo
-    Anapo.VDOM
+    Anapo.JsVDOM
     Anapo.Component
     Anapo.Loop
-    Anapo.Render
     Anapo.Text
     Anapo.Logging
     Anapo.CollectedThread
     Anapo.Debug
   other-modules:
-    Anapo.Component.Internal
+    Anapo.JsComponent.Internal
     Anapo.Component.Elements
     Anapo.Component.Attributes
     Anapo.Component.Events
@@ -43,19 +42,20 @@ library
     mtl,
     unliftio-core,
     unordered-containers,
-    vector
+    vector,
+    jsaddle,
+    ghc-prim
   if !impl(ghcjs)
     build-depends:
-      text,
-      jsaddle
+      text
   else
     build-depends:
       ghcjs-base,
-      aeson,
       deepseq
     js-sources:
       jsbits/fnv.js,
-      jsbits/eq.js
+      jsbits/eq.js,
+      ts/vdom.js
   default-language: Haskell2010
   ghc-options: -Wall
   -- DO NOT put TemplateHaskell here, currently it triggers -dynamic-too
