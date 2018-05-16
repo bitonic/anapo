@@ -1,4 +1,5 @@
-{ stdenv
+{ bundleVdom ? true
+, stdenv
 , mkDerivation
 , async
 , base
@@ -43,4 +44,7 @@ in mkDerivation {
   libraryHaskellDepends = haskellDependencies ++ platformHaskellDependencies;
   homepage = "https://github.com/bitonic/anapo#readme";
   license = stdenv.lib.licenses.bsd3;
+  configureFlags = if bundleVdom
+    then [ "-fbundle-vdom" ]
+    else [ "-f-bundle-vdom" ];
 }

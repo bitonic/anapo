@@ -179,25 +179,15 @@ element tag children = do
       js_setKeyed elObj kvs
   return (Element elObj)
 #else
-  elObj <- JS.obj
-  styleObj <- JS.obj
-  propsObj <- JS.obj
-  attrsObj <- JS.obj
-  clssObj <- JS.obj
-  evtsArr <- JS.array ([] :: [JS.Object])
+  elObj <- JS.jsg "Anapo" ^. JS.jsf"newElement" [tag]
   childrenObj <- JS.obj
   case children of
-    ChildrenRawHtml txt -> (childrenObj JS.<# "rawHtml") txt
+    ChildrenRawHtml txt ->
+      (childrenObj JS.<# "rawHtml") txt
     ChildrenNormal (NormalChildren nodes) -> do
       (childrenObj JS.<# "normal") nodes
     ChildrenKeyed (KeyedChildren kvs) -> do
       (childrenObj JS.<# "keyed") kvs
-  (elObj JS.<# "tag") tag
-  (elObj JS.<# "style") styleObj
-  (elObj JS.<# "properties") propsObj
-  (elObj JS.<# "attributes") attrsObj
-  (elObj JS.<# "classes") clssObj
-  (elObj JS.<# "events") evtsArr
   (elObj JS.<# "children") childrenObj
   Element <$> JS.toJSVal elObj
 #endif
@@ -205,19 +195,19 @@ element tag children = do
 #if defined(ghcjs_HOST_OS)
 
 foreign import javascript unsafe
-  "$r = {tag: $1, style: {}, properties: {}, attributes: {}, classes: {}, events: [], children: {}}"
+  "$r = window['Anapo']['newElement']($1)"
   js_newElement :: Text -> IO JSVal
 
 foreign import javascript unsafe
-  "$1.children.rawHtml = $2"
+  "$1['children']['rawHtml'] = $2"
   js_setRawHtml :: JSVal -> Text -> IO ()
 
 foreign import javascript unsafe
-  "$1.children.normal = $2"
+  "$1['children']['normal'] = $2"
   js_setNormal :: JSVal -> JSVal -> IO ()
 
 foreign import javascript unsafe
-  "$1.children.keyed = $2"
+  "$1['children']['keyed'] = $2"
   js_setKeyed :: JSVal -> JSVal -> IO ()
 
 #endif
@@ -245,16 +235,13 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
     EPStyle k v -> ((el ^. JS.js "style") JS.<# k) v
     EPAttribute k v -> ((el ^. JS.js "attributes") JS.<# k) v
     EPProperty k v -> ((el ^. JS.js "properties") JS.<# k) v
-    EPClass cls -> ((el ^. JS.js "classes") JS.<# cls) JS.jsNull
+    EPClass cls -> ((el ^. JS.js "classes") JS.<# cls) True
     EPEvent type_ evt -> do
       evtFun <- JS.function $ \_ this [ev] -> do
         this_ <- DOM.unsafeCastTo DOM.HTMLElement this
         ev_ <- DOM.unsafeCastTo DOM.Event ev
         evt this_ ev_
-      evtObj <- JS.obj
-      (evtObj JS.<# "type") type_
-      (evtObj JS.<# "callback") evtFun
-      (evtObj JS.<# "token") evtFun
+      evtObj <- JS.jsg"Anapo" ^. JS.jsf"newEventCallback" (type_, evtFun, evtFun)
       void (el ^. JS.js "events" ^. JS.jsf"push" [evtObj])
 #endif
   NBRaw{} -> error "got raw in patchElement"
@@ -263,23 +250,23 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
 #if defined(ghcjs_HOST_OS)
 
 foreign import javascript unsafe
-  "$1.style[$2] = $3"
+  "$1['style'][$2] = $3"
   js_setStyle :: JSVal -> Text -> Text -> IO ()
 
 foreign import javascript unsafe
-  "$1.attributes[$2] = $3"
+  "$1['attributes'][$2] = $3"
   js_setAttribute :: JSVal -> Text -> JSVal -> IO ()
 
 foreign import javascript unsafe
-  "$1.properties[$2] = $3"
+  "$1['properties'][$2] = $3"
   js_setProperty :: JSVal -> Text -> JSVal -> IO ()
 
 foreign import javascript unsafe
-  "$1.classes[$2] = null"
+  "$1['classes'][$2] = true"
   js_setClass :: JSVal -> Text -> IO ()
 
 foreign import javascript unsafe
-  "$1.events.push({type: $2, callback: $3, token: $4})"
+  "$1['events'].push(window['Anapo']['newEventCallback']($2, $3, $4))"
   js_pushEvent :: JSVal -> Text -> JSVal -> JSVal -> IO ()
 
 #endif
@@ -322,7 +309,6 @@ instance Hashable PathSegment where
   {-# INLINE hashWithSalt #-}
   hashWithSalt salt (PathNormal i) = salt `hashWithSalt` (0::Int) `hashWithSalt` i
   hashWithSalt salt (PathKeyed i) = salt `hashWithSalt` (1::Int) `hashWithSalt` i
-
 
 reconciliate :: RenderedNode -> Path -> Node -> JSM ()
 reconciliate (RenderedNode rvdom) path nod = do
@@ -405,17 +391,12 @@ keyedChildren = do
 #if defined(ghcjs_HOST_OS)
   KeyedChildren <$> js_keyedChildren
 #else
-  keyedObj <- JS.obj
-  orderArr <- JS.array ([] :: [JSVal])
-  (keyedObj JS.<# "order") orderArr
-  elementsObj <- JS.obj
-  (keyedObj JS.<# "elements") elementsObj
-  KeyedChildren <$> JS.toJSVal keyedObj
+  KeyedChildren <$> (JS.jsg"Anapo" ^. JS.jsf"newKeyedChildren" ())
 #endif
 
 #if defined(ghcjs_HOST_OS)
 foreign import javascript unsafe
-  "$r = {order: [], elements: {}}"
+  "$r = window['Anapo']['newKeyedChildren']()"
   js_keyedChildren :: IO JSVal
 #endif
 
@@ -432,6 +413,6 @@ pushKeyedChild (KeyedChildren kvs) k v = do
 
 #if defined(ghcjs_HOST_OS)
 foreign import javascript unsafe
-  "$1.order.push($2); $1.elements[$2] = $3;"
+  "if ($1['elements'][$2]) { throw 'Duplicate key in keyed children!'; }; $1['order'].push($2); $1['elements'][$2] = $3;"
   js_pushKeyedChild :: JSVal -> Text -> JSVal -> IO ()
 #endif

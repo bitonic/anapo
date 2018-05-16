@@ -146,7 +146,7 @@ rowsComponent =
           then liftIO (MV.swap rows 1 998)
           else return ()
 
-    rowsDom :: Dom a State
+    rowsDom :: KeyedDom a State
     rowsDom = do
       State{..} <- ask
       let len = MV.length _stateRows
@@ -157,8 +157,7 @@ rowsComponent =
             let cl = if Just _rowId == _stateSelected
                   then "danger"
                   else ""
-            -- key _rowId $
-            n$
+            key _rowId $
               tr_ [class_ cl] $ do
                 n$ td_ [class_ "col-md-1"] (n$ text _rowId)
                 n$ td_ [class_ "col-md-4"] $ do

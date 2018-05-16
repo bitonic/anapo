@@ -13,6 +13,10 @@ cabal-version:       >=1.10
 -- synopsis:
 -- description:
 
+flag bundle-vdom
+  description: Whether to link the VDOM JavaScript code directly. If you use JSaddle you probably do not want to do it and instead include the vdom.js file provided yourself.
+  default: True
+
 library
   hs-source-dirs:      src
   exposed-modules:
@@ -29,7 +33,6 @@ library
     Anapo.Component.Elements
     Anapo.Component.Attributes
     Anapo.Component.Events
-    Anapo.OrderedHashMap
   build-depends:
     base >= 4.7 && < 5,
     async,
@@ -53,9 +56,10 @@ library
       ghcjs-base,
       deepseq
     js-sources:
-      jsbits/fnv.js,
-      jsbits/eq.js,
-      ts/vdom.js
+      jsbits/fnv.js
+    if flag(bundle-vdom)
+      js-sources:
+        ts/vdom.js
   default-language: Haskell2010
   ghc-options: -Wall
   -- DO NOT put TemplateHaskell here, currently it triggers -dynamic-too
@@ -80,6 +84,8 @@ library
     TupleSections
     TypeFamilies
     NamedFieldPuns
+  data-files:
+    ts/vdom.js
 
 source-repository head
   type:     git

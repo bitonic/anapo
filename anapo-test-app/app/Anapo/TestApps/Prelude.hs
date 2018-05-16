@@ -23,6 +23,7 @@ import Data.Char (toLower)
 import qualified GHCJS.DOM.HTMLInputElement as DOM
 import Anapo
 import qualified Anapo.Text as T
+import Anapo.TestApps.Orphans ()
 
 tshow :: (Show a) => a -> Text
 tshow = T.pack . show

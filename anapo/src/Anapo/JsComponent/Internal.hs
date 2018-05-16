@@ -36,12 +36,12 @@ import Control.Applicative ((<|>))
 import Data.List (foldl')
 import Data.Foldable (for_)
 import qualified Language.Javascript.JSaddle as JS
+import qualified Data.Semigroup as Semigroup
 
 import qualified Anapo.JsVDOM as V
 import Anapo.Logging
 import Anapo.Text (Text, pack)
 import qualified Anapo.Text as T
-import qualified Anapo.OrderedHashMap as OHM
 
 -- affine traversals
 -- --------------------------------------------------------------------
@@ -68,6 +68,15 @@ toMaybeOf l x = case Lens.toListOf l x of
 
 data Rerender = Rerender | UnsafeDontRerender
   deriving (Eq, Show)
+
+instance Semigroup.Semigroup Rerender where
+  Rerender <> _ = Rerender
+  _ <> Rerender = Rerender
+  _ <> _ = UnsafeDontRerender
+
+instance Monoid Rerender where
+  mempty = UnsafeDontRerender
+  mappend = (<>)
 
 newtype Dispatch stateRoot = Dispatch
   { unDispatch :: forall state context props.
@@ -596,66 +605,22 @@ instance (el ~ DOM.Text) => IsString (Node ctx st) where
   {-# INLINE fromString #-}
   fromString = text . T.pack
 
-{-
 {-# INLINE rawNode #-}
 rawNode ::
-     DOM.IsElement el
+     DOM.IsNode el
   => el
-  -> [NodePatch el ctx st]
+  -> [V.AddCallback]
   -> Node ctx st
-rawNode wrap x patches = do
-  node <- patchNode patches
-    V.VDomNode
-      { V.vdomMark = Nothing
-      , V.vdomBody = V.VDBRawNode x
-      , V.vdomCallbacks = mempty
-      , V.vdomWrap = wrap
-      }
-  return V.Node
-    { V.nodeBody = V.SomeVDomNode node
-    , V.nodeChildren = Nothing
-    }
--}
+rawNode x patches = do
+  node <- DOM.liftJSM (V.node (V.NBRaw (DOM.toNode x)))
+  return (foldl' V.addNodeCallback node patches)
 
-{-
--- TODO this causes linking errors, sometimes. bizzarely, the linking
--- errors seem to happen only if a closure is formed -- e.g. if we
--- define the function as
---
--- @
--- marked shouldRerender ptr = deRefStaticPtr ptr
--- @
---
--- things work, but if we define it as
---
--- @
--- marked shouldRerender ptr = do
---   nod <- deRefStaticPtr ptr
---   return nod
--- @
---
--- they don't. the errors look like this:
---
--- @
--- dist/build/test-app/test-app-tmp/Anapo/TestApps/YouTube.dyn_o: In function `hs_spt_init_AnapoziTestAppsziYouTube':
--- ghc_18.c:(.text.startup+0x3): undefined reference to `r19F9_closure'
--- @
---
--- at call site (see for example Anapo.TestApps.YouTube)
 {-# INLINABLE marked #-}
-marked ::
-     (Maybe state -> props -> state -> V.Rerender)
-  -> StaticPtr (props -> Node context state) -> props -> Node context state
-marked shouldRerender ptr props = DomM $ \acEnv acTrav domEnv ctx st dom -> do
+marked :: StaticPtr (Node context state) -> Node context state
+marked ptr = DomM $ \acEnv acTrav domEnv ctx st dom -> do
   let !fprint = staticKey ptr
-  let !rer = shouldRerender
-        (toMaybeOf (atToComp acTrav . compState . atToState acTrav) =<< domEnvPrevState domEnv)
-        props
-        st
-  (_, V.Node (V.SomeVDomNode nod) children) <-
-    unDomM (deRefStaticPtr ptr props) acEnv acTrav domEnv ctx st dom
-  return ((), V.Node (V.SomeVDomNode nod{ V.vdomMark = Just (V.Mark fprint rer) }) children)
--}
+  node <- unDomM (deRefStaticPtr ptr) acEnv acTrav domEnv ctx st dom
+  return (V.setNodeMark node (Just (T.pack (show fprint))))
 
 -- Utilities to quickly create nodes
 -- --------------------------------------------------------------------
@@ -711,6 +676,60 @@ instance IsElementChildren UnsafeRawHtml ctx st where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.ChildrenRawHtml txt)
 
+-- if the node doesn't contain an element, this functin will crash
+patchElement :: forall el ctx st.
+     ( DOM.IsElement el )
+  => V.Node
+  -> [NodePatch el ctx st]
+  -> Node ctx st
+patchElement node0 patches0 = liftAction $ do
+  u <- askUnliftJSM
+  let
+    wrapCallback :: (el -> Action ctx st ()) -> (DOM.HTMLElement -> DOM.JSM ())
+    wrapCallback cback (DOM.HTMLElement el_) = unliftJSM u . cback =<< DOM.fromJSValUnchecked el_
+  let
+    mkPatches :: V.Node -> [NodePatch el ctx st] -> JS.JSM V.Node
+    mkPatches !node = \case
+      [] -> return node
+      patch : patches -> case patch of
+        NPWillMount cback -> mkPatches
+          (V.addNodeCallback node (V.ACWillMount (wrapCallback cback)))
+          patches
+        NPDidMount cback -> mkPatches
+          (V.addNodeCallback node (V.ACDidMount (wrapCallback cback)))
+          patches
+        NPWillPatch cback -> mkPatches
+          (V.addNodeCallback node (V.ACWillPatch (wrapCallback cback)))
+         patches
+        NPDidPatch cback -> mkPatches
+          (V.addNodeCallback node (V.ACDidPatch (wrapCallback cback)))
+          patches
+        NPWillRemove cback -> mkPatches
+          (V.addNodeCallback node (V.ACWillRemove (wrapCallback cback)))
+          patches
+        NPStyle styleName styleBody -> do
+          V.patchElement node (V.EPStyle styleName styleBody)
+          mkPatches node patches
+        NPAttribute attrName attrBody -> do
+          attrBodyVal <- attrBody
+          V.patchElement node (V.EPAttribute attrName attrBodyVal)
+          mkPatches node patches
+        NPProperty propName propBody -> do
+          propBodyVal <- DOM.liftJSM propBody
+          V.patchElement node (V.EPProperty propName propBodyVal)
+          mkPatches node patches
+        NPEvent (SomeEventAction evName evListener) -> do
+          V.patchElement node $ V.EPEvent evName $ \(DOM.HTMLElement el_) (DOM.Event ev_) -> do
+            el__ <- DOM.fromJSValUnchecked el_
+            ev__ <- DOM.fromJSValUnchecked ev_
+            unliftJSM u (evListener el__ ev__)
+          mkPatches node patches
+        NPClasses classes -> do
+          for_ classes $ \class_ ->
+            V.patchElement node (V.EPClass class_)
+          mkPatches node patches
+  DOM.liftJSM (mkPatches node0 patches0)
+
 {-# INLINABLE el #-}
 el :: forall a ctx st el.
      ( IsElementChildren a ctx st
@@ -724,55 +743,9 @@ el :: forall a ctx st el.
   -> Node ctx st
 el tag patches0 isChildren = do
   children <- elementChildren isChildren
-  u <- liftAction askUnliftJSM
-  JS.liftJSM $ do
-    vel <- V.element tag children
-    node0 <- V.node (V.NBElement vel)
-    let
-      wrapCallback :: (el -> Action ctx st ()) -> (DOM.HTMLElement -> DOM.JSM ())
-      wrapCallback cback (DOM.HTMLElement el_) = unliftJSM u . cback =<< DOM.fromJSValUnchecked el_
-    let
-      mkPatches :: V.Node -> [NodePatch el ctx st] -> JS.JSM V.Node
-      mkPatches !node = \case
-        [] -> return node
-        patch : patches -> case patch of
-          NPWillMount cback -> mkPatches
-            (V.addNodeCallback node (V.ACWillMount (wrapCallback cback)))
-            patches
-          NPDidMount cback -> mkPatches
-            (V.addNodeCallback node (V.ACDidMount (wrapCallback cback)))
-            patches
-          NPWillPatch cback -> mkPatches
-            (V.addNodeCallback node (V.ACWillPatch (wrapCallback cback)))
-           patches
-          NPDidPatch cback -> mkPatches
-            (V.addNodeCallback node (V.ACDidPatch (wrapCallback cback)))
-            patches
-          NPWillRemove cback -> mkPatches
-            (V.addNodeCallback node (V.ACWillRemove (wrapCallback cback)))
-            patches
-          NPStyle styleName styleBody -> do
-            V.patchElement node (V.EPStyle styleName styleBody)
-            mkPatches node patches
-          NPAttribute attrName attrBody -> do
-            attrBodyVal <- attrBody
-            V.patchElement node (V.EPAttribute attrName attrBodyVal)
-            mkPatches node patches
-          NPProperty propName propBody -> do
-            propBodyVal <- DOM.liftJSM propBody
-            V.patchElement node (V.EPProperty propName propBodyVal)
-            mkPatches node patches
-          NPEvent (SomeEventAction evName evListener) -> do
-            V.patchElement node $ V.EPEvent evName $ \(DOM.HTMLElement el_) (DOM.Event ev_) -> do
-              el__ <- DOM.fromJSValUnchecked el_
-              ev__ <- DOM.fromJSValUnchecked ev_
-              unliftJSM u (evListener el__ ev__)
-            mkPatches node patches
-          NPClasses classes -> do
-            for_ classes $ \class_ ->
-              V.patchElement node (V.EPClass class_)
-            mkPatches node patches
-    mkPatches node0 patches0
+  vel <- DOM.liftJSM (V.element tag children)
+  node0 <- DOM.liftJSM (V.node (V.NBElement vel))
+  patchElement node0 patches0
 
 -- Properties
 -- --------------------------------------------------------------------

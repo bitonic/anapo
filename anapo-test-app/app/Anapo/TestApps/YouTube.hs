@@ -17,6 +17,7 @@ import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Node as DOM.Node
 
 import Anapo
+import qualified Anapo.JsVDOM as V
 import Anapo.Logging
 import Anapo.TestApps.Prelude
 import Anapo.TestApps.YouTubeBindings
@@ -57,8 +58,9 @@ youTubeNode :: Node a YouTubeState
 youTubeNode = do
   st <- ask
   mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
+  u <- liftAction askUnliftJSM
   let
-    onDidMount el = void $ actFork $ liftJSM $ do
+    onDidMount el = void $ unliftJSM u $ actFork $ liftJSM $ do
       logInfo "Creating new YouTube object"
       -- We create the you tube element in the div _inside_ the
       -- top-level element otherwise anapo will choke on the fact that
@@ -76,7 +78,7 @@ youTubeNode = do
         youTubePauseVideo ytp
       liftIO (writeIORef mbYtpRef (Just ytp))
   let
-    onWillRemove _el = do
+    onWillRemove _el = unliftJSM u $ do
       mbYtp <- liftIO (readIORef mbYtpRef)
       case mbYtp of
         Nothing -> do
@@ -93,26 +95,14 @@ youTubeNode = do
     simpleRenderNode () $
       div_ [class_ "row"] $ n$ div_ [class_ "col"] $ n$ div_ [] $ do
         n$ text "YouTube player not ready"
-  el <- DOM.unsafeCastTo DOM.Element node
-  rawNode DOM.Element el
-    [ didMount onDidMount
-    , willPatch onWillRemove
-    , didPatch onDidMount
-    , willRemove onWillRemove
+  rawNode node
+    [ V.ACDidMount onDidMount
+    , V.ACWillRemove onWillRemove
     ]
 
--- | Never rerender the node
 youTubeComponent :: Dom () YouTubeState
 youTubeComponent = do
-  -- TODO this causes a linking error with GHC! see TODO on 'marked'
-  n$ marked
-    (\mbPrevSt _ st -> case mbPrevSt of
-      Just prevSt -> if prevSt^.ytsToken == st^.ytsToken
-        then UnsafeDontRerender
-        else Rerender
-      Nothing -> Rerender)
-    (static (\_ -> youTubeNode))
-    ()
+  n$ marked (static youTubeNode)
   u <- liftAction askUnliftJSM
   zoomL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
     n$ simpleTextInput
