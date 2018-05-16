@@ -53,8 +53,7 @@ library
       text
   else
     build-depends:
-      ghcjs-base,
-      deepseq
+      ghcjs-base
     js-sources:
       jsbits/fnv.js
     if flag(bundle-vdom)
