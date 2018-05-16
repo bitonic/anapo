@@ -131,7 +131,11 @@ finalizeNode Node{..} = do
     NBElement (Element el) -> (nodeObj JS.<# "element") el
     NBText txt -> (nodeObj JS.<# "text") txt
   for_ nodeCallbacks $ \Callbacks{..} -> do
+#if defined(ghcjs_HOST_OS)
+    cbacksObj <- js_emptyArray
+#else
     cbacksObj <- JS.obj
+#endif
     for_ callbacksWillMount $ \willMount -> do
       storeCallback cbacksObj willMount "willMount"
     for_ callbacksDidMount $ \didMount ->
@@ -147,12 +151,17 @@ finalizeNode Node{..} = do
   JS.toJSVal nodeObj
   where
     storeCallback cbacksObj fun label = do
-      funObj <- JS.obj
+#if defined(ghcjs_HOST_OS)
+      funVal <- GHCJS.syncCallback1 GHCJS.ThrowWouldBlock $ \el -> do
+        fun =<< DOM.unsafeCastTo DOM.HTMLElement el
+      funObj <- js_newLifecycleCallback funVal funVal
+      js_setProperty cbacksObj (pack label) funObj
+#else
       funFun <- JS.function $ \_ _ [el] -> do
         fun =<< DOM.unsafeCastTo DOM.HTMLElement el
-      (funObj JS.<# "callback") funFun
-      (funObj JS.<# "token") funFun
+      funObj <- JS.jsg"Anapo" ^. JS.jsf"newLifecycleCallback" (funFun, funFun)
       (cbacksObj JS.<# label) funObj
+#endif
 
 setNodeMark ::
      Node
@@ -192,26 +201,6 @@ element tag children = do
   Element <$> JS.toJSVal elObj
 #endif
 
-#if defined(ghcjs_HOST_OS)
-
-foreign import javascript unsafe
-  "$r = window['Anapo']['newElement']($1)"
-  js_newElement :: Text -> IO JSVal
-
-foreign import javascript unsafe
-  "$1['children']['rawHtml'] = $2"
-  js_setRawHtml :: JSVal -> Text -> IO ()
-
-foreign import javascript unsafe
-  "$1['children']['normal'] = $2"
-  js_setNormal :: JSVal -> JSVal -> IO ()
-
-foreign import javascript unsafe
-  "$1['children']['keyed'] = $2"
-  js_setKeyed :: JSVal -> JSVal -> IO ()
-
-#endif
-
 -- crashes if we do not have an element inside.
 {-# INLINE patchElement #-}
 patchElement :: Node -> ElementPatch -> JSM ()
@@ -220,7 +209,7 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
   NBElement (Element el) -> case elPatch of
     EPStyle k v -> js_setStyle el k v
     EPAttribute k v -> js_setAttribute el k v
-    EPProperty k v -> js_setProperty el k v
+    EPProperty k v -> js_setElementProperty el k v
     EPClass cls -> js_setClass el cls
     EPEvent type_ evt -> do
       -- TODO replace with direct sync callback in ghcjs
@@ -247,29 +236,6 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
   NBRaw{} -> error "got raw in patchElement"
   NBText{} -> error "got raw in patchElement"
 
-#if defined(ghcjs_HOST_OS)
-
-foreign import javascript unsafe
-  "$1['style'][$2] = $3"
-  js_setStyle :: JSVal -> Text -> Text -> IO ()
-
-foreign import javascript unsafe
-  "$1['attributes'][$2] = $3"
-  js_setAttribute :: JSVal -> Text -> JSVal -> IO ()
-
-foreign import javascript unsafe
-  "$1['properties'][$2] = $3"
-  js_setProperty :: JSVal -> Text -> JSVal -> IO ()
-
-foreign import javascript unsafe
-  "$1['classes'][$2] = true"
-  js_setClass :: JSVal -> Text -> IO ()
-
-foreign import javascript unsafe
-  "$1['events'].push(window['Anapo']['newEventCallback']($2, $3, $4))"
-  js_pushEvent :: JSVal -> Text -> JSVal -> JSVal -> IO ()
-
-#endif
 
 data ElementPatch =
     EPStyle Text Text
@@ -345,12 +311,6 @@ normalChildren = do
   NormalChildren <$> JS.toJSVal arr
 #endif
 
-#if defined(ghcjs_HOST_OS)
-foreign import javascript unsafe
-  "$r = []"
-  js_emptyArray :: IO JSVal
-#endif
-
 {-# INLINE pushNormalChild #-}
 pushNormalChild :: NormalChildren -> Node -> JSM ()
 pushNormalChild (NormalChildren nodes) nod = do
@@ -359,12 +319,6 @@ pushNormalChild (NormalChildren nodes) nod = do
   js_pushNormalChild nodes nodeVal
 #else
   void (nodes ^. JS.jsf"push" nodeVal)
-#endif
-
-#if defined(ghcjs_HOST_OS)
-foreign import javascript unsafe
-  "$1.push($2)"
-  js_pushNormalChild :: JSVal -> JSVal -> IO ()
 #endif
 
 {-# INLINE normalChildrenLength #-}
@@ -377,12 +331,6 @@ normalChildrenLength (NormalChildren ns) = do
   return n
 #endif
 
-#if defined(ghcjs_HOST_OS)
-foreign import javascript unsafe
-  "$1.length"
-  js_arrayLength :: JSVal -> IO Int
-#endif
-
 newtype KeyedChildren = KeyedChildren JSVal
 
 {-# INLINE keyedChildren #-}
@@ -392,12 +340,6 @@ keyedChildren = do
   KeyedChildren <$> js_keyedChildren
 #else
   KeyedChildren <$> (JS.jsg"Anapo" ^. JS.jsf"newKeyedChildren" ())
-#endif
-
-#if defined(ghcjs_HOST_OS)
-foreign import javascript unsafe
-  "$r = window['Anapo']['newKeyedChildren']()"
-  js_keyedChildren :: IO JSVal
 #endif
 
 {-# INLINE pushKeyedChild #-}
@@ -412,7 +354,73 @@ pushKeyedChild (KeyedChildren kvs) k v = do
 #endif
 
 #if defined(ghcjs_HOST_OS)
+
+foreign import javascript unsafe
+  "window['Anapo']['newLifecycleCallback']($1, $2)"
+  js_newLifecycleCallback :: GHCJS.Callback (JSVal -> IO ()) -> GHCJS.Callback (JSVal -> IO ()) -> IO JSVal
+
+foreign import javascript unsafe
+  "$r = {}"
+  js_emptyObject :: IO JSVal
+
+foreign import javascript unsafe
+  "$r = window['Anapo']['newElement']($1)"
+  js_newElement :: Text -> IO JSVal
+
+foreign import javascript unsafe
+  "$1['children']['rawHtml'] = $2"
+  js_setRawHtml :: JSVal -> Text -> IO ()
+
+foreign import javascript unsafe
+  "$1['children']['normal'] = $2"
+  js_setNormal :: JSVal -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1['children']['keyed'] = $2"
+  js_setKeyed :: JSVal -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1['style'][$2] = $3"
+  js_setStyle :: JSVal -> Text -> Text -> IO ()
+
+foreign import javascript unsafe
+  "$1['attributes'][$2] = $3"
+  js_setAttribute :: JSVal -> Text -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1[$2] = $3"
+  js_setProperty :: JSVal -> Text -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1['properties'][$2] = $3"
+  js_setElementProperty :: JSVal -> Text -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1['classes'][$2] = true"
+  js_setClass :: JSVal -> Text -> IO ()
+
+foreign import javascript unsafe
+  "$1['events'].push(window['Anapo']['newEventCallback']($2, $3, $4))"
+  js_pushEvent :: JSVal -> Text -> JSVal -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1.push($2)"
+  js_pushNormalChild :: JSVal -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1.length"
+  js_arrayLength :: JSVal -> IO Int
+
+foreign import javascript unsafe
+  "$r = window['Anapo']['newKeyedChildren']()"
+  js_keyedChildren :: IO JSVal
+
 foreign import javascript unsafe
   "if ($1['elements'][$2]) { throw 'Duplicate key in keyed children!'; }; $1['order'].push($2); $1['elements'][$2] = $3;"
   js_pushKeyedChild :: JSVal -> Text -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$r = []"
+  js_emptyArray :: IO JSVal
+
 #endif

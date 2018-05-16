@@ -85,6 +85,9 @@ namespace VDom {
   export function newEventCallback(type_: string, callback: (this: HTMLElement, ev: Event) => void, token: any): EventCallback {
     return {type: type_, callback: callback, token: token};
   }
+  export function newLifecycleCallback(callback: (el: Node) => void, token: any): LifecycleCallback {
+    return {callback: callback, token: token};
+  }
 }
 
 namespace Render {
@@ -593,3 +596,4 @@ namespace Render {
 (<any>window)["Anapo"]["newElement"] = VDom.newElement;
 (<any>window)["Anapo"]["newKeyedChildren"] = VDom.newKeyedChildren;
 (<any>window)["Anapo"]["newEventCallback"] = VDom.newEventCallback;
+(<any>window)["Anapo"]["newLifecycleCallback"] = VDom.newLifecycleCallback;

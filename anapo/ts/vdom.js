@@ -25,6 +25,10 @@ var VDom;
         return { type: type_, callback: callback, token: token };
     }
     VDom.newEventCallback = newEventCallback;
+    function newLifecycleCallback(callback, token) {
+        return { callback: callback, token: token };
+    }
+    VDom.newLifecycleCallback = newLifecycleCallback;
 })(VDom || (VDom = {}));
 var Render;
 (function (Render) {
@@ -518,3 +522,4 @@ window["Anapo"]["reconciliate"] = Render.reconciliate;
 window["Anapo"]["newElement"] = VDom.newElement;
 window["Anapo"]["newKeyedChildren"] = VDom.newKeyedChildren;
 window["Anapo"]["newEventCallback"] = VDom.newEventCallback;
+window["Anapo"]["newLifecycleCallback"] = VDom.newLifecycleCallback;
