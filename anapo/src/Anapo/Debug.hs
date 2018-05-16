@@ -1,13 +1,13 @@
 {-# LANGUAGE CPP #-}
 module Anapo.Debug (debuggingEnabled) where
-  
+
 #if defined(ghcjs_HOST_OS)
 
 import GHCJS.Types (JSVal)
 import qualified GHCJS.Foreign.Internal as JS
 
 foreign import javascript unsafe
-  "window.anapoDebug"
+  "window['anapoDebug']"
   js_isDebug :: IO JSVal
 
 {-# INLINE debuggingEnabled #-}

@@ -7,8 +7,7 @@
 -- <https://www.reddit.com/r/haskell/comments/60fha5/affine_traversal/>
 -- for why affine traversals do not play well with lens.
 module Anapo.Component
-  ( -- * Re-exports
-    V.Rerender(..)
+  ( Rerender(..)
 
     -- * affine traversals
   , AffineTraversal
@@ -99,6 +98,9 @@ module Anapo.Component
     -- * elements
   , IsElementChildren(..)
   , el
+  , rawNode
+  , marked
+  , patchElement
 
     -- * attributes / properties
   , SomeEventAction(..)
@@ -123,7 +125,6 @@ module Anapo.Component
   ) where
 
 import qualified GHCJS.DOM.Event as DOM.Event
-import qualified Anapo.VDOM as V
 
 import Anapo.JsComponent.Internal
 import Anapo.Component.Elements

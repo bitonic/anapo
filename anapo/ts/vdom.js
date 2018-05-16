@@ -10,6 +10,21 @@ var VDom;
         }
     }
     VDom.callLifecycleCallback = callLifecycleCallback;
+    // we need these because we cannot easily construct object literals
+    // from haskell, because the closure compiler is prone to renaming
+    // their fields
+    function newElement(tag) {
+        return { tag: tag, style: {}, properties: {}, attributes: {}, classes: {}, events: [], children: {} };
+    }
+    VDom.newElement = newElement;
+    function newKeyedChildren() {
+        return { order: [], elements: {} };
+    }
+    VDom.newKeyedChildren = newKeyedChildren;
+    function newEventCallback(type_, callback, token) {
+        return { type: type_, callback: callback, token: token };
+    }
+    VDom.newEventCallback = newEventCallback;
 })(VDom || (VDom = {}));
 var Render;
 (function (Render) {
@@ -25,7 +40,7 @@ var Render;
         for (var prop in prevProps) {
             if (!props[prop]) {
                 el[prop] = defProps[prop];
-                defProps[prop] = undefined;
+                delete defProps[prop];
             }
         }
         // add the new ones
@@ -209,7 +224,8 @@ var Render;
             rchildren.normal.forEach(function (rvdom) { return cleanupNode(rvdom, callbacksToRelease); });
         }
         else if (rchildren.keyed) {
-            for (var k in rchildren.keyed.order) {
+            for (var _i = 0, _a = rchildren.keyed.order; _i < _a.length; _i++) {
+                var k = _a[_i];
                 cleanupNode(rchildren.keyed.elements[k], callbacksToRelease);
             }
         }
@@ -259,34 +275,116 @@ var Render;
             removeDom(container, rvdomChildren, callbacksToRelease, vdomChildren.length);
         }
     }
+    // if the cursor is null, the node will be inserted at the beginning.
+    function appendAfter(container, cursor, node) {
+        if (cursor) {
+            // if the cursor has no next sibling it'll append it at the end, which is what
+            // we want.
+            container.insertBefore(node, cursor.nextSibling);
+        }
+        else {
+            // if the cursor is null, put it before the first element. note that
+            // if there is no first element it'll just append the node, which is fine
+            // since it's the only node.
+            container.insertBefore(node, container.firstChild);
+        }
+    }
+    // TODO this is a pretty dumb implementation, use a more principled one (in terms of performance)
     function patchKeyedDom(container, rvdomChildren, callbacksToRelease, vdomChildren) {
-        throw "TODO";
-        /*
-        // this goes as follows:
-        //
-        // * go
-        const discardedNodes: string[] = []; // all the keys that are not present
-        let rvdom_i = 0;
-        // traverse
-        for (let vdom_i = 0, rvdom_i = 0; vdom_i < vdomChildren.order.length, rvdom_i < rvdomChildren.order.length; vdom_i++) {
-          const rvdomKey = rvdomChildren.order[rvdom_i];
-          const vdomKey = vdomChildren.order[vdom_i];
-          // if we have the same keys, patch
-          if (rvdomKey === vdomKey) {
-            rvdom_i++;
-            vdom_i++;
-    
-          }
+        // assumes that there are no duplicates in both .orders.
+        // * traverse the two .orders at the same time
+        // * if you meet the same key, patch the node
+        // * if you meet different keys:
+        //   - if you can get the key from the rvdom, do it and patch the node.
+        //   - if you can't, render the node and add it to the rvdom.
+        //   in both cases, store the current rvdom key as skipped.
+        // * when one of the two orders has finished
+        var patchedChildren = {}; // these are the children from later in rvdomOrder that we already patched.
+        function tryExistingChild(mbCursor, vdomKey) {
+            // if the key did change, see if we can find the new key in the rvdom
+            var rvdomNode = rvdomChildren.elements[vdomKey];
+            if (rvdomNode) {
+                // if we can, move its dom after the previous element, and the patch it
+                appendAfter(container, mbCursor, rvdomNode.dom);
+                patchNode(rvdomNode, callbacksToRelease, vdomChildren.elements[vdomKey]);
+                patchedChildren[vdomKey] = true;
+                return rvdomNode.dom;
+            }
+            else {
+                // otherwise just render it
+                var rvdom = render(vdomChildren.elements[vdomKey], function (rvdom) {
+                    appendAfter(container, mbCursor, rvdom.dom);
+                    rvdomChildren.elements[vdomKey] = rvdom;
+                });
+                return rvdom.dom;
+            }
         }
-        // add all the leftovers to the discarded pile
-        for (; rvdom_i < rvdomChildren.order.length; rvdom_i++) {
-          discardedNodes.push(rvdomChildren.order[rvdom_i]);
+        var rvdomOrder = rvdomChildren.order;
+        var vdomOrder = vdomChildren.order;
+        var mbCursor = null; // a cursor to keep track of where we are in the dom.
+        var rvdom_i = 0;
+        var vdom_i = 0;
+        for (; vdom_i < vdomOrder.length && rvdom_i < rvdomOrder.length;) {
+            var rvdomKey = rvdomOrder[rvdom_i];
+            // if we have already used the rvdomKey, skip
+            if (patchedChildren[rvdomKey]) {
+                rvdom_i++;
+                continue;
+            }
+            var vdomKey = vdomOrder[vdom_i];
+            // common case: the vdom didn't change
+            if (rvdomKey === vdomKey) {
+                var rvdomChild = rvdomChildren.elements[rvdomKey];
+                patchNode(rvdomChild, callbacksToRelease, vdomChildren.elements[rvdomKey]);
+                mbCursor = rvdomChild.dom;
+                rvdom_i++;
+                vdom_i++;
+            }
+            else if (!vdomChildren.elements[rvdomKey]) {
+                // if the old key does not exist at all in the old stuff, remove the current node.
+                // this is to avoid shuffling around nodes when it's not needed
+                removeNode(container, rvdomChildren.elements[rvdomKey], callbacksToRelease);
+                rvdom_i++;
+            }
+            else {
+                mbCursor = tryExistingChild(mbCursor, vdomKey);
+                vdom_i++;
+            }
         }
-        // remove all the discarded nodes
-    
-        // set the new order as the real one
-        rvdomChildren.order = vdomChildren.order;
-        */
+        // render remaining nodes
+        for (; vdom_i < vdomOrder.length; vdom_i++) {
+            var vdomKey = rvdomOrder[vdom_i];
+            mbCursor = tryExistingChild(mbCursor, vdomOrder[vdom_i]);
+        }
+        // Remove the leftover nodes
+        for (; rvdom_i < rvdomOrder.length; rvdom_i++) {
+            var rvdomKey = rvdomChildren.order[rvdom_i];
+            if (!patchedChildren[rvdomKey]) {
+                removeNode(container, rvdomChildren.elements[rvdomKey], callbacksToRelease);
+                delete rvdomChildren.elements[rvdomKey];
+            }
+        }
+        // set the new order
+        rvdomChildren.order = vdomOrder;
+    }
+    function removeChildren(container, callbacksToRelease, rvdomChildren) {
+        if (rvdomChildren.rawHtml) {
+            container.innerHTML = "";
+        }
+        else if (rvdomChildren.normal) {
+            removeDom(container, rvdomChildren.normal, callbacksToRelease, 0);
+        }
+        else if (rvdomChildren.keyed) {
+            for (var _i = 0, _a = rvdomChildren.keyed.order; _i < _a.length; _i++) {
+                var key = _a[_i];
+                removeNode(container, rvdomChildren.keyed.elements[key], callbacksToRelease);
+            }
+            rvdomChildren.keyed.order = [];
+            rvdomChildren.keyed.elements = {};
+        }
+        else {
+            throw "Could not find raw html, normal, or keyed";
+        }
     }
     // modifies domEl and rvdomChildren, appends to callbacksToRelease
     function patchChildren(container, rvdomChildren, callbacksToRelease, vdom) {
@@ -301,6 +399,7 @@ var Render;
         }
         else {
             // render and reset the rvdom
+            removeChildren(container, callbacksToRelease, rvdomChildren);
             var newRvdomChildren = renderChildren(container, vdom);
             rvdomChildren.rawHtml = newRvdomChildren.rawHtml;
             rvdomChildren.normal = newRvdomChildren.normal;
@@ -329,7 +428,7 @@ var Render;
             });
         }
         function patch() {
-            if (prevVdom.element && vdom.element) {
+            if (prevVdom.element && vdom.element && prevVdom.element.tag === vdom.element.tag) {
                 var domEl = rvdom.dom;
                 var prevVdomEl = prevVdom.element;
                 var vdomEl = vdom.element;
@@ -412,6 +511,10 @@ var Render;
     }
     Render.reconciliate = reconciliate;
 })(Render || (Render = {}));
-window.Anapo = window.Anapo || {};
-window.Anapo.render = Render.render;
-window.Anapo.reconciliate = Render.reconciliate;
+// use brackets to trick closure to not optimize this
+window["Anapo"] = window["Anapo"] || {};
+window["Anapo"]["render"] = Render.render;
+window["Anapo"]["reconciliate"] = Render.reconciliate;
+window["Anapo"]["newElement"] = VDom.newElement;
+window["Anapo"]["newKeyedChildren"] = VDom.newKeyedChildren;
+window["Anapo"]["newEventCallback"] = VDom.newEventCallback;
