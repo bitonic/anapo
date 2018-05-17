@@ -1,6 +1,5 @@
--- TODO replace all the JS.function with synchronous versions in ghcjs
 {-# LANGUAGE CPP #-}
-module Anapo.JsVDOM
+module Anapo.VDOM
   ( Node
   , NodeBody(..)
   , node
@@ -35,11 +34,10 @@ import qualified GHCJS.DOM.Types as DOM
 import Data.Foldable (for_)
 import Data.Traversable (for)
 import Control.Lens ((^.))
-import Control.Monad (void)
 import Data.Hashable (Hashable(..))
 import Control.Exception.Safe (bracket)
 import GHC.Prim (coerce)
-import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Control.Monad.IO.Class (liftIO)
 import Data.Monoid ((<>))
 
@@ -49,6 +47,8 @@ import Anapo.Logging
 #if defined(ghcjs_HOST_OS)
 import qualified GHCJS.Foreign.Callback as GHCJS
 import qualified GHCJS.Foreign.Callback.Internal as GHCJS
+#else
+import Control.Monad (void)
 #endif
 
 data Node = Node
@@ -125,15 +125,21 @@ addNodeCallback nod@Node{nodeCallbacks} addCback =
 
 finalizeNode :: Node -> JSM JSVal
 finalizeNode Node{..} = do
+#if defined(ghcjs_HOST_OS)
+  nodeObj <- js_emptyObject
+  case nodeBody of
+    NBRaw el -> js_setRaw nodeObj (coerce el)
+    NBElement (Element el) -> js_setElement nodeObj el
+    NBText txt -> js_setText nodeObj txt
+  for_ nodeCallbacks $ \Callbacks{..} -> do
+    cbacksObj <- js_emptyObject
+#else
   nodeObj <- JS.obj
   case nodeBody of
     NBRaw el -> (nodeObj JS.<# "raw") el
     NBElement (Element el) -> (nodeObj JS.<# "element") el
     NBText txt -> (nodeObj JS.<# "text") txt
   for_ nodeCallbacks $ \Callbacks{..} -> do
-#if defined(ghcjs_HOST_OS)
-    cbacksObj <- js_emptyArray
-#else
     cbacksObj <- JS.obj
 #endif
     for_ callbacksWillMount $ \willMount -> do
@@ -146,15 +152,21 @@ finalizeNode Node{..} = do
       storeCallback cbacksObj didPatch "didPatch"
     for_ callbacksWillRemove $ \willRemove ->
       storeCallback cbacksObj willRemove "willRemove"
+#if defined(ghcjs_HOST_OS)
+    js_setCallbacks nodeObj cbacksObj
+  for_ nodeMark (\mark -> js_setMark nodeObj mark)
+  JS.toJSVal nodeObj
+#else
     (nodeObj JS.<# "callbacks") cbacksObj
   for_ nodeMark (\mark -> (nodeObj JS.<# "mark") mark)
   JS.toJSVal nodeObj
+#endif
   where
     storeCallback cbacksObj fun label = do
 #if defined(ghcjs_HOST_OS)
       funVal <- GHCJS.syncCallback1 GHCJS.ThrowWouldBlock $ \el -> do
         fun =<< DOM.unsafeCastTo DOM.HTMLElement el
-      funObj <- js_newLifecycleCallback funVal funVal
+      funObj <- js_newLifecycleCallback funVal
       js_setProperty cbacksObj (pack label) funObj
 #else
       funFun <- JS.function $ \_ _ [el] -> do
@@ -212,13 +224,11 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
     EPProperty k v -> js_setElementProperty el k v
     EPClass cls -> js_setClass el cls
     EPEvent type_ evt -> do
-      -- TODO replace with direct sync callback in ghcjs
-      evtFun <- JS.function $ \_ this [ev] -> do
-        this_ <- DOM.unsafeCastTo DOM.HTMLElement this
+      evtFun <- GHCJS.syncCallback2 GHCJS.ThrowWouldBlock $ \el0 ev -> do
+        el_ <- DOM.unsafeCastTo DOM.HTMLElement el0
         ev_ <- DOM.unsafeCastTo DOM.Event ev
-        evt this_ ev_
-      evtFunVal <- JS.toJSVal evtFun
-      js_pushEvent el type_ evtFunVal (coerce (JS.functionCallback evtFun))
+        evt el_ ev_
+      js_pushEvent el type_ evtFun
 #else
   NBElement (Element el) -> case elPatch of
     EPStyle k v -> ((el ^. JS.js "style") JS.<# k) v
@@ -356,8 +366,8 @@ pushKeyedChild (KeyedChildren kvs) k v = do
 #if defined(ghcjs_HOST_OS)
 
 foreign import javascript unsafe
-  "window['Anapo']['newLifecycleCallback']($1, $2)"
-  js_newLifecycleCallback :: GHCJS.Callback (JSVal -> IO ()) -> GHCJS.Callback (JSVal -> IO ()) -> IO JSVal
+  "window['Anapo']['newLifecycleCallback']($1, $1)"
+  js_newLifecycleCallback :: GHCJS.Callback (JSVal -> IO ()) -> IO JSVal
 
 foreign import javascript unsafe
   "$r = {}"
@@ -400,8 +410,8 @@ foreign import javascript unsafe
   js_setClass :: JSVal -> Text -> IO ()
 
 foreign import javascript unsafe
-  "$1['events'].push(window['Anapo']['newEventCallback']($2, $3, $4))"
-  js_pushEvent :: JSVal -> Text -> JSVal -> JSVal -> IO ()
+  "var __wrapped = function(ev) { $3(this, ev); }; $1['events'].push(window['Anapo']['newEventCallback']($2, __wrapped, $3));"
+  js_pushEvent :: JSVal -> Text -> GHCJS.Callback (JSVal -> JSVal -> IO ()) -> IO ()
 
 foreign import javascript unsafe
   "$1.push($2)"
@@ -422,5 +432,25 @@ foreign import javascript unsafe
 foreign import javascript unsafe
   "$r = []"
   js_emptyArray :: IO JSVal
+
+foreign import javascript unsafe
+  "$1['raw'] = $2"
+  js_setRaw :: JSVal -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1['element'] = $2"
+  js_setElement :: JSVal -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1['text'] = $2"
+  js_setText :: JSVal -> Text -> IO ()
+
+foreign import javascript unsafe
+  "$1['callbacks'] = $2"
+  js_setCallbacks :: JSVal -> JSVal -> IO ()
+
+foreign import javascript unsafe
+  "$1['mark'] = $2"
+  js_setMark :: JSVal -> Text -> IO ()
 
 #endif

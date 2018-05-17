@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Anapo.Component.Events where
 
-import Anapo.JsComponent.Internal
+import Anapo.Component.Internal
 import GHCJS.DOM.Types
 import qualified GHCJS.DOM.Types as DOM
 

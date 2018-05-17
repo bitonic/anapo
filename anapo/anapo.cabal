@@ -21,7 +21,7 @@ library
   hs-source-dirs:      src
   exposed-modules:
     Anapo
-    Anapo.JsVDOM
+    Anapo.VDOM
     Anapo.Component
     Anapo.Loop
     Anapo.Text
@@ -29,14 +29,13 @@ library
     Anapo.CollectedThread
     Anapo.Debug
   other-modules:
-    Anapo.JsComponent.Internal
+    Anapo.Component.Internal
     Anapo.Component.Elements
     Anapo.Component.Attributes
     Anapo.Component.Events
   build-depends:
     base >= 4.7 && < 5,
     async,
-    dlist,
     ghcjs-dom,
     hashable,
     lens,

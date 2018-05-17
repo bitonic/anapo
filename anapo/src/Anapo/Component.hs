@@ -44,7 +44,6 @@ module Anapo.Component
   , Node'
   , askRegisterThread
   , askHandleException
-  , askPreviousState
   , zoomL
   , zoomT
   , zoomCtxF
@@ -126,7 +125,7 @@ module Anapo.Component
 
 import qualified GHCJS.DOM.Event as DOM.Event
 
-import Anapo.JsComponent.Internal
+import Anapo.Component.Internal
 import Anapo.Component.Elements
 import Anapo.Component.Attributes
 import Anapo.Component.Events

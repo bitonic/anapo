@@ -4,7 +4,7 @@
 {-# LANGUAGE GHCForeignImportPrim #-}
 module Anapo.Component.Attributes where
 
-import Anapo.JsComponent.Internal (property, attribute, rawAttribute, NodePatch(NPClasses))
+import Anapo.Component.Internal (property, attribute, rawAttribute, NodePatch(NPClasses))
 import Anapo.Text (Text)
 import qualified Anapo.Text as T
 import Data.Monoid ((<>))
