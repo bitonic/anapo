@@ -133,7 +133,7 @@ nodeLoop withState node excComp injectMode root = do
       (vdom, vdomDt) <- timeIt $ unDomM
         (do
           node0 <- _componentNode comp props
-          patches <- registerComponent (_componentPositions comp) props
+          patches <- registerComponent (_componentName comp) (_componentPositions comp) props
           return (foldl' V.addNodeCallback node0 patches))
         actionEnv
         (actionTrav travComp)
