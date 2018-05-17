@@ -777,7 +777,7 @@ simpleNode st node0 = do
   vdom <- unDomM
     (do
       node <- _componentNode comp ()
-      patches <- registerComponent (_componentPositions comp) ()
+      patches <- registerComponent (_componentName comp) (_componentPositions comp) ()
       return (foldl' V.addNodeCallback node patches))
     ActionEnv
       { aeRegisterThread = \_ -> fail "Trying to register a thread from the simpleRenderNode"
@@ -913,17 +913,19 @@ newComponent_ ::
 newComponent_ st comp = newComponent st (\() -> comp)
 
 {-# INLINABLE registerComponent #-}
-registerComponent :: IORef (HMS.HashMap V.Path props) -> props -> DomM dom a b [V.AddCallback]
-registerComponent ref props = DomM $ \_acEnv _acTrav anEnv _ctx _st _dom -> do
-  let add = \_ -> do
+registerComponent :: Text -> IORef (HMS.HashMap V.Path props) -> props -> DomM dom a b [V.AddCallback]
+registerComponent name ref props = DomM $ \_acEnv _acTrav anEnv _ctx _st _dom -> do
+  let add txt = \_ -> do
+        logDebug (txt <> ": adding component " <> name)
         liftIO (modifyIORef' ref (HMS.insert (reverse (domEnvReversePath anEnv)) props))
-  let remove = \_ -> do
+  let remove txt = \_ -> do
+        logDebug (txt <> ": removing component " <> name)
         liftIO (modifyIORef' ref (HMS.delete (reverse (domEnvReversePath anEnv))))
   return
-    [ V.ACWillMount add
-    , V.ACWillPatch remove
-    , V.ACDidPatch add
-    , V.ACWillRemove remove
+    [ V.ACWillMount (add "willMount")
+    , V.ACWillPatch (remove "willPatch")
+    , V.ACDidPatch (add "didPatch")
+    , V.ACWillRemove (remove "willRemove")
     ]
 
 {-# INLINE initComponent #-}
@@ -935,7 +937,7 @@ initComponent comp ctx = liftIO $ do
 {-# INLINABLE component #-}
 component :: props -> ComponentToken props ctx st -> Node ctx0 (Component props ctx st)
 component props (ComponentToken tok) = do
-  (node, pos, mbFprint) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
+  (node, name, pos, mbFprint) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
     let name = _componentName comp
     when (_componentContext comp /= tok) $
       error (T.unpack name <> ": Initialized component does not match state component!")
@@ -958,8 +960,8 @@ component props (ComponentToken tok) = do
       ctx
       (_componentState comp)
       dom
-    return (node, _componentPositions comp, _componentFingerprint comp)
-  patches <- registerComponent pos props
+    return (node, name, _componentPositions comp, _componentFingerprint comp)
+  patches <- registerComponent name pos props
   -- keep in sync with similar code in Anapo.Loop.nodeLoop.runComp
   let node' = foldl' V.addNodeCallback node patches
   return $ case mbFprint of
