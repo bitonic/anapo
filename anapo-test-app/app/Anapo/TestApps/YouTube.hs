@@ -17,7 +17,7 @@ import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Node as DOM.Node
 
 import Anapo
-import qualified Anapo.JsVDOM as V
+import qualified Anapo.VDOM as V
 import Anapo.Logging
 import Anapo.TestApps.Prelude
 import Anapo.TestApps.YouTubeBindings

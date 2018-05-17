@@ -31,8 +31,8 @@ import qualified GHCJS.DOM.Types as DOM
 import qualified GHCJS.DOM.Node as DOM.Node
 import qualified GHCJS.DOM.Document as DOM.Document
 
-import qualified Anapo.JsVDOM as V
-import Anapo.JsComponent.Internal
+import qualified Anapo.VDOM as V
+import Anapo.Component.Internal
 import Anapo.Text (Text, pack, unpack)
 import Anapo.Logging
 
@@ -120,13 +120,12 @@ nodeLoop withState node excComp injectMode root = do
   -- helper to run the component
   let
     runComp ::
-         Maybe (Component () () st)
-      -> V.Path
+         V.Path
       -> AffineTraversal' (Component () () st) (Component props ctx' st')
       -> Component props ctx' st'
       -> props
       -> DOM.JSM V.Node
-    runComp mbPrevComp path travComp comp props = do
+    runComp path travComp comp props = do
       mbCtx <- liftIO (readIORef (_componentContext comp))
       ctx <- case mbCtx of
         Nothing -> error ("Couldn't get context for component " <> unpack (_componentName comp) <> ", you probably forgot to initialize it.")
@@ -140,7 +139,6 @@ nodeLoop withState node excComp injectMode root = do
         (actionTrav travComp)
         DomEnv
           { domEnvReversePath = reverse path
-          , domEnvPrevState = mbPrevComp
           , domEnvDirtyPath = False
           }
         ctx
@@ -232,7 +230,7 @@ nodeLoop withState node excComp injectMode root = do
                       -- do not leave half-done DOM in place, run
                       -- everything synchronously
                       synchronously $ for_ (HMS.toList positions) $ \(pos, props) -> do
-                        vdom <- runComp (Just compRoot) pos travComp comp props
+                        vdom <- runComp pos travComp comp props
                         V.reconciliate rendered pos vdom
                   go compRoot' rendered
       tid <- liftIO myThreadId
@@ -241,7 +239,7 @@ nodeLoop withState node excComp injectMode root = do
           -- run for the first time
           comp <- newNamedComponent "root" st0 (\() -> node)
           liftIO (writeIORef (_componentContext comp) (Just ()))
-          vdom <- runComp Nothing [] id comp ()
+          vdom <- runComp [] id comp ()
           -- do this synchronously, too
           rendered0 <- synchronously $ do
             V.render vdom $ \rendered -> do

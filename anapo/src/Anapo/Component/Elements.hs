@@ -1,6 +1,6 @@
 module Anapo.Component.Elements where
 
-import Anapo.JsComponent.Internal (el, NodePatch, Node, IsElementChildren)
+import Anapo.Component.Internal (el, NodePatch, Node, IsElementChildren)
 import qualified GHCJS.DOM.Types as DOM
 import qualified Anapo.Text as T
 
