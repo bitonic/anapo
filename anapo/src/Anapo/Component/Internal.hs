@@ -70,7 +70,7 @@ instance Semigroup.Semigroup Rerender where
 
 instance Monoid Rerender where
   mempty = UnsafeDontRerender
-  mappend = (<>)
+  mappend = (Semigroup.<>)
 
 newtype Dispatch stateRoot = Dispatch
   { unDispatch :: forall state context props.
