@@ -223,7 +223,9 @@ nodeLoop withState node excComp injectMode root = do
                   go compRoot' rendered
                 Just (comp, rerender) -> do
                   case rerender of
-                    UnsafeDontRerender -> return ()
+                    UnsafeDontRerender -> do
+                      logDebug ("Not rerendering component " <> _componentName comp <> " since the update function returned UnsafeDontRerender")
+                      return ()
                     Rerender -> do
                       positions <- liftIO (readIORef (_componentPositions comp))
                       logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
