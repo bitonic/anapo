@@ -121,14 +121,14 @@ namespace Render {
   function addProperties(defProps: DefaultProperties, el: Node, props: VDom.Properties, prevProps: VDom.Properties) {
     // remove properties that are not there anymore
     for (const prop in prevProps) {
-      if (!props[prop]) {
+      if (props[prop] === undefined) {
         (<any>el)[prop] = defProps[prop];
         delete defProps[prop];
       }
     }
     // add the new ones
     for (const prop in props) {
-      if (prevProps[prop]) {
+      if (prevProps[prop] !== undefined) {
         defProps[prop] = defProps[prop];
         // if the previous properties had the prop already, set the property unless
         // they're the same
@@ -147,14 +147,14 @@ namespace Render {
   function addAttributes(dom: HTMLElement, attrs: VDom.Attributes, prevAttrs: VDom.Attributes) {
     // remove all the attrs that are not there anymore
     for (const attr in prevAttrs) {
-      if (!attrs[attr]) {
+      if (attrs[attr] === undefined) {
         dom.removeAttribute(attr);
       }
     }
     // add the others
     for (const attr in attrs) {
       // only set if they're not equal
-      if (!prevAttrs[attr] || !stringEq(prevAttrs[attr], attrs[attr])) {
+      if (prevAttrs[attr] === undefined || !stringEq(prevAttrs[attr], attrs[attr])) {
         dom.setAttribute(attr, attrs[attr]);
       }
     }
@@ -164,14 +164,14 @@ namespace Render {
     const css = dom.style;
     // remove all the keys that are not there anymore
     for (const k in prevStyle) {
-      if (!style[k]) {
+      if (style[k] === undefined) {
         css.removeProperty(k);
       }
     }
     // add all the new ones
     for (const k in style) {
       // only set if they're not equal
-      if (!prevStyle[k] || style[k] !== prevStyle[k]) {
+      if (prevStyle[k] === undefined || style[k] !== prevStyle[k]) {
         css.setProperty(k, style[k]);
       }
     }
@@ -182,13 +182,13 @@ namespace Render {
     const domClasses = dom.classList;
     // remove all the classes that are not there anymore
     for (const cls in prevClasses) {
-      if (!classes[cls]) {
+      if (classes[cls] === undefined) {
         domClasses.remove(cls);
       }
     }
     // add the new ones
     for (const cls in classes) {
-      if (!prevClasses[cls]) {
+      if (prevClasses[cls] === undefined) {
         domClasses.add(cls);
       }
     }
@@ -431,7 +431,7 @@ namespace Render {
         mbCursor = rvdomChild.dom;
         rvdom_i++;
         vdom_i++;
-      } else if (!vdomChildren.elements[rvdomKey]) {
+      } else if (vdomChildren.elements[rvdomKey] === undefined) {
         // if the old key does not exist at all in the old stuff, remove the current node.
         // this is to avoid shuffling around nodes when it's not needed
         removeNode(container, rvdomChildren.elements[rvdomKey], callbacksToRelease);
@@ -449,7 +449,7 @@ namespace Render {
     // Remove the leftover nodes
     for (; rvdom_i < rvdomOrder.length; rvdom_i++) {
       const rvdomKey = rvdomChildren.order[rvdom_i];
-      if (!patchedChildren[rvdomKey]) {
+      if (patchedChildren[rvdomKey] === undefined) {
         removeNode(container, rvdomChildren.elements[rvdomKey], callbacksToRelease);
         delete rvdomChildren.elements[rvdomKey];
       }
