@@ -165,12 +165,12 @@ finalizeNode Node{..} = do
     storeCallback cbacksObj fun label = do
 #if defined(ghcjs_HOST_OS)
       funVal <- GHCJS.syncCallback1 GHCJS.ThrowWouldBlock $ \el -> do
-        fun =<< DOM.unsafeCastTo DOM.HTMLElement el
+        fun (coerce el)
       funObj <- js_newLifecycleCallback funVal
       js_setProperty cbacksObj (pack label) funObj
 #else
       funFun <- JS.function $ \_ _ [el] -> do
-        fun =<< DOM.unsafeCastTo DOM.HTMLElement el
+        fun (coerce el)
       funObj <- JS.jsg"Anapo" ^. JS.jsf"newLifecycleCallback" (funFun, funFun)
       (cbacksObj JS.<# label) funObj
 #endif
@@ -225,9 +225,7 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
     EPClass cls -> js_setClass el cls
     EPEvent type_ evt -> do
       evtFun <- GHCJS.syncCallback2 GHCJS.ThrowWouldBlock $ \el0 ev -> do
-        el_ <- DOM.unsafeCastTo DOM.HTMLElement el0
-        ev_ <- DOM.unsafeCastTo DOM.Event ev
-        evt el_ ev_
+        evt (coerce el0) (coerce ev)
       js_pushEvent el type_ evtFun
 #else
   NBElement (Element el) -> case elPatch of
@@ -237,9 +235,7 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
     EPClass cls -> ((el ^. JS.js "classes") JS.<# cls) True
     EPEvent type_ evt -> do
       evtFun <- JS.function $ \_ this [ev] -> do
-        this_ <- DOM.unsafeCastTo DOM.HTMLElement this
-        ev_ <- DOM.unsafeCastTo DOM.Event ev
-        evt this_ ev_
+        evt (coerce this) (coerce ev)
       evtObj <- JS.jsg"Anapo" ^. JS.jsf"newEventCallback" (type_, evtFun, evtFun)
       void (el ^. JS.js "events" ^. JS.jsf"push" [evtObj])
 #endif

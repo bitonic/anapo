@@ -31,6 +31,7 @@ import Data.List (foldl')
 import Data.Foldable (for_)
 import qualified Language.Javascript.JSaddle as JS
 import qualified Data.Semigroup as Semigroup
+import GHC.Prim (coerce)
 
 import qualified Anapo.VDOM as V
 import Anapo.Logging
@@ -705,10 +706,8 @@ patchElement node0 patches0 = liftAction $ do
           V.patchElement node (V.EPProperty propName propBodyVal)
           mkPatches node patches
         NPEvent (SomeEventAction evName evListener) -> do
-          V.patchElement node $ V.EPEvent evName $ \(DOM.HTMLElement el_) (DOM.Event ev_) -> do
-            el__ <- DOM.fromJSValUnchecked el_
-            ev__ <- DOM.fromJSValUnchecked ev_
-            unliftJSM u (evListener el__ ev__)
+          V.patchElement node $ V.EPEvent evName $ \el_ ev_ -> do
+            unliftJSM u (evListener (coerce el_) (coerce ev_))
           mkPatches node patches
         NPClasses classes -> do
           for_ classes $ \class_ ->
