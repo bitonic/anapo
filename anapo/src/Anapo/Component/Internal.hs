@@ -345,6 +345,8 @@ data DomEnv stateRoot = DomEnv
   -- ^ this is whether we have added any path since the last component.
   -- it's used solely to prevent people placing a component on the same
   -- path, which will make them step on each other toes.
+  , domEnvComponentName :: Text
+  -- ^ used for debugging
   }
 
 newtype DomM dom context state a = DomM
@@ -353,7 +355,7 @@ newtype DomM dom context state a = DomM
          ActionEnv rootState
       -> ActionTraverse rootState compProps compContext compState context state
       -> DomEnv rootState
-      -> context
+      -> Maybe context
       -> state
       -> dom
       -> DOM.JSM a
@@ -423,12 +425,20 @@ instance MonadReader st (DomM dom ctx st) where
     unDomM m acEnv acTrav anEnv ctx (f st) dom
 
 {-# INLINE askContext #-}
-askContext :: DomM dom ctx st ctx
-askContext = DomM (\_acEnv _acTrav _anEnv ctx _st _dom -> return ctx)
+askContext :: HasCallStack => DomM dom ctx st ctx
+askContext = DomM $ \_acEnv _acTrav anEnv mbCtx _st _dom ->
+  case mbCtx of
+    Nothing -> do
+      error ("Could not get the component for viewer " <> T.unpack (domEnvComponentName anEnv))
+    Just ctx -> return ctx
 
 {-# INLINE viewContext #-}
-viewContext :: Lens.Getting a ctx a -> DomM dom ctx st a
-viewContext l = DomM (\_acEnv _acTrav _anEnv ctx _st _dom -> return (ctx ^. l))
+viewContext :: HasCallStack => Lens.Getting a ctx a -> DomM dom ctx st a
+viewContext l = DomM $ \_acEnv _acTrav anEnv mbCtx _st _dom ->
+  case mbCtx of
+    Nothing -> do
+      error ("Could not get the component for viewer " <> T.unpack (domEnvComponentName anEnv))
+    Just ctx -> return (ctx ^. l)
 
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
@@ -471,7 +481,7 @@ zoomCtxF ctx l m = DomM $ \acEnv acTrav anEnv _ctx st dom ->
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
-    ctx
+    (Just ctx)
     st
     dom
 
@@ -486,7 +496,7 @@ zoomCtxL l m = DomM $ \acEnv acTrav anEnv ctx st dom ->
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
-    (view l ctx)
+    (fmap (view l) ctx)
     st
     dom
 
@@ -791,8 +801,9 @@ simpleNode st node0 = do
     DomEnv
       { domEnvReversePath = []
       , domEnvDirtyPath = False
+      , domEnvComponentName = _componentName comp
       }
-    ()
+    (Just ())
     st
     ()
   return vdom
@@ -943,9 +954,6 @@ component props (ComponentToken tok) = do
     unless (domEnvDirtyPath anEnv) $
       error (T.unpack name <> ": Trying to insert component immediately inside another component at path " <> show (reverse (domEnvReversePath anEnv)) <> ", please wrap the inner component in a node.")
     mbCtx <- liftIO (readIORef (_componentContext comp))
-    ctx <- case mbCtx of
-      Nothing -> error (T.unpack name <> ": Context not initialized!")
-      Just ctx -> return ctx
     node <- unDomM
       (_componentNode comp props)
       acEnv
@@ -955,8 +963,10 @@ component props (ComponentToken tok) = do
         , atToContext = id
         }
       anEnv
-        { domEnvDirtyPath = False }
-      ctx
+        { domEnvDirtyPath = False
+        , domEnvComponentName = _componentName comp
+        }
+      mbCtx
       (_componentState comp)
       dom
     return (node, name, _componentPositions comp, _componentFingerprint comp)

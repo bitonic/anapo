@@ -33,7 +33,7 @@ import qualified GHCJS.DOM.Document as DOM.Document
 
 import qualified Anapo.VDOM as V
 import Anapo.Component.Internal
-import Anapo.Text (Text, pack, unpack)
+import Anapo.Text (Text, pack)
 import Anapo.Logging
 
 #if defined(ghcjs_HOST_OS)
@@ -127,9 +127,6 @@ nodeLoop withState node excComp injectMode root = do
       -> DOM.JSM V.Node
     runComp path travComp comp props = do
       mbCtx <- liftIO (readIORef (_componentContext comp))
-      ctx <- case mbCtx of
-        Nothing -> error ("Couldn't get context for component " <> unpack (_componentName comp) <> ", you probably forgot to initialize it.")
-        Just ctx -> return ctx
       (vdom, vdomDt) <- timeIt $ unDomM
         (do
           node0 <- _componentNode comp props
@@ -140,8 +137,9 @@ nodeLoop withState node excComp injectMode root = do
         DomEnv
           { domEnvReversePath = reverse path
           , domEnvDirtyPath = False
+          , domEnvComponentName = _componentName comp
           }
-        ctx
+        mbCtx
         (_componentState comp)
         ()
       DOM.syncPoint
