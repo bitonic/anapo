@@ -10,7 +10,7 @@
 module Anapo.Component.Internal where
 
 import qualified Data.HashMap.Strict as HMS
-import Control.Lens (Lens', view, lens, (^.))
+import Control.Lens (Lens', view, lens)
 import qualified Control.Lens as Lens
 import qualified Control.Lens.Internal.Zoom as Lens
 import Control.Monad (ap, when, unless, void)
@@ -77,7 +77,7 @@ newtype Dispatch stateRoot = Dispatch
   { unDispatch :: forall state context props.
       CallStack ->
       AffineTraversal' stateRoot (Component props context state) ->
-      (context -> state -> DOM.JSM (state, Rerender)) ->
+      (Text -> Maybe context -> state -> DOM.JSM (state, Rerender)) ->
       IO ()
   }
 
@@ -217,13 +217,14 @@ actFork m =
   liftAction (Action (\env trav -> forkRegistered (aeRegisterThread env) (aeHandleException env) (unAction m env trav)))
 
 newtype DispatchM context0 state0 context state a =
-  DispatchM {unDispatchM :: context -> state -> Action context0 state0 (a, state)}
+  DispatchM {unDispatchM :: Text -> Maybe context -> state -> Action context0 state0 (a, state)}
 
 type DispatchM' ctx st = DispatchM ctx st ctx st
 
 instance Functor (DispatchM context0 state0 context state) where
   {-# INLINE fmap #-}
-  fmap f (DispatchM g) = DispatchM (\ctx st -> do (x, st') <- g ctx st; return (f x, st'))
+  fmap f (DispatchM g) = DispatchM $ \compName ctx st ->
+    do (x, st') <- g compName ctx st; return (f x, st')
 
 instance Applicative (DispatchM context0 state0 context state) where
   {-# INLINE pure #-}
@@ -233,71 +234,65 @@ instance Applicative (DispatchM context0 state0 context state) where
 
 instance Monad (DispatchM context0 state0 context state) where
   {-# INLINE return #-}
-  return x = DispatchM (\_ctx st -> return (x, st))
+  return x = DispatchM (\_compName _ctx st -> return (x, st))
 
   {-# INLINE (>>=) #-}
-  DispatchM mx >>= mf = DispatchM $ \ctx st1 -> do
-    (x, st2) <- mx ctx st1
-    unDispatchM (mf x) ctx st2
+  DispatchM mx >>= mf = DispatchM $ \compName ctx st1 -> do
+    (x, st2) <- mx compName ctx st1
+    unDispatchM (mf x) compName ctx st2
 
 instance MonadReader context (DispatchM context0 state0 context state) where
   {-# INLINE ask #-}
-  ask = DispatchM (\ctx st -> return (ctx, st))
+  ask = DispatchM (\compName ctx st -> return (assertContext compName ctx, st))
   {-# INLINE reader #-}
-  reader f = DispatchM (\ctx st -> return (f ctx, st))
+  reader f = DispatchM (\compName ctx st -> return (f (assertContext compName ctx), st))
   {-# INLINE local #-}
-  local f (DispatchM g) = DispatchM (\ctx st -> g (f ctx) st)
+  local f (DispatchM g) = DispatchM (\compName ctx st -> g compName (f <$> ctx) st)
 
 instance MonadState state (DispatchM context0 state0 context state) where
   {-# INLINE get #-}
-  get = DispatchM (\_ctx st -> return (st, st))
+  get = DispatchM (\_compName _ctx st -> return (st, st))
   {-# INLINE put #-}
-  put st = DispatchM (\_ctx _st -> return ((), st))
+  put st = DispatchM (\_compName _ctx _st -> return ((), st))
   {-# INLINE state #-}
-  state f = DispatchM (\_ctx st -> return (f st))
+  state f = DispatchM (\_compName _ctx st -> return (f st))
 
 instance MonadIO (DispatchM context0 state0 context state) where
   {-# INLINE liftIO #-}
-  liftIO m = DispatchM (\_ctx st -> do x <- liftIO m; return (x, st))
+  liftIO m = DispatchM (\_compName _ctx st -> do x <- liftIO m; return (x, st))
 
 #if !defined(ghcjs_HOST_OS)
 instance JS.MonadJSM (DispatchM context0 state0 context state) where
   {-# INLINE liftJSM' #-}
-  liftJSM' m = DispatchM (\_ctx st -> do x <- JS.liftJSM' m; return (x, st))
+  liftJSM' m = DispatchM (\_compName _ctx st -> do x <- JS.liftJSM' m; return (x, st))
 #endif
 
 instance MonadAction context0 state0 (DispatchM context0 state0 context state) where
   {-# INLINE liftAction #-}
-  liftAction m = DispatchM (\_ctx st -> do x <- m; return (x, st))
+  liftAction m = DispatchM (\_compName _ctx st -> do x <- m; return (x, st))
 
-type instance Lens.Magnified (DispatchM ctx0 state0 ctx state) = Lens.Effect (StateT state (Action ctx0 state0))
+type instance Lens.Magnified (DispatchM ctx0 state0 ctx state) =
+  Lens.Effect (StateT state (Action ctx0 state0))
 instance Lens.Magnify (DispatchM ctx0 state0 in_ state) (DispatchM ctx0 state0 out state) in_ out where
   {-# INLINE magnify #-}
   magnify l (DispatchM m) =
-    DispatchM (\ctx st -> runStateT (Lens.getEffect (l (\ctx' -> Lens.Effect (StateT (m ctx'))) ctx)) st)
+    DispatchM $ \compName mbCtx st -> case mbCtx of
+      Nothing -> m compName Nothing st
+      Just ctx ->
+        runStateT (Lens.getEffect (l (\ctx' -> Lens.Effect (StateT (m compName (Just ctx')))) ctx)) st
 
 type instance Lens.Zoomed (DispatchM ctx0 state0 ctx state) = Lens.Focusing (Action ctx0 state0)
 instance Lens.Zoom (DispatchM ctx0 state0 ctx in_) (DispatchM ctx0 state0 ctx out) in_ out where
   {-# INLINE zoom #-}
   zoom l (DispatchM m) =
-    DispatchM (\ctx st -> Lens.unfocusing (l (\st' -> Lens.Focusing (m ctx st')) st))
+    DispatchM (\compName ctx st -> Lens.unfocusing (l (\st' -> Lens.Focusing (m compName ctx st')) st))
 
 {-# INLINABLE dispatch #-}
 dispatch ::
      (HasCallStack, MonadAction context state m)
   => DispatchM context state context state ()
   -> m ()
-dispatch (DispatchM m) =
-  liftAction $ Action $ \env trav ->
-    liftIO $ unDispatch
-      (aeDispatch env)
-      callStack
-      (atToComp trav)
-      (\ctx st -> case toMaybeOf (atToContext trav) ctx of
-          Nothing -> return (st, UnsafeDontRerender)
-          Just ctx' -> do
-            st' <- atToState trav (\st' -> fmap snd (unAction (m ctx' st') env trav)) st
-            return (st', Rerender))
+dispatch m = dispatchRerender (Rerender <$ m)
 
 -- | Variant of dispatch that lets you decide whether the state update
 -- will trigger a rerender or not. Obviously must be used with care,
@@ -313,18 +308,28 @@ dispatchRerender (DispatchM m) =
       (aeDispatch env)
       callStack
       (atToComp trav)
-      (\ctx st -> case toMaybeOf (atToContext trav) ctx of
-          Nothing -> return (st, UnsafeDontRerender)
-          Just ctx' -> do
-            (st', rerender) <- runStateT
-              (atToState trav
-                (\st' -> do
-                  (rerender, st'') <- lift (unAction (m ctx' st') env trav)
-                  put rerender
-                  return st'')
-                st)
-              UnsafeDontRerender
-            return (st', rerender))
+      (\compName mbCtx st -> do
+          -- if we do not have a context, just execute the action anyway
+          -- but with no context. we cannot know if the traversal would
+          -- have succeeded since we do not have the context yet, and
+          -- at the same time we do not want to skip possibly required
+          -- updates, so this is the best we can do.
+          let continueWithCtx ctx = do
+                (st', rerender) <- runStateT
+                  (atToState trav
+                    (\st' -> do
+                      (rerender, st'') <- lift (unAction (m compName ctx st') env trav)
+                      put rerender
+                      return st'')
+                    st)
+                  UnsafeDontRerender
+                return (st', rerender)
+          case mbCtx of
+            Nothing -> continueWithCtx Nothing
+            Just ctx -> do
+              case toMaybeOf (atToContext trav) ctx of
+                Nothing -> return (st, UnsafeDontRerender)
+                Just ctx' -> continueWithCtx (Just ctx'))
 
 {-# INLINE askRegisterThread #-}
 askRegisterThread :: (MonadAction context state m) => m RegisterThread
@@ -345,6 +350,8 @@ data DomEnv stateRoot = DomEnv
   -- ^ this is whether we have added any path since the last component.
   -- it's used solely to prevent people placing a component on the same
   -- path, which will make them step on each other toes.
+  , domEnvComponentName :: Text
+  -- ^ used for debugging
   }
 
 newtype DomM dom context state a = DomM
@@ -353,7 +360,7 @@ newtype DomM dom context state a = DomM
          ActionEnv rootState
       -> ActionTraverse rootState compProps compContext compState context state
       -> DomEnv rootState
-      -> context
+      -> Maybe context
       -> state
       -> dom
       -> DOM.JSM a
@@ -422,13 +429,22 @@ instance MonadReader st (DomM dom ctx st) where
   local f m = DomM $ \acEnv acTrav anEnv ctx st dom -> do
     unDomM m acEnv acTrav anEnv ctx (f st) dom
 
+assertContext :: HasCallStack => Text -> Maybe ctx -> ctx
+assertContext compName mbCtx =
+  case mbCtx of
+    Nothing -> do
+      error ("Could not get the component for viewer " <> T.unpack compName)
+    Just ctx -> ctx
+
 {-# INLINE askContext #-}
-askContext :: DomM dom ctx st ctx
-askContext = DomM (\_acEnv _acTrav _anEnv ctx _st _dom -> return ctx)
+askContext :: HasCallStack => DomM dom ctx st ctx
+askContext = DomM $ \_acEnv _acTrav anEnv mbCtx _st _dom ->
+  return (assertContext (domEnvComponentName anEnv) mbCtx)
 
 {-# INLINE viewContext #-}
-viewContext :: Lens.Getting a ctx a -> DomM dom ctx st a
-viewContext l = DomM (\_acEnv _acTrav _anEnv ctx _st _dom -> return (ctx ^. l))
+viewContext :: HasCallStack => Lens.Getting a ctx a -> DomM dom ctx st a
+viewContext l = DomM $ \_acEnv _acTrav anEnv mbCtx _st _dom ->
+  return (view l (assertContext (domEnvComponentName anEnv) mbCtx))
 
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
@@ -471,7 +487,7 @@ zoomCtxF ctx l m = DomM $ \acEnv acTrav anEnv _ctx st dom ->
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
-    ctx
+    (Just ctx)
     st
     dom
 
@@ -486,7 +502,7 @@ zoomCtxL l m = DomM $ \acEnv acTrav anEnv ctx st dom ->
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
-    (view l ctx)
+    (fmap (view l) ctx)
     st
     dom
 
@@ -791,8 +807,9 @@ simpleNode st node0 = do
     DomEnv
       { domEnvReversePath = []
       , domEnvDirtyPath = False
+      , domEnvComponentName = _componentName comp
       }
-    ()
+    (Just ())
     st
     ()
   return vdom
@@ -943,9 +960,6 @@ component props (ComponentToken tok) = do
     unless (domEnvDirtyPath anEnv) $
       error (T.unpack name <> ": Trying to insert component immediately inside another component at path " <> show (reverse (domEnvReversePath anEnv)) <> ", please wrap the inner component in a node.")
     mbCtx <- liftIO (readIORef (_componentContext comp))
-    ctx <- case mbCtx of
-      Nothing -> error (T.unpack name <> ": Context not initialized!")
-      Just ctx -> return ctx
     node <- unDomM
       (_componentNode comp props)
       acEnv
@@ -955,8 +969,10 @@ component props (ComponentToken tok) = do
         , atToContext = id
         }
       anEnv
-        { domEnvDirtyPath = False }
-      ctx
+        { domEnvDirtyPath = False
+        , domEnvComponentName = _componentName comp
+        }
+      mbCtx
       (_componentState comp)
       dom
     return (node, name, _componentPositions comp, _componentFingerprint comp)

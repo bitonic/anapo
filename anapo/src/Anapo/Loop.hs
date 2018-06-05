@@ -33,7 +33,7 @@ import qualified GHCJS.DOM.Document as DOM.Document
 
 import qualified Anapo.VDOM as V
 import Anapo.Component.Internal
-import Anapo.Text (Text, pack, unpack)
+import Anapo.Text (Text, pack)
 import Anapo.Logging
 
 #if defined(ghcjs_HOST_OS)
@@ -52,7 +52,7 @@ timeIt m = do
 
 data DispatchMsg stateRoot = forall props context state. DispatchMsg
   { _dispatchMsgTraverseComp :: AffineTraversal' (Component () () stateRoot) (Component props context state)
-  , _dispatchMsgModify :: context -> state -> DOM.JSM (state, Rerender)
+  , _dispatchMsgModify :: Text -> Maybe context -> state -> DOM.JSM (state, Rerender)
   , _dispatchCallStack :: CallStack
   }
 
@@ -127,9 +127,6 @@ nodeLoop withState node excComp injectMode root = do
       -> DOM.JSM V.Node
     runComp path travComp comp props = do
       mbCtx <- liftIO (readIORef (_componentContext comp))
-      ctx <- case mbCtx of
-        Nothing -> error ("Couldn't get context for component " <> unpack (_componentName comp) <> ", you probably forgot to initialize it.")
-        Just ctx -> return ctx
       (vdom, vdomDt) <- timeIt $ unDomM
         (do
           node0 <- _componentNode comp props
@@ -140,8 +137,9 @@ nodeLoop withState node excComp injectMode root = do
         DomEnv
           { domEnvReversePath = reverse path
           , domEnvDirtyPath = False
+          , domEnvComponentName = _componentName comp
           }
-        ctx
+        mbCtx
         (_componentState comp)
         ()
       DOM.syncPoint
@@ -198,16 +196,12 @@ nodeLoop withState node excComp injectMode root = do
                             "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
                           mbCtx <- liftIO (readIORef (_componentContext comp))
-                          ctx <- case mbCtx of
-                            Nothing -> do
-                              lift $ onErr rendered $ SomeException $ AnapoException $
-                                "nodeLoop: failed to get component context for component " <> _componentName comp <> "!"
-                            Just ctx -> return ctx
                           -- run the state update synchronously: both
                           -- because we want it to be done asap, and
                           -- because we want to crash it if there are
                           -- blocking calls
-                          mbSt <- DOM.liftJSM (try (synchronously (modif ctx (_componentState comp))))
+                          mbSt <- DOM.liftJSM $ try $
+                            synchronously (modif (_componentName comp) mbCtx (_componentState comp))
                           case mbSt of
                             Left err -> DOM.liftJSM (onErr rendered err)
                             Right (st, rerender) -> do
