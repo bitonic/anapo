@@ -189,6 +189,7 @@ mainJSM = installNodeBody
       rows <- liftIO (MV.new 0)
       DOM.liftJSM (cont State{_stateRows = rows, _stateSelected = Nothing}))
   rowsComponent
+  (const True)
   (\err -> text ("Got error: " <> T.pack (show err)))
   IMAppend
 

@@ -68,7 +68,10 @@ data InstallMode =
 nodeLoop :: forall st.
      (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st
-  -- ^ how to render the state
+  -- ^ how to render the state. returns whether the exception should be re-thrown
+  -> (SomeException -> Bool)
+  -- ^ Whether to re-throw exceptions. For exceptions that return 'False' here, we will
+  -- simply render them, emit a warning, and shut down.
   -> (SomeException -> Node () ())
   -- ^ how to render exceptions
   -> InstallMode
@@ -78,7 +81,7 @@ nodeLoop :: forall st.
   -> DOM.JSM V.RenderedNode
   -- ^ returns the rendered node, when there is nothing left to
   -- do. might never terminate
-nodeLoop withState node excComp injectMode root = do
+nodeLoop withState node shouldRethrow excComp injectMode root = do
   -- dispatch channel
   dispatchChan :: Chan (DispatchMsg st) <- liftIO newChan
   let
@@ -153,14 +156,24 @@ nodeLoop withState node excComp injectMode root = do
     (withState $ \st0 -> do
       -- what to do in case of exceptions
       let
-        onErr :: V.RenderedNode -> SomeException -> DOM.JSM a
-        onErr rendered err = do
-          -- if we got an exception, render one last time and shut down
+        onErrRethrow :: V.RenderedNode -> SomeException -> DOM.JSM a
+        onErrRethrow rendered err = do
           logError ("Got exception, will render it and rethrow: " <> pack (show err))
           vdom <- simpleNode () (excComp err)
           void (V.reconciliate rendered [] vdom)
-          logError ("Just got exception and rendered, will rethrow: " <> pack (show err))
+          logError ("Just got exception and rendered, rethrowing: " <> pack (show err))
           liftIO (throwIO err)
+        onErrNoRethrow :: V.RenderedNode -> SomeException -> DOM.JSM ()
+        onErrNoRethrow rendered err = do
+          logWarn ("Got exception, will render it and not rethrow: " <> pack (show err))
+          vdom <- simpleNode () (excComp err)
+          void (V.reconciliate rendered [] vdom)
+          logWarn ("Just got exception and rendered, won't rethrow: " <> pack (show err))
+          liftIO (throwIO err)
+        onErr :: V.RenderedNode -> SomeException -> DOM.JSM ()
+        onErr rendered err = if shouldRethrow err
+          then onErrRethrow rendered err
+          else onErrNoRethrow rendered err
       -- main loop
       let
         go ::
@@ -184,7 +197,7 @@ nodeLoop withState node excComp injectMode root = do
               -- traverse to the component using StateT, failing
               -- if we reach anything twice (it'd mean it's not an
               -- AffineTraversal)
-              ((compRoot', mbComp), updateDt) <- timeIt $ runStateT
+              (compOrErr, updateDt) <- timeIt $ try $ runStateT
                 (travComp
                   (\comp -> do
                       logDebug ("Visiting component " <> _componentName comp)
@@ -192,7 +205,7 @@ nodeLoop withState node excComp injectMode root = do
                       case mbComp of
                         Just{} -> do
                           -- fail if we already visited
-                          lift $ onErr rendered $ SomeException $ AnapoException
+                          lift $ onErrRethrow rendered $ SomeException $ AnapoException
                             "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
                           mbCtx <- liftIO (readIORef (_componentContext comp))
@@ -200,35 +213,36 @@ nodeLoop withState node excComp injectMode root = do
                           -- because we want it to be done asap, and
                           -- because we want to crash it if there are
                           -- blocking calls
-                          mbSt <- DOM.liftJSM $ try $
+                          (st, rerender) <- DOM.liftJSM $
                             synchronously (modif (_componentName comp) mbCtx (_componentState comp))
-                          case mbSt of
-                            Left err -> DOM.liftJSM (onErr rendered err)
-                            Right (st, rerender) -> do
-                              let comp' = comp{ _componentState = st }
-                              put (Just (comp', rerender))
-                              return comp')
+                          let comp' = comp{ _componentState = st }
+                          put (Just (comp', rerender))
+                          return comp')
                   compRoot)
                 Nothing
-              logDebug ("State updated (" <> pack (show updateDt) <> "), might re render")
-              case mbComp of
-                Nothing -> do
-                  logInfo "The component was not found, not rerendering"
-                  go compRoot' rendered
-                Just (comp, rerender) -> do
-                  case rerender of
-                    UnsafeDontRerender -> do
-                      logDebug ("Not rerendering component " <> _componentName comp <> " since the update function returned UnsafeDontRerender")
-                      return ()
-                    Rerender -> do
-                      positions <- liftIO (readIORef (_componentPositions comp))
-                      logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
-                      -- do not leave half-done DOM in place, run
-                      -- everything synchronously
-                      synchronously $ for_ (HMS.toList positions) $ \(pos, props) -> do
-                        vdom <- runComp pos travComp comp props
-                        V.reconciliate rendered pos vdom
-                  go compRoot' rendered
+              case compOrErr of
+                Left err ->
+                  onErr rendered err
+                Right (compRoot', mbComp) -> do
+                  logDebug ("State updated (" <> pack (show updateDt) <> "), might re render")
+                  case mbComp of
+                    Nothing -> do
+                      logInfo "The component was not found, not rerendering"
+                      go compRoot' rendered
+                    Just (comp, rerender) -> do
+                      case rerender of
+                        UnsafeDontRerender -> do
+                          logDebug ("Not rerendering component " <> _componentName comp <> " since the update function returned UnsafeDontRerender")
+                          return ()
+                        Rerender -> do
+                          positions <- liftIO (readIORef (_componentPositions comp))
+                          logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
+                          -- do not leave half-done DOM in place, run
+                          -- everything synchronously
+                          synchronously $ for_ (HMS.toList positions) $ \(pos, props) -> do
+                            vdom <- runComp pos travComp comp props
+                            V.reconciliate rendered pos vdom
+                      go compRoot' rendered
       tid <- liftIO myThreadId
       finally
         (do
@@ -265,25 +279,27 @@ removeAllChildren node = go
 installNodeBody ::
      (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st
+  -> (SomeException -> Bool)
   -> (SomeException -> Node () ())
   -> InstallMode
   -> DOM.JSM ()
-installNodeBody getSt vdom0 excVdom injectMode = do
+installNodeBody getSt vdom0 shouldRethrow excVdom injectMode = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.Document.getBodyUnchecked doc
-  void (nodeLoop getSt vdom0 excVdom injectMode (DOM.toNode body))
+  void (nodeLoop getSt vdom0 shouldRethrow excVdom injectMode (DOM.toNode body))
 
 {-# INLINABLE installNode #-}
 installNode ::
      (DOM.IsNode el)
   => (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st
+  -> (SomeException -> Bool)
   -> (SomeException -> Node () ())
   -> InstallMode
   -> el
   -> DOM.JSM ()
-installNode getSt vdom0 excVdom injectMode container = do
-  void (nodeLoop getSt vdom0 excVdom injectMode (DOM.toNode container))
+installNode getSt vdom0 shouldRethrow excVdom injectMode container = do
+  void (nodeLoop getSt vdom0 shouldRethrow excVdom injectMode (DOM.toNode container))
 
 addCallStack :: CallStack -> Text -> Text
 addCallStack stack = case getCallStack stack of

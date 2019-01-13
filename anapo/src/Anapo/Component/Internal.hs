@@ -204,7 +204,7 @@ forkRegistered register handler m = do
     case mbErr of
       Left err -> do
         tid <- myThreadId
-        logError ("Caught exception in registered thread " <> pack (show tid) <> ", will handle it upstream: " <> pack (show err))
+        logWarn ("Caught exception in registered thread " <> pack (show tid) <> ", will handle it upstream: " <> pack (show err))
         handler err
       Right _ -> return ()
 

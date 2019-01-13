@@ -22,6 +22,7 @@ mainJSM = do
   installNodeBody
     (\cont -> testAppsWith (liftJSM . cont))
     testAppsComponent
+    (const True)
     (\exc -> testAppsError (tshow exc))
     IMAppend
 
