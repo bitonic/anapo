@@ -235,7 +235,7 @@ namespace Render {
     if (children.keyed) {
       return {keyed: renderKeyedDom(container, children.keyed)};
     }
-    if (children.rawHtml) {
+    if (children.rawHtml !== undefined) {
       container.innerHTML = children.rawHtml;
       return {rawHtml: children.rawHtml};
     }
@@ -261,10 +261,10 @@ namespace Render {
       rvdom.children = renderChildren(dom, vdom.element.children);
       return finalize(rvdom);
     }
-    if (vdom.text) {
+    if (vdom.text !== undefined) {
       return finalize({vdom, dom: document.createTextNode(vdom.text)});
     }
-    if (vdom.raw) {
+    if (vdom.raw !== undefined) {
       return finalize({vdom, dom: vdom.raw});
     }
     throw "VDOM didn't contain element, text, or raw element.";
@@ -306,7 +306,7 @@ namespace Render {
 
   // appends to callbacksToRelease
   function cleanupChildren(rchildren: VDom.Children<RenderedNode>, callbacksToRelease: VDom.CallbackToken[]) {
-    if (rchildren.rawHtml) {
+    if (rchildren.rawHtml !== undefined) {
       // nothing to do
     } else if (rchildren.normal) {
       rchildren.normal.forEach((rvdom) => cleanupNode(rvdom, callbacksToRelease));
@@ -459,7 +459,7 @@ namespace Render {
   }
 
   function removeChildren(container: HTMLElement, callbacksToRelease: VDom.CallbackToken[], rvdomChildren: VDom.Children<RenderedNode>) {
-    if (rvdomChildren.rawHtml) {
+    if (rvdomChildren.rawHtml !== undefined) {
       container.innerHTML = ""
     } else if (rvdomChildren.normal) {
       removeDom(container, rvdomChildren.normal, callbacksToRelease, 0);
@@ -480,7 +480,7 @@ namespace Render {
       patchDom(container, rvdomChildren.normal, callbacksToRelease, vdom.normal);
     } else if (rvdomChildren.keyed && vdom.keyed) {
       patchKeyedDom(container, rvdomChildren.keyed, callbacksToRelease, vdom.keyed);
-    } else if (rvdomChildren.rawHtml && vdom.rawHtml && rvdomChildren.rawHtml === vdom.rawHtml) {
+    } else if (rvdomChildren.rawHtml !== undefined && vdom.rawHtml !== undefined && rvdomChildren.rawHtml === vdom.rawHtml) {
       // nothing to do
     } else {
       // render and reset the rvdom
@@ -534,7 +534,7 @@ namespace Render {
         patchChildren(domEl, rvdom.children!, callbacksToRelease, vdomEl.children);
         // did patch callback for _new_ node
         VDom.callLifecycleCallback(domEl, vdom.callbacks, "didPatch");
-      } else if (prevVdom.text && vdom.text && prevVdom.text === vdom.text) {
+      } else if (prevVdom.text !== undefined && vdom.text !== undefined && prevVdom.text === vdom.text) {
         // we're already done
       } else {
         incompatible();
@@ -572,7 +572,7 @@ namespace Render {
         } else {
           throw "Got number segment for keyed children";
         }
-      } else if (children.rawHtml) {
+      } else if (children.rawHtml !== undefined) {
         throw "Got raw html even if I had some segments left";
       } else {
         throw "Got no normal or keyed children";
