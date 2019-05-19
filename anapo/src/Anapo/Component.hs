@@ -104,9 +104,12 @@ module Anapo.Component
     -- * attributes / properties
   , SomeEventAction(..)
   , style
-  , property
+  , rawProperty
+  , textProperty
+  , boolProperty
   , rawAttribute
-  , attribute
+  , textAttribute
+  , boolAttribute
 
     -- * dom re-exports
   , DOM.Event.preventDefault

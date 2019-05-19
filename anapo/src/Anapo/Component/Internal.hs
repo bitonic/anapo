@@ -639,8 +639,12 @@ data NodePatch el ctx st =
   | NPDidPatch (el -> Action ctx st ())
   | NPWillRemove (el -> Action ctx st ())
   | NPStyle Text Text
-  | NPAttribute Text (DOM.JSM DOM.JSVal)
-  | NPProperty Text (DOM.JSM DOM.JSVal)
+  | NPRawAttribute Text (DOM.JSM DOM.JSVal)
+  | NPTextAttribute Text Text
+  | NPBoolAttribute Text Bool
+  | NPTextProperty Text Text
+  | NPBoolProperty Text Bool
+  | NPRawProperty Text (DOM.JSM DOM.JSVal)
   | NPEvent (SomeEventAction el ctx st)
   | NPClasses [Text]
 
@@ -713,13 +717,25 @@ patchElement node0 patches0 = liftAction $ do
         NPStyle styleName styleBody -> do
           liftIO (V.patchElement node (V.EPStyle styleName styleBody))
           mkPatches node patches
-        NPAttribute attrName attrBody -> do
+        NPRawAttribute attrName attrBody -> do
           attrBodyVal <- attrBody
-          liftIO (V.patchElement node (V.EPAttribute attrName attrBodyVal))
+          liftIO (V.patchElement node (V.EPRawAttribute attrName attrBodyVal))
           mkPatches node patches
-        NPProperty propName propBody -> do
+        NPTextAttribute attrName attrBody -> do
+          liftIO (V.patchElement node (V.EPTextAttribute attrName attrBody))
+          mkPatches node patches
+        NPBoolAttribute attrName attrBody -> do
+          liftIO (V.patchElement node (V.EPBoolAttribute attrName attrBody))
+          mkPatches node patches
+        NPRawProperty propName propBody -> do
           propBodyVal <- DOM.liftJSM propBody
-          liftIO (V.patchElement node (V.EPProperty propName propBodyVal))
+          liftIO (V.patchElement node (V.EPRawProperty propName propBodyVal))
+          mkPatches node patches
+        NPTextProperty attrName attrBody -> do
+          liftIO (V.patchElement node (V.EPTextProperty attrName attrBody))
+          mkPatches node patches
+        NPBoolProperty attrName attrBody -> do
+          liftIO (V.patchElement node (V.EPBoolProperty attrName attrBody))
           mkPatches node patches
         NPEvent (SomeEventAction evName evListener) -> do
           liftIO $ V.patchElement node $ V.EPEvent evName $ \el_ ev_ -> do
@@ -751,23 +767,39 @@ el tag patches0 isChildren = do
 -- Properties
 -- --------------------------------------------------------------------
 
-{-# INLINE property #-}
-property :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
-property k v = NPProperty k (DOM.toJSVal v)
+{-# INLINE textProperty #-}
+textProperty :: Text -> Text -> NodePatch el context state
+textProperty = NPTextProperty
+
+{-# INLINE boolProperty #-}
+boolProperty :: Text -> Bool -> NodePatch el context state
+boolProperty = NPBoolProperty
+
+{-# INLINE rawProperty #-}
+rawProperty :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
+rawProperty k v = NPRawProperty k (DOM.toJSVal v)
 
 {-# INLINE style #-}
 style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el context state
 style = NPStyle
 
-{-# INLINE rawAttribute #-}
-rawAttribute :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
-rawAttribute k v = NPAttribute k (DOM.toJSVal v)
-
-{-# INLINE attribute #-}
+{-# INLINE textAttribute #-}
 -- | Note: for all standard HTML attributes (e.g. class, src, etc.), you
 -- should use @property@, not @attribute@.
-attribute :: Text -> Text -> NodePatch el context state
-attribute k v = NPAttribute k (DOM.toJSVal v)
+textAttribute :: Text -> Text -> NodePatch el context state
+textAttribute = NPTextAttribute
+
+{-# INLINE boolAttribute #-}
+-- | Note: for all standard HTML attributes (e.g. class, src, etc.), you
+-- should use @property@, not @attribute@.
+boolAttribute :: Text -> Bool -> NodePatch el context state
+boolAttribute = NPBoolAttribute
+
+{-# INLINE rawAttribute #-}
+-- | Note: for all standard HTML attributes (e.g. class, src, etc.), you
+-- should use @property@, not @attribute@.
+rawAttribute :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
+rawAttribute k v = NPRawAttribute k (DOM.toJSVal v)
 
 {-
 {-# INLINE onEvent #-}
