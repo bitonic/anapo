@@ -54,6 +54,7 @@ import Anapo.Logging
 #if defined(ghcjs_HOST_OS)
 import qualified GHCJS.Foreign.Callback as GHCJS
 import qualified GHCJS.Foreign.Callback.Internal as GHCJS
+import GHCJS.Marshal.Pure (pToJSVal)
 #else
 import Control.Monad (void)
 import Data.IORef (newIORef, modifyIORef', IORef, readIORef)
@@ -215,8 +216,12 @@ finalizeNode Node{..} = do
       patches <- liftIO (readIORef elementPatches)
       for_ patches $ \case
         EPStyle k v -> ((elObj ^. JS.js "style") JS.<# k) v
-        EPAttribute k v -> ((elObj ^. JS.js "attributes") JS.<# k) v
-        EPProperty k v -> ((elObj ^. JS.js "properties") JS.<# k) v
+        EPRawAttribute k v -> ((elObj ^. JS.js "attributes") JS.<# k) v
+        EPTextAttribute k v -> ((elObj ^. JS.js "attributes") JS.<# k) v
+        EPBoolAttribute k v -> ((elObj ^. JS.js "attributes") JS.<# k) v
+        EPRawProperty k v -> ((elObj ^. JS.js "properties") JS.<# k) v
+        EPTextProperty k v -> ((elObj ^. JS.js "properties") JS.<# k) v
+        EPBoolProperty k v -> ((elObj ^. JS.js "properties") JS.<# k) v
         EPClass cls -> ((elObj ^. JS.js "classes") JS.<# cls) True
         EPEvent type_ evt -> do
           evtFun <- JS.function $ \_ this [ev] -> do
@@ -292,10 +297,12 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
 #if defined(ghcjs_HOST_OS)
   NBElement (Element el) -> case elPatch of
     EPStyle k v -> js_setStyle el k v
-    -- EPTextAttribute k v -> js_setAttribute el k v
-    -- EPBoolAttribute k v -> js_setAttribute el k v
-    EPAttribute k v -> js_setAttribute el k v
-    EPProperty k v -> js_setElementProperty el k v
+    EPTextAttribute k v -> js_setAttribute el k (pToJSVal v)
+    EPBoolAttribute k v -> js_setAttribute el k (pToJSVal v)
+    EPRawAttribute k v -> js_setAttribute el k v
+    EPTextProperty k v -> js_setElementProperty el k (pToJSVal v)
+    EPBoolProperty k v -> js_setElementProperty el k (pToJSVal v)
+    EPRawProperty k v -> js_setElementProperty el k v
     EPClass cls -> js_setClass el cls
     EPEvent type_ evt -> do
       evtFun <- GHCJS.syncCallback2 GHCJS.ThrowWouldBlock $ \el0 ev -> do
@@ -309,12 +316,12 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
 
 data ElementPatch =
     EPStyle Text Text
-  -- | EPTextAttribute Text Text
-  -- | EPBoolAttribute Text Bool
-  | EPAttribute Text JSVal
-  -- | EPTextProperty Text Text
-  -- | EPBoolProperty Text Bool
-  | EPProperty Text JSVal
+  | EPTextAttribute Text Text
+  | EPBoolAttribute Text Bool
+  | EPRawAttribute Text JSVal
+  | EPTextProperty Text Text
+  | EPBoolProperty Text Bool
+  | EPRawProperty Text JSVal
   | EPEvent Text (DOM.HTMLElement -> DOM.Event -> JSM ())
   | EPClass Text
 
