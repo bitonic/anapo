@@ -124,6 +124,12 @@ instance Functor (Action context state) where
     x <- g env trav
     return (f x)
 
+#if !defined(ghcjs_HOST_OS)
+instance JS.MonadJSM (DomM dom ctx st) where
+  {-# INLINE liftJSM' #-}
+  liftJSM' m = DomM (\runJsm _actEnv _acTrav _anEnv _ctx _st _dom -> unliftIO runJsm m)
+#endif
+
 instance Applicative (Action context state) where
   {-# INLINE pure #-}
   pure = return
@@ -357,13 +363,14 @@ data DomEnv stateRoot = DomEnv
 newtype DomM dom context state a = DomM
   { unDomM ::
          forall rootState compProps compContext compState.
-         ActionEnv rootState
+         UnliftIO DOM.JSM
+      -> ActionEnv rootState
       -> ActionTraverse rootState compProps compContext compState context state
       -> DomEnv rootState
       -> Maybe context
       -> state
       -> dom
-      -> DOM.JSM a
+      -> IO a
   }
 
 type DomState = V.NormalChildren
@@ -379,20 +386,14 @@ type Node' ctx st a = DomM () ctx st (V.Node, a)
 
 instance MonadIO (DomM dom ctx st) where
   {-# INLINE liftIO #-}
-  liftIO m = DomM $ \_actEnv _acTrav _anEnv _ctx _st _dom -> do
+  liftIO m = DomM $ \_runJsm _actEnv _acTrav _anEnv _ctx _st _dom -> do
     x <- liftIO m
     return x
 
-#if !defined(ghcjs_HOST_OS)
-instance JS.MonadJSM (DomM dom ctx st) where
-  {-# INLINE liftJSM' #-}
-  liftJSM' m = DomM (\_actEnv _acTrav _anEnv _ctx _st _dom -> m)
-#endif
-
 instance Functor (DomM dom ctx st) where
   {-# INLINE fmap #-}
-  fmap f (DomM g) = DomM $ \acEnv acTrav aeEnv ctx st dom -> do
-    x <- g acEnv acTrav aeEnv ctx st dom
+  fmap f (DomM g) = DomM $ \runJsm acEnv acTrav aeEnv ctx st dom -> do
+    x <- g runJsm acEnv acTrav aeEnv ctx st dom
     return (f x)
 
 instance Applicative (DomM dom ctx st) where
@@ -403,11 +404,11 @@ instance Applicative (DomM dom ctx st) where
 
 instance Monad (DomM dom ctx st) where
   {-# INLINE return #-}
-  return x = DomM (\_acEnv _acTrav _aeEnv _ctx _st _dom -> return x)
+  return x = DomM (\_runJsm _acEnv _acTrav _aeEnv _ctx _st _dom -> return x)
   {-# INLINE (>>=) #-}
-  ma >>= mf = DomM $ \acEnv acTrav anEnv ctx st dom -> do
-    x <- unDomM ma acEnv acTrav anEnv ctx st dom
-    y <- unDomM (mf x) acEnv acTrav anEnv ctx st dom
+  ma >>= mf = DomM $ \runJsm acEnv acTrav anEnv ctx st dom -> do
+    x <- unDomM ma runJsm acEnv acTrav anEnv ctx st dom
+    y <- unDomM (mf x) runJsm acEnv acTrav anEnv ctx st dom
     return y
 
 instance (a ~ ()) => Monoid (DomM dom ctx st a) where
@@ -418,16 +419,16 @@ instance (a ~ ()) => Monoid (DomM dom ctx st a) where
 
 instance MonadAction ctx st (DomM dom ctx st) where
   {-# INLINE liftAction #-}
-  liftAction (Action f) = DomM $ \acEnv acTrav _anEnv _ctx _st _dom -> do
-    x <- f acEnv acTrav
+  liftAction (Action f) = DomM $ \runJsm acEnv acTrav _anEnv _ctx _st _dom -> do
+    x <- unliftIO runJsm (f acEnv acTrav)
     return x
 
 instance MonadReader st (DomM dom ctx st) where
   {-# INLINE ask #-}
-  ask = DomM (\_acEnv _acTrav _anEnv _ctx st _dom -> return st)
+  ask = DomM (\_runJsm _acEnv _acTrav _anEnv _ctx st _dom -> return st)
   {-# INLINE local #-}
-  local f m = DomM $ \acEnv acTrav anEnv ctx st dom -> do
-    unDomM m acEnv acTrav anEnv ctx (f st) dom
+  local f m = DomM $ \runJsm acEnv acTrav anEnv ctx st dom -> do
+    unDomM m runJsm acEnv acTrav anEnv ctx (f st) dom
 
 assertContext :: HasCallStack => Text -> Maybe ctx -> ctx
 assertContext compName mbCtx =
@@ -438,18 +439,19 @@ assertContext compName mbCtx =
 
 {-# INLINE askContext #-}
 askContext :: HasCallStack => DomM dom ctx st ctx
-askContext = DomM $ \_acEnv _acTrav anEnv mbCtx _st _dom ->
+askContext = DomM $ \_runJsm _acEnv _acTrav anEnv mbCtx _st _dom ->
   return (assertContext (domEnvComponentName anEnv) mbCtx)
 
 {-# INLINE viewContext #-}
 viewContext :: HasCallStack => Lens.Getting a ctx a -> DomM dom ctx st a
-viewContext l = DomM $ \_acEnv _acTrav anEnv mbCtx _st _dom ->
+viewContext l = DomM $ \_runJsm _acEnv _acTrav anEnv mbCtx _st _dom ->
   return (view l (assertContext (domEnvComponentName anEnv) mbCtx))
 
 {-# INLINE zoomL #-}
 zoomL :: Lens' out in_ -> DomM dom ctx in_ a -> DomM dom ctx out a
-zoomL l m = DomM $ \acEnv acTrav anEnv ctx st dom ->
+zoomL l m = DomM $ \runJsm acEnv acTrav anEnv ctx st dom ->
   unDomM m
+    runJsm
     acEnv
     acTrav{ atToState = atToState acTrav . l }
     anEnv
@@ -465,8 +467,9 @@ zoomT ::
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> DomM dom ctx in_ a
   -> DomM dom ctx out a
-zoomT st l m = DomM $ \acEnv acTrav anEnv ctx _st dom ->
+zoomT st l m = DomM $ \runJsm acEnv acTrav anEnv ctx _st dom ->
   unDomM m
+    runJsm
     acEnv
     acTrav{ atToState = atToState acTrav . l }
     anEnv
@@ -482,8 +485,9 @@ zoomCtxF ::
   -- ^ note: if the traversal is not affine you'll get crashes.
   -> DomM dom in_ st a
   -> DomM dom out st a
-zoomCtxF ctx l m = DomM $ \acEnv acTrav anEnv _ctx st dom ->
+zoomCtxF ctx l m = DomM $ \runJsm acEnv acTrav anEnv _ctx st dom ->
   unDomM m
+    runJsm
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
@@ -497,8 +501,9 @@ zoomCtxL ::
   => Lens' out in_
   -> DomM dom in_ st a
   -> DomM dom out st a
-zoomCtxL l m = DomM $ \acEnv acTrav anEnv ctx st dom ->
+zoomCtxL l m = DomM $ \runJsm acEnv acTrav anEnv ctx st dom ->
   unDomM m
+    runJsm
     acEnv
     acTrav{ atToContext = atToContext acTrav . l }
     anEnv
@@ -534,10 +539,11 @@ willRemove = NPWillRemove
 
 {-# INLINE n #-}
 n :: Node ctx st -> Dom ctx st
-n getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+n getNode = DomM $ \runJsm acEnv acTrav anEnv ctx st dom -> do
   ix <- liftIO (V.normalChildrenLength dom)
   nod <- unDomM
     getNode
+    runJsm
     acEnv
     acTrav
     anEnv
@@ -551,10 +557,11 @@ n getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
 
 {-# INLINE n' #-}
 n' :: Node' ctx st a -> Dom' ctx st a
-n' getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+n' getNode = DomM $ \runJsm acEnv acTrav anEnv ctx st dom -> do
   ix <- liftIO (V.normalChildrenLength dom)
   (nod, x) <- unDomM
     getNode
+    runJsm
     acEnv
     acTrav
     anEnv
@@ -569,10 +576,11 @@ n' getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
 
 {-# INLINE key #-}
 key :: Text -> Node ctx st -> KeyedDom ctx st
-key k getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+key k getNode = DomM $ \runJsm acEnv acTrav anEnv ctx st dom -> do
   nod <- unDomM
     getNode
-    acEnv
+    runJsm
+   acEnv
     acTrav
     anEnv
       { domEnvReversePath = V.PathKeyed k : domEnvReversePath anEnv
@@ -585,9 +593,10 @@ key k getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
 
 {-# INLINE key' #-}
 key' :: Text -> Node' ctx st a -> KeyedDom' ctx st a
-key' k getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
+key' k getNode = DomM $ \runJsm acEnv acTrav anEnv ctx st dom -> do
   (nod, x) <- unDomM
     getNode
+    runJsm
     acEnv
     acTrav
     anEnv
@@ -620,9 +629,9 @@ rawNode x patches = do
 
 {-# INLINABLE marked #-}
 marked :: StaticPtr (Node context state) -> Node context state
-marked ptr = DomM $ \acEnv acTrav domEnv ctx st dom -> do
+marked ptr = DomM $ \runJsm acEnv acTrav domEnv ctx st dom -> do
   let !fprint = staticKey ptr
-  node <- unDomM (deRefStaticPtr ptr) acEnv acTrav domEnv ctx st dom
+  node <- unDomM (deRefStaticPtr ptr) runJsm acEnv acTrav domEnv ctx st dom
   return (V.setNodeMark node (Just (T.pack (show fprint))))
 
 -- Utilities to quickly create nodes
@@ -639,12 +648,12 @@ data NodePatch el ctx st =
   | NPDidPatch (el -> Action ctx st ())
   | NPWillRemove (el -> Action ctx st ())
   | NPStyle Text Text
-  | NPRawAttribute Text (DOM.JSM DOM.JSVal)
+  | NPRawAttribute Text DOM.JSVal
   | NPTextAttribute Text Text
   | NPBoolAttribute Text Bool
   | NPTextProperty Text Text
   | NPBoolProperty Text Bool
-  | NPRawProperty Text (DOM.JSM DOM.JSVal)
+  | NPRawProperty Text DOM.JSVal
   | NPEvent (SomeEventAction el ctx st)
   | NPClasses [Text]
 
@@ -657,15 +666,15 @@ instance IsElementChildren () ctx st where
     return (V.ChildrenNormal dom)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM DomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
+  elementChildren (DomM f) = DomM $ \runJsm acEnv acTrav anEnv ctx st _ -> do
     dom <- liftIO V.normalChildren
-    void (f acEnv acTrav anEnv ctx st dom)
+    void (f runJsm acEnv acTrav anEnv ctx st dom)
     return (V.ChildrenNormal dom)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM KeyedDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
-  elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
+  elementChildren (DomM f) = DomM $ \runJsm acEnv acTrav anEnv ctx st _ -> do
     dom <- liftIO V.keyedChildren
-    void (f acEnv acTrav anEnv ctx st dom)
+    void (f runJsm acEnv acTrav anEnv ctx st dom)
     return (V.ChildrenKeyed dom)
 {-
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM MapDomState ctx1 st1 a) ctx2 st2 where
@@ -683,19 +692,19 @@ instance IsElementChildren UnsafeRawHtml ctx st where
   {-# INLINE elementChildren #-}
   elementChildren (UnsafeRawHtml txt) = return (V.ChildrenRawHtml txt)
 
--- if the node doesn't contain an element, this functin will crash
+-- if the node doesn't contain an element, this function will crash
 patchElement :: forall el ctx st.
      ( DOM.IsElement el )
   => V.Node
   -> [NodePatch el ctx st]
   -> Node ctx st
-patchElement node0 patches0 = liftAction $ do
-  u <- askUnliftJSM
+patchElement node0 patches0 = do
+  u <- liftAction askUnliftJSM
   let
     wrapCallback :: (el -> Action ctx st ()) -> (DOM.HTMLElement -> DOM.JSM ())
     wrapCallback cback (DOM.HTMLElement el_) = unliftJSM u . cback =<< DOM.fromJSValUnchecked el_
   let
-    mkPatches :: V.Node -> [NodePatch el ctx st] -> JS.JSM V.Node
+    mkPatches :: V.Node -> [NodePatch el ctx st] -> IO V.Node
     mkPatches !node = \case
       [] -> return node
       patch : patches -> case patch of
@@ -718,8 +727,7 @@ patchElement node0 patches0 = liftAction $ do
           liftIO (V.patchElement node (V.EPStyle styleName styleBody))
           mkPatches node patches
         NPRawAttribute attrName attrBody -> do
-          attrBodyVal <- attrBody
-          liftIO (V.patchElement node (V.EPRawAttribute attrName attrBodyVal))
+          liftIO (V.patchElement node (V.EPRawAttribute attrName attrBody))
           mkPatches node patches
         NPTextAttribute attrName attrBody -> do
           liftIO (V.patchElement node (V.EPTextAttribute attrName attrBody))
@@ -728,8 +736,7 @@ patchElement node0 patches0 = liftAction $ do
           liftIO (V.patchElement node (V.EPBoolAttribute attrName attrBody))
           mkPatches node patches
         NPRawProperty propName propBody -> do
-          propBodyVal <- DOM.liftJSM propBody
-          liftIO (V.patchElement node (V.EPRawProperty propName propBodyVal))
+          liftIO (V.patchElement node (V.EPRawProperty propName propBody))
           mkPatches node patches
         NPTextProperty attrName attrBody -> do
           liftIO (V.patchElement node (V.EPTextProperty attrName attrBody))
@@ -745,7 +752,7 @@ patchElement node0 patches0 = liftAction $ do
           liftIO $ for_ classes $ \class_ ->
             V.patchElement node (V.EPClass class_)
           mkPatches node patches
-  DOM.liftJSM (mkPatches node0 patches0)
+  liftIO (mkPatches node0 patches0)
 
 {-# INLINABLE el #-}
 el :: forall a ctx st el.
@@ -767,27 +774,27 @@ el tag patches0 isChildren = do
 -- Properties
 -- --------------------------------------------------------------------
 
-{-# INLINE textProperty #-}
-textProperty :: Text -> Text -> NodePatch el context state
-textProperty = NPTextProperty
+{-# INLINE property #-}
+property :: Text -> Text -> NodePatch el context state
+property = NPTextProperty
 
 {-# INLINE boolProperty #-}
 boolProperty :: Text -> Bool -> NodePatch el context state
 boolProperty = NPBoolProperty
 
 {-# INLINE rawProperty #-}
-rawProperty :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
-rawProperty k v = NPRawProperty k (DOM.toJSVal v)
+rawProperty :: Text -> DOM.JSVal -> NodePatch el context state
+rawProperty = NPRawProperty
 
 {-# INLINE style #-}
 style :: (DOM.IsElementCSSInlineStyle el) => Text -> Text -> NodePatch el context state
 style = NPStyle
 
-{-# INLINE textAttribute #-}
+{-# INLINE attribute #-}
 -- | Note: for all standard HTML attributes (e.g. class, src, etc.), you
 -- should use @property@, not @attribute@.
-textAttribute :: Text -> Text -> NodePatch el context state
-textAttribute = NPTextAttribute
+attribute :: Text -> Text -> NodePatch el context state
+attribute = NPTextAttribute
 
 {-# INLINE boolAttribute #-}
 -- | Note: for all standard HTML attributes (e.g. class, src, etc.), you
@@ -798,8 +805,8 @@ boolAttribute = NPBoolAttribute
 {-# INLINE rawAttribute #-}
 -- | Note: for all standard HTML attributes (e.g. class, src, etc.), you
 -- should use @property@, not @attribute@.
-rawAttribute :: DOM.ToJSVal a => Text -> a -> NodePatch el context state
-rawAttribute k v = NPRawAttribute k (DOM.toJSVal v)
+rawAttribute :: Text -> DOM.JSVal -> NodePatch el context state
+rawAttribute = NPRawAttribute
 
 {-
 {-# INLINE onEvent #-}
@@ -817,7 +824,7 @@ onEvent el_ evName f = do
 -- --------------------------------------------------------------------
 
 {-# INLINABLE simpleNode #-}
-simpleNode :: forall state. state -> Node () state -> DOM.JSM V.Node
+simpleNode :: forall state. state -> Node () state -> IO V.Node
 simpleNode st node0 = do
   comp <- newComponent st (\() -> node0)
   liftIO (writeIORef (_componentContext comp) (Just ()))
@@ -826,10 +833,11 @@ simpleNode st node0 = do
       node <- _componentNode comp ()
       patches <- registerComponent (_componentName comp) (_componentPositions comp) ()
       return (foldl' V.addNodeCallback node patches))
+    (UnliftIO (\_ -> fail "Trying to run JSM action from simpleNode"))
     ActionEnv
-      { aeRegisterThread = \_ -> fail "Trying to register a thread from the simpleRenderNode"
-      , aeHandleException = \_ -> fail "Trying to handle an exception from the simpleRenderNode"
-      , aeDispatch = Dispatch (\_ _ _ -> fail "Trying to dispatch from the simpleRenderNode")
+      { aeRegisterThread = \_ -> fail "Trying to register a thread from the simpleNode"
+      , aeHandleException = \_ -> fail "Trying to handle an exception from the simpleNode"
+      , aeDispatch = Dispatch (\_ _ _ -> fail "Trying to dispatch from the simpleNode")
       }
     ActionTraverse
       { atToComp = id
@@ -852,7 +860,7 @@ simpleNode st node0 = do
 {-# INLINABLE simpleRenderNode #-}
 simpleRenderNode :: state -> Node () state -> DOM.JSM DOM.Node
 simpleRenderNode st node = do
-  vdom <- simpleNode st node
+  vdom <- liftIO (simpleNode st node)
   V.renderedNodeDom =<< V.render vdom (\_ -> return ())
 
 -- utils
@@ -962,7 +970,7 @@ newComponent_ st comp = newComponent st (\() -> comp)
 
 {-# INLINABLE registerComponent #-}
 registerComponent :: Text -> IORef (HMS.HashMap V.Path props) -> props -> DomM dom a b [V.AddCallback]
-registerComponent name ref props = DomM $ \_acEnv _acTrav anEnv _ctx _st _dom -> do
+registerComponent name ref props = DomM $ \_runJsm _acEnv _acTrav anEnv _ctx _st _dom -> do
   let add txt = \_ -> do
         logDebug (txt <> ": adding component " <> name)
         liftIO (modifyIORef' ref (HMS.insert (reverse (domEnvReversePath anEnv)) props))
@@ -985,7 +993,7 @@ initComponent comp ctx = liftIO $ do
 {-# INLINABLE component #-}
 component :: props -> ComponentToken props ctx st -> Node ctx0 (Component props ctx st)
 component props (ComponentToken tok) = do
-  (node, name, pos, mbFprint) <- DomM $ \acEnv acTrav anEnv _ctx comp dom -> do
+  (node, name, pos, mbFprint) <- DomM $ \runJsm acEnv acTrav anEnv _ctx comp dom -> do
     let name = _componentName comp
     when (_componentContext comp /= tok) $
       error (T.unpack name <> ": Initialized component does not match state component!")
@@ -994,6 +1002,7 @@ component props (ComponentToken tok) = do
     mbCtx <- liftIO (readIORef (_componentContext comp))
     node <- unDomM
       (_componentNode comp props)
+      runJsm
       acEnv
       acTrav
         { atToComp = atToComp acTrav . compState . atToState acTrav

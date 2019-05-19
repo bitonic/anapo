@@ -130,11 +130,13 @@ nodeLoop withState node shouldRethrow excComp injectMode root = do
       -> DOM.JSM V.Node
     runComp path travComp comp props = do
       mbCtx <- liftIO (readIORef (_componentContext comp))
-      (vdom, vdomDt) <- timeIt $ unDomM
+      runJsm <- askUnliftJSM
+      (vdom, vdomDt) <- timeIt $ liftIO $ unDomM
         (do
           node0 <- _componentNode comp props
           patches <- registerComponent (_componentName comp) (_componentPositions comp) props
           return (foldl' V.addNodeCallback node0 patches))
+        runJsm
         actionEnv
         (actionTrav travComp)
         DomEnv
@@ -159,14 +161,14 @@ nodeLoop withState node shouldRethrow excComp injectMode root = do
         onErrRethrow :: V.RenderedNode -> SomeException -> DOM.JSM a
         onErrRethrow rendered err = do
           logError ("Got exception, will render it and rethrow: " <> pack (show err))
-          vdom <- simpleNode () (excComp err)
+          vdom <- liftIO (simpleNode () (excComp err))
           void (V.reconciliate rendered [] vdom)
           logError ("Just got exception and rendered, rethrowing: " <> pack (show err))
           liftIO (throwIO err)
         onErrNoRethrow :: V.RenderedNode -> SomeException -> DOM.JSM ()
         onErrNoRethrow rendered err = do
           logWarn ("Got exception, will render it and not rethrow: " <> pack (show err))
-          vdom <- simpleNode () (excComp err)
+          vdom <- liftIO (simpleNode () (excComp err))
           void (V.reconciliate rendered [] vdom)
           logWarn ("Just got exception and rendered, won't rethrow: " <> pack (show err))
           liftIO (throwIO err)

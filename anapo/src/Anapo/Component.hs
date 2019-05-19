@@ -105,10 +105,10 @@ module Anapo.Component
   , SomeEventAction(..)
   , style
   , rawProperty
-  , textProperty
+  , property
   , boolProperty
   , rawAttribute
-  , textAttribute
+  , attribute
   , boolAttribute
 
     -- * dom re-exports
