@@ -1,4 +1,7 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveTraversable #-}
 module Anapo.VDOM
   ( Node
   , NodeBody(..)
@@ -26,6 +29,10 @@ module Anapo.VDOM
   , render
   , reconciliate
   , renderedNodeDom
+
+#if !defined(ghcjs_HOST_OS)
+   , Bwd(..)
+#endif
   ) where
 
 import Language.Javascript.JSaddle (JSVal, JSM)
@@ -49,6 +56,16 @@ import qualified GHCJS.Foreign.Callback as GHCJS
 import qualified GHCJS.Foreign.Callback.Internal as GHCJS
 #else
 import Control.Monad (void)
+import Data.IORef (newIORef, modifyIORef', IORef, readIORef)
+import qualified Data.HashMap.Strict as HMS
+import Data.Foldable (toList)
+#endif
+
+#if !defined(ghcjs_HOST_OS)
+data Bwd a =
+    B0
+  | Bwd a :> a
+  deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
 #endif
 
 data Node = Node
@@ -65,7 +82,7 @@ data NodeBody =
 {-# INLINE node #-}
 node ::
      NodeBody
-  -> JSM Node
+  -> IO Node
 node nodeBody = return Node{nodeBody, nodeCallbacks = Nothing, nodeMark = Nothing}
 
 data Callbacks = Callbacks
@@ -124,8 +141,9 @@ addNodeCallback nod@Node{nodeCallbacks} addCback =
     emptyCallbacks = Callbacks Nothing Nothing Nothing Nothing Nothing
 
 finalizeNode :: Node -> JSM JSVal
-finalizeNode Node{..} = do
+
 #if defined(ghcjs_HOST_OS)
+finalizeNode Node{..} = do
   nodeObj <- js_emptyObject
   case nodeBody of
     NBRaw el -> js_setRaw nodeObj (coerce el)
@@ -133,15 +151,6 @@ finalizeNode Node{..} = do
     NBText txt -> js_setText nodeObj txt
   for_ nodeCallbacks $ \Callbacks{..} -> do
     cbacksObj <- js_emptyObject
-#else
-  nodeObj <- JS.obj
-  case nodeBody of
-    NBRaw el -> (nodeObj JS.<# "raw") el
-    NBElement (Element el) -> (nodeObj JS.<# "element") el
-    NBText txt -> (nodeObj JS.<# "text") txt
-  for_ nodeCallbacks $ \Callbacks{..} -> do
-    cbacksObj <- JS.obj
-#endif
     for_ callbacksWillMount $ \willMount -> do
       storeCallback cbacksObj willMount "willMount"
     for_ callbacksDidMount $ \didMount ->
@@ -152,27 +161,87 @@ finalizeNode Node{..} = do
       storeCallback cbacksObj didPatch "didPatch"
     for_ callbacksWillRemove $ \willRemove ->
       storeCallback cbacksObj willRemove "willRemove"
-#if defined(ghcjs_HOST_OS)
     js_setCallbacks nodeObj cbacksObj
   for_ nodeMark (\mark -> js_setMark nodeObj mark)
   JS.toJSVal nodeObj
-#else
-    (nodeObj JS.<# "callbacks") cbacksObj
-  for_ nodeMark (\mark -> (nodeObj JS.<# "mark") mark)
-  JS.toJSVal nodeObj
-#endif
   where
     storeCallback cbacksObj fun label = do
-#if defined(ghcjs_HOST_OS)
       funVal <- GHCJS.syncCallback1 GHCJS.ThrowWouldBlock $ \el -> do
         fun (coerce el)
       funObj <- js_newLifecycleCallback funVal
       js_setProperty cbacksObj (pack label) funObj
+
 #else
+finalizeNode Node{..} = do
+  nodeObj <- JS.obj
+  case nodeBody of
+    NBRaw el -> (nodeObj JS.<# "raw") el
+    NBElement el -> (nodeObj JS.<# "element") =<< finalizeElement el
+    NBText txt -> (nodeObj JS.<# "text") txt
+  for_ nodeCallbacks $ \Callbacks{..} -> do
+    cbacksObj <- JS.obj
+    for_ callbacksWillMount $ \willMount -> do
+      storeCallback cbacksObj willMount "willMount"
+    for_ callbacksDidMount $ \didMount ->
+      storeCallback cbacksObj didMount "didMount"
+    for_ callbacksWillPatch $ \willPatch ->
+      storeCallback cbacksObj willPatch "willPatch"
+    for_ callbacksDidPatch $ \didPatch ->
+      storeCallback cbacksObj didPatch "didPatch"
+    for_ callbacksWillRemove $ \willRemove ->
+      storeCallback cbacksObj willRemove "willRemove"
+    (nodeObj JS.<# "callbacks") cbacksObj
+  for_ nodeMark (\mark -> (nodeObj JS.<# "mark") mark)
+  JS.toJSVal nodeObj
+  where
+    storeCallback cbacksObj fun label = do
       funFun <- JS.function $ \_ _ [el] -> do
         fun (coerce el)
       funObj <- JS.jsg"Anapo" ^. JS.jsf"newLifecycleCallback" (funFun, funFun)
       (cbacksObj JS.<# label) funObj
+
+    finalizeElement :: Element -> JSM JSVal
+    finalizeElement Element{..} = do
+      elObj <- JS.jsg"Anapo" ^. JS.jsf"newElement" [elementTag]
+      childrenObj <- JS.obj
+      case elementChildren of
+        ChildrenRawHtml txt ->
+          (childrenObj JS.<# "rawHtml") txt
+        ChildrenNormal children -> do
+          (childrenObj JS.<# "normal") =<< finalizeNormalChildren children
+        ChildrenKeyed children -> do
+          (childrenObj JS.<# "keyed") =<< finalizeKeyedChildren children
+      (elObj JS.<# "children") childrenObj
+      patches <- liftIO (readIORef elementPatches)
+      for_ patches $ \case
+        EPStyle k v -> ((elObj ^. JS.js "style") JS.<# k) v
+        EPAttribute k v -> ((elObj ^. JS.js "attributes") JS.<# k) v
+        EPProperty k v -> ((elObj ^. JS.js "properties") JS.<# k) v
+        EPClass cls -> ((elObj ^. JS.js "classes") JS.<# cls) True
+        EPEvent type_ evt -> do
+          evtFun <- JS.function $ \_ this [ev] -> do
+            evt (coerce this) (coerce ev)
+          evtObj <- JS.jsg"Anapo" ^. JS.jsf"newEventCallback" (type_, evtFun, evtFun)
+          void (elObj ^. JS.js "events" ^. JS.jsf"push" [evtObj])
+      JS.toJSVal elObj
+
+    finalizeNormalChildren :: NormalChildren -> JSM JSVal
+    finalizeNormalChildren NormalChildren{..} = do
+      nodes <- mapM finalizeNode . toList =<< liftIO (readIORef normalChildrenNodes)
+      JS.toJSVal nodes
+
+    finalizeKeyedChildren :: KeyedChildren -> JSM JSVal
+    finalizeKeyedChildren KeyedChildren{..} = do
+      kvs <- JS.jsg"Anapo" ^. JS.jsf"newKeyedChildren" ()
+      order <- liftIO (readIORef keyedChildrenOrder)
+      nodes <- liftIO (readIORef keyedChildrenNodes)
+      for_ order $ \k -> do
+        val <- finalizeNode (nodes HMS.! k)
+        void (kvs ^. JS.js"order" ^. JS.jsf"push" [k])
+        ((kvs ^. JS.js"elements") JS.<# k) val
+      return kvs
+
+
 #endif
 
 setNodeMark ::
@@ -181,13 +250,21 @@ setNodeMark ::
   -> Node
 setNodeMark nod mbMark = nod{nodeMark = mbMark}
 
+#if defined(ghcjs_HOST_OS)
 newtype Element = Element JSVal
+#else
+data Element = Element
+  { elementTag :: Text
+  , elementChildren :: Children
+  , elementPatches :: (IORef (Bwd ElementPatch))
+  }
+#endif
 
 {-# INLINE element #-}
 element ::
      Text -- ^ tag
   -> Children
-  -> JSM Element
+  -> IO Element
 element tag children = do
 #if defined(ghcjs_HOST_OS)
   elObj <- js_newElement tag
@@ -200,26 +277,23 @@ element tag children = do
       js_setKeyed elObj kvs
   return (Element elObj)
 #else
-  elObj <- JS.jsg "Anapo" ^. JS.jsf"newElement" [tag]
-  childrenObj <- JS.obj
-  case children of
-    ChildrenRawHtml txt ->
-      (childrenObj JS.<# "rawHtml") txt
-    ChildrenNormal (NormalChildren nodes) -> do
-      (childrenObj JS.<# "normal") nodes
-    ChildrenKeyed (KeyedChildren kvs) -> do
-      (childrenObj JS.<# "keyed") kvs
-  (elObj JS.<# "children") childrenObj
-  Element <$> JS.toJSVal elObj
+  patches <- newIORef B0
+  return Element
+    { elementTag = tag
+    , elementChildren = children
+    , elementPatches = patches
+    }
 #endif
 
 -- crashes if we do not have an element inside.
 {-# INLINE patchElement #-}
-patchElement :: Node -> ElementPatch -> JSM ()
+patchElement :: Node -> ElementPatch -> IO ()
 patchElement Node{nodeBody} elPatch = case nodeBody of
 #if defined(ghcjs_HOST_OS)
   NBElement (Element el) -> case elPatch of
     EPStyle k v -> js_setStyle el k v
+    -- EPTextAttribute k v -> js_setAttribute el k v
+    -- EPBoolAttribute k v -> js_setAttribute el k v
     EPAttribute k v -> js_setAttribute el k v
     EPProperty k v -> js_setElementProperty el k v
     EPClass cls -> js_setClass el cls
@@ -228,24 +302,18 @@ patchElement Node{nodeBody} elPatch = case nodeBody of
         evt (coerce el0) (coerce ev)
       js_pushEvent el type_ evtFun
 #else
-  NBElement (Element el) -> case elPatch of
-    EPStyle k v -> ((el ^. JS.js "style") JS.<# k) v
-    EPAttribute k v -> ((el ^. JS.js "attributes") JS.<# k) v
-    EPProperty k v -> ((el ^. JS.js "properties") JS.<# k) v
-    EPClass cls -> ((el ^. JS.js "classes") JS.<# cls) True
-    EPEvent type_ evt -> do
-      evtFun <- JS.function $ \_ this [ev] -> do
-        evt (coerce this) (coerce ev)
-      evtObj <- JS.jsg"Anapo" ^. JS.jsf"newEventCallback" (type_, evtFun, evtFun)
-      void (el ^. JS.js "events" ^. JS.jsf"push" [evtObj])
+  NBElement el -> modifyIORef' (elementPatches el) (:> elPatch)
 #endif
   NBRaw{} -> error "got raw in patchElement"
   NBText{} -> error "got raw in patchElement"
 
-
 data ElementPatch =
     EPStyle Text Text
+  -- | EPTextAttribute Text Text
+  -- | EPBoolAttribute Text Bool
   | EPAttribute Text JSVal
+  -- | EPTextProperty Text Text
+  -- | EPBoolProperty Text Bool
   | EPProperty Text JSVal
   | EPEvent Text (DOM.HTMLElement -> DOM.Event -> JSM ())
   | EPClass Text
@@ -305,58 +373,74 @@ reconciliate (RenderedNode rvdom) path nod = do
 renderedNodeDom :: RenderedNode -> JSM DOM.Node
 renderedNodeDom (RenderedNode rvdom) = coerce <$> rvdom ^. JS.js "dom"
 
+#if defined(ghcjs_HOST_OS)
 newtype NormalChildren = NormalChildren JSVal
+#else
+data NormalChildren = NormalChildren
+  { normalChildrenSize :: IORef Int
+  , normalChildrenNodes :: IORef (Bwd Node)
+  }
+#endif
 
 {-# INLINE normalChildren #-}
-normalChildren :: JSM NormalChildren
+normalChildren :: IO NormalChildren
 normalChildren = do
 #if defined(ghcjs_HOST_OS)
   NormalChildren <$> js_emptyArray
 #else
-  arr <- JS.array ([] :: [JSVal])
-  NormalChildren <$> JS.toJSVal arr
+  NormalChildren <$> newIORef 0 <*> newIORef B0
 #endif
 
 {-# INLINE pushNormalChild #-}
-pushNormalChild :: NormalChildren -> Node -> JSM ()
+pushNormalChild :: NormalChildren -> Node -> IO ()
+#if defined(ghcjs_HOST_OS)
 pushNormalChild (NormalChildren nodes) nod = do
   nodeVal <- finalizeNode nod
-#if defined(ghcjs_HOST_OS)
   js_pushNormalChild nodes nodeVal
 #else
-  void (nodes ^. JS.jsf"push" nodeVal)
+pushNormalChild NormalChildren{..} nod = do
+  modifyIORef' normalChildrenSize (+1)
+  modifyIORef' normalChildrenNodes (:> nod)
 #endif
 
 {-# INLINE normalChildrenLength #-}
-normalChildrenLength :: NormalChildren -> JSM Int
-normalChildrenLength (NormalChildren ns) = do
+normalChildrenLength :: NormalChildren -> IO Int
 #if defined(ghcjs_HOST_OS)
+normalChildrenLength (NormalChildren ns) = do
   js_arrayLength ns
 #else
-  Just n <- JS.fromJSVal =<< ns ^. JS.js "length"
-  return n
+normalChildrenLength NormalChildren{..} = do
+  readIORef normalChildrenSize
 #endif
 
+#if defined(ghcjs_HOST_OS)
 newtype KeyedChildren = KeyedChildren JSVal
+#else
+data KeyedChildren = KeyedChildren
+  { keyedChildrenOrder :: IORef (Bwd Text)
+  , keyedChildrenNodes :: IORef (HMS.HashMap Text Node)
+  }
+#endif
 
 {-# INLINE keyedChildren #-}
-keyedChildren :: JSM KeyedChildren
+keyedChildren :: IO KeyedChildren
 keyedChildren = do
 #if defined(ghcjs_HOST_OS)
   KeyedChildren <$> js_keyedChildren
 #else
-  KeyedChildren <$> (JS.jsg"Anapo" ^. JS.jsf"newKeyedChildren" ())
+  KeyedChildren <$> newIORef B0 <*> newIORef HMS.empty
 #endif
 
 {-# INLINE pushKeyedChild #-}
-pushKeyedChild :: KeyedChildren -> Text -> Node -> JSM ()
+pushKeyedChild :: KeyedChildren -> Text -> Node -> IO ()
+#if defined(ghcjs_HOST_OS)
 pushKeyedChild (KeyedChildren kvs) k v = do
   vVal <- finalizeNode v
-#if defined(ghcjs_HOST_OS)
   js_pushKeyedChild kvs k vVal
 #else
-  void (kvs ^. JS.js"order" ^. JS.jsf"push" [k])
-  ((kvs ^. JS.js"elements") JS.<# k) vVal
+pushKeyedChild KeyedChildren{..} k v = do
+  modifyIORef' keyedChildrenOrder (:> k)
+  modifyIORef' keyedChildrenNodes (HMS.insert k v)
 #endif
 
 #if defined(ghcjs_HOST_OS)

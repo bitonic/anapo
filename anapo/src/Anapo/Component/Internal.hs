@@ -535,7 +535,7 @@ willRemove = NPWillRemove
 {-# INLINE n #-}
 n :: Node ctx st -> Dom ctx st
 n getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
-  ix <- DOM.liftJSM (V.normalChildrenLength dom)
+  ix <- liftIO (V.normalChildrenLength dom)
   nod <- unDomM
     getNode
     acEnv
@@ -547,12 +547,12 @@ n getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
     ctx
     st
     ()
-  DOM.liftJSM (V.pushNormalChild dom nod)
+  liftIO (V.pushNormalChild dom nod)
 
 {-# INLINE n' #-}
 n' :: Node' ctx st a -> Dom' ctx st a
 n' getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
-  ix <- DOM.liftJSM (V.normalChildrenLength dom)
+  ix <- liftIO (V.normalChildrenLength dom)
   (nod, x) <- unDomM
     getNode
     acEnv
@@ -564,7 +564,7 @@ n' getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
     ctx
     st
     ()
-  DOM.liftJSM (V.pushNormalChild dom nod)
+  liftIO (V.pushNormalChild dom nod)
   return x
 
 {-# INLINE key #-}
@@ -581,7 +581,7 @@ key k getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
     ctx
     st
     ()
-  DOM.liftJSM (V.pushKeyedChild dom k nod)
+  liftIO (V.pushKeyedChild dom k nod)
 
 {-# INLINE key' #-}
 key' :: Text -> Node' ctx st a -> KeyedDom' ctx st a
@@ -597,12 +597,12 @@ key' k getNode = DomM $ \acEnv acTrav anEnv ctx st dom -> do
     ctx
     st
     ()
-  DOM.liftJSM (V.pushKeyedChild dom k nod)
+  liftIO (V.pushKeyedChild dom k nod)
   return x
 
 {-# INLINE text #-}
 text :: Text -> Node ctx st
-text txt = JS.liftJSM (V.node (V.NBText txt))
+text txt = liftIO (V.node (V.NBText txt))
 
 instance (el ~ DOM.Text) => IsString (Node ctx st) where
   {-# INLINE fromString #-}
@@ -615,7 +615,7 @@ rawNode ::
   -> [V.AddCallback]
   -> Node ctx st
 rawNode x patches = do
-  node <- DOM.liftJSM (V.node (V.NBRaw (DOM.toNode x)))
+  node <- liftIO (V.node (V.NBRaw (DOM.toNode x)))
   return (foldl' V.addNodeCallback node patches)
 
 {-# INLINABLE marked #-}
@@ -649,18 +649,18 @@ class IsElementChildren a ctx st where
 instance IsElementChildren () ctx st where
   {-# INLINE elementChildren #-}
   elementChildren _ = do
-    dom <- DOM.liftJSM V.normalChildren
+    dom <- liftIO V.normalChildren
     return (V.ChildrenNormal dom)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM DomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
   elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
-    dom <- V.normalChildren
+    dom <- liftIO V.normalChildren
     void (f acEnv acTrav anEnv ctx st dom)
     return (V.ChildrenNormal dom)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM KeyedDomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
   elementChildren (DomM f) = DomM $ \acEnv acTrav anEnv ctx st _ -> do
-    dom <- V.keyedChildren
+    dom <- liftIO V.keyedChildren
     void (f acEnv acTrav anEnv ctx st dom)
     return (V.ChildrenKeyed dom)
 {-
@@ -711,22 +711,22 @@ patchElement node0 patches0 = liftAction $ do
           (V.addNodeCallback node (V.ACWillRemove (wrapCallback cback)))
           patches
         NPStyle styleName styleBody -> do
-          V.patchElement node (V.EPStyle styleName styleBody)
+          liftIO (V.patchElement node (V.EPStyle styleName styleBody))
           mkPatches node patches
         NPAttribute attrName attrBody -> do
           attrBodyVal <- attrBody
-          V.patchElement node (V.EPAttribute attrName attrBodyVal)
+          liftIO (V.patchElement node (V.EPAttribute attrName attrBodyVal))
           mkPatches node patches
         NPProperty propName propBody -> do
           propBodyVal <- DOM.liftJSM propBody
-          V.patchElement node (V.EPProperty propName propBodyVal)
+          liftIO (V.patchElement node (V.EPProperty propName propBodyVal))
           mkPatches node patches
         NPEvent (SomeEventAction evName evListener) -> do
-          V.patchElement node $ V.EPEvent evName $ \el_ ev_ -> do
+          liftIO $ V.patchElement node $ V.EPEvent evName $ \el_ ev_ -> do
             unliftJSM u (evListener (coerce el_) (coerce ev_))
           mkPatches node patches
         NPClasses classes -> do
-          for_ classes $ \class_ ->
+          liftIO $ for_ classes $ \class_ ->
             V.patchElement node (V.EPClass class_)
           mkPatches node patches
   DOM.liftJSM (mkPatches node0 patches0)
@@ -744,8 +744,8 @@ el :: forall a ctx st el.
   -> Node ctx st
 el tag patches0 isChildren = do
   children <- elementChildren isChildren
-  vel <- DOM.liftJSM (V.element tag children)
-  node0 <- DOM.liftJSM (V.node (V.NBElement vel))
+  vel <- liftIO (V.element tag children)
+  node0 <- liftIO (V.node (V.NBElement vel))
   patchElement node0 patches0
 
 -- Properties
