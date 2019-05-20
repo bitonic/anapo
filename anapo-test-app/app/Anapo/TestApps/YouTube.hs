@@ -57,10 +57,10 @@ youTubeInit videoId = liftJSM $ do
 youTubeNode :: Node a YouTubeState
 youTubeNode = do
   st <- ask
-  mbYtpRef :: IORef (Maybe YouTubePlayer) <- liftIO (newIORef Nothing)
-  u <- liftAction askUnliftJSM
+  mbYtpRef :: IORef (Maybe YouTubePlayer) <- dangerousLiftIO (newIORef Nothing)
+  u <- actionUnliftIO
   let
-    onDidMount el = void $ unliftJSM u $ actFork $ liftJSM $ do
+    onDidMount el = void $ liftIO $ unliftIO u $ actFork $ liftJSM $ do
       logInfo "Creating new YouTube object"
       -- We create the you tube element in the div _inside_ the
       -- top-level element otherwise anapo will choke on the fact that
@@ -78,7 +78,7 @@ youTubeNode = do
         youTubePauseVideo ytp
       liftIO (writeIORef mbYtpRef (Just ytp))
   let
-    onWillRemove _el = unliftJSM u $ do
+    onWillRemove _el = liftIO $ unliftIO u $ do
       mbYtp <- liftIO (readIORef mbYtpRef)
       case mbYtp of
         Nothing -> do
@@ -91,7 +91,7 @@ youTubeNode = do
   -- we insert the to-be-replaced node as a raw node since otherwise the
   -- patching algorithm might try to patch it and fail because the YT
   -- library turns whatever we have into an iframe.
-  node <- liftJSM $ do
+  node <- dangerousLiftJSM $ do
     simpleRenderNode () $
       div_ [class_ "row"] $ n$ div_ [class_ "col"] $ n$ div_ [] $ do
         n$ text "YouTube player not ready"
@@ -103,12 +103,12 @@ youTubeNode = do
 youTubeComponent :: Dom () YouTubeState
 youTubeComponent = do
   n$ marked (static youTubeNode)
-  u <- liftAction askUnliftJSM
+  u <- actionUnliftIO
   zoomL ytsVideoId $ n$ div_ [class_ "row"] $ n$ div_ [class_ "col"] $
     n$ simpleTextInput
       STIP
         { stipButtonText = "Choose video"
-        , stipOnSubmit = unliftJSM u $ dispatch $ do
+        , stipOnSubmit = liftIO $ unliftIO u $ dispatch $ do
             vid <- use ytsVideoId
             put =<< liftJSM (youTubeInit vid)
         }

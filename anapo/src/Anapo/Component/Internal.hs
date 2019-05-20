@@ -29,9 +29,12 @@ import Control.Monad.Reader (MonadReader(..))
 import qualified GHCJS.DOM.Types as DOM
 import Data.List (foldl')
 import Data.Foldable (for_)
-import qualified Language.Javascript.JSaddle as JS
 import qualified Data.Semigroup as Semigroup
 import GHC.Prim (coerce)
+
+#if !defined(ghcjs_HOST_OS)
+import qualified Language.Javascript.JSaddle as JS
+#endif
 
 import qualified Anapo.VDOM as V
 import Anapo.Logging
@@ -124,10 +127,12 @@ instance Functor (Action context state) where
     x <- g env trav
     return (f x)
 
-#if !defined(ghcjs_HOST_OS)
-instance JS.MonadJSM (DomM dom ctx st) where
-  {-# INLINE liftJSM' #-}
-  liftJSM' m = DomM (\runJsm _actEnv _acTrav _anEnv _ctx _st _dom -> unliftIO runJsm m)
+{-# INLINE dangerousLiftJSM #-}
+dangerousLiftJSM :: DOM.JSM a -> DomM dom ctx st a
+#if defined(ghcjs_HOST_OS)
+dangerousLiftJSM = dangerousLiftIO
+#else
+dangerousLiftJSM m = DomM (\runJsm _actEnv _acTrav _anEnv _ctx _st _dom -> unliftIO runJsm m)
 #endif
 
 instance Applicative (Action context state) where
@@ -384,11 +389,11 @@ type KeyedDom' ctx st a = DomM KeyedDomState ctx st a
 type Node ctx st = DomM () ctx st V.Node
 type Node' ctx st a = DomM () ctx st (V.Node, a)
 
-instance MonadIO (DomM dom ctx st) where
-  {-# INLINE liftIO #-}
-  liftIO m = DomM $ \_runJsm _actEnv _acTrav _anEnv _ctx _st _dom -> do
-    x <- liftIO m
-    return x
+{-# INLINE dangerousLiftIO #-}
+dangerousLiftIO :: IO a -> DomM dom ctx st a
+dangerousLiftIO m = DomM $ \_runJsm _actEnv _acTrav _anEnv _ctx _st _dom -> do
+  x <- liftIO m
+  return x
 
 instance Functor (DomM dom ctx st) where
   {-# INLINE fmap #-}
@@ -417,11 +422,11 @@ instance (a ~ ()) => Monoid (DomM dom ctx st a) where
   {-# INLINE mappend #-}
   mappend = (>>)
 
-instance MonadAction ctx st (DomM dom ctx st) where
-  {-# INLINE liftAction #-}
-  liftAction (Action f) = DomM $ \runJsm acEnv acTrav _anEnv _ctx _st _dom -> do
-    x <- unliftIO runJsm (f acEnv acTrav)
-    return x
+{-# INLINE dangerousLiftAction #-}
+dangerousLiftAction :: Action context state a -> DomM dom context state a
+dangerousLiftAction (Action f) = DomM $ \runJsm acEnv acTrav _anEnv _ctx _st _dom -> do
+  x <- unliftIO runJsm (f acEnv acTrav)
+  return x
 
 instance MonadReader st (DomM dom ctx st) where
   {-# INLINE ask #-}
@@ -611,7 +616,7 @@ key' k getNode = DomM $ \runJsm acEnv acTrav anEnv ctx st dom -> do
 
 {-# INLINE text #-}
 text :: Text -> Node ctx st
-text txt = liftIO (V.node (V.NBText txt))
+text txt = dangerousLiftIO (V.node (V.NBText txt))
 
 instance (el ~ DOM.Text) => IsString (Node ctx st) where
   {-# INLINE fromString #-}
@@ -624,7 +629,7 @@ rawNode ::
   -> [V.AddCallback]
   -> Node ctx st
 rawNode x patches = do
-  node <- liftIO (V.node (V.NBRaw (DOM.toNode x)))
+  node <- dangerousLiftIO (V.node (V.NBRaw (DOM.toNode x)))
   return (foldl' V.addNodeCallback node patches)
 
 {-# INLINABLE marked #-}
@@ -662,7 +667,7 @@ class IsElementChildren a ctx st where
 instance IsElementChildren () ctx st where
   {-# INLINE elementChildren #-}
   elementChildren _ = do
-    dom <- liftIO V.normalChildren
+    dom <- dangerousLiftIO V.normalChildren
     return (V.ChildrenNormal dom)
 instance (a ~ (), ctx1 ~ ctx2, st1 ~ st2) => IsElementChildren (DomM DomState ctx1 st1 a) ctx2 st2 where
   {-# INLINE elementChildren #-}
@@ -699,10 +704,10 @@ patchElement :: forall el ctx st.
   -> [NodePatch el ctx st]
   -> Node ctx st
 patchElement node0 patches0 = do
-  u <- liftAction askUnliftJSM
+  u <- actionUnliftIO
   let
     wrapCallback :: (el -> Action ctx st ()) -> (DOM.HTMLElement -> DOM.JSM ())
-    wrapCallback cback (DOM.HTMLElement el_) = unliftJSM u . cback =<< DOM.fromJSValUnchecked el_
+    wrapCallback cback (DOM.HTMLElement el_) = liftIO . unliftIO u . cback =<< DOM.fromJSValUnchecked el_
   let
     mkPatches :: V.Node -> [NodePatch el ctx st] -> IO V.Node
     mkPatches !node = \case
@@ -746,13 +751,13 @@ patchElement node0 patches0 = do
           mkPatches node patches
         NPEvent (SomeEventAction evName evListener) -> do
           liftIO $ V.patchElement node $ V.EPEvent evName $ \el_ ev_ -> do
-            unliftJSM u (evListener (coerce el_) (coerce ev_))
+            liftIO (unliftIO u (evListener (coerce el_) (coerce ev_)))
           mkPatches node patches
         NPClasses classes -> do
           liftIO $ for_ classes $ \class_ ->
             V.patchElement node (V.EPClass class_)
           mkPatches node patches
-  liftIO (mkPatches node0 patches0)
+  dangerousLiftIO (mkPatches node0 patches0)
 
 {-# INLINABLE el #-}
 el :: forall a ctx st el.
@@ -767,8 +772,8 @@ el :: forall a ctx st el.
   -> Node ctx st
 el tag patches0 isChildren = do
   children <- elementChildren isChildren
-  vel <- liftIO (V.element tag children)
-  node0 <- liftIO (V.node (V.NBElement vel))
+  vel <- dangerousLiftIO (V.element tag children)
+  node0 <- dangerousLiftIO (V.node (V.NBElement vel))
   patchElement node0 patches0
 
 -- Properties
@@ -866,19 +871,9 @@ simpleRenderNode st node = do
 -- utils
 -- --------------------------------------------------------------------
 
-type UnliftJSM = UnliftIO
-
-{-# INLINE askUnliftJSM #-}
-askUnliftJSM :: (MonadUnliftIO m) => m (UnliftJSM m)
-askUnliftJSM = askUnliftIO
-
-{-# INLINE unliftJSM #-}
-unliftJSM :: (DOM.MonadJSM n) => UnliftJSM m -> m a -> n a
-unliftJSM u m = DOM.liftJSM (liftIO (unliftIO u m))
-
-{-# INLINE actionUnliftJSM #-}
-actionUnliftJSM :: (MonadAction context state m) => m (UnliftJSM (Action context state))
-actionUnliftJSM = liftAction askUnliftJSM
+{-# INLINE actionUnliftIO #-}
+actionUnliftIO :: DomM dom context state (UnliftIO (Action context state))
+actionUnliftIO = dangerousLiftAction askUnliftIO
 
 -- Components
 -- --------------------------------------------------------------------
@@ -986,7 +981,7 @@ registerComponent name ref props = DomM $ \_runJsm _acEnv _acTrav anEnv _ctx _st
 
 {-# INLINE initComponent #-}
 initComponent :: Component props ctx st -> ctx -> DomM dom ctx0 st0 (ComponentToken props ctx st)
-initComponent comp ctx = liftIO $ do
+initComponent comp ctx = dangerousLiftIO $ do
   writeIORef (_componentContext comp) (Just ctx)
   return (ComponentToken (_componentContext comp))
 

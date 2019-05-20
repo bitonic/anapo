@@ -25,6 +25,7 @@ import qualified Data.HashMap.Strict as HMS
 import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
 import Control.Exception.Safe (try)
 import Data.List (foldl')
+import Control.Monad.IO.Unlift (askUnliftIO)
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -130,7 +131,7 @@ nodeLoop withState node shouldRethrow excComp injectMode root = do
       -> DOM.JSM V.Node
     runComp path travComp comp props = do
       mbCtx <- liftIO (readIORef (_componentContext comp))
-      runJsm <- askUnliftJSM
+      runJsm <- askUnliftIO
       (vdom, vdomDt) <- timeIt $ liftIO $ unDomM
         (do
           node0 <- _componentNode comp props

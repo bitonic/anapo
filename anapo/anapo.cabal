@@ -28,8 +28,10 @@ library
     Anapo.Logging
     Anapo.CollectedThread
     Anapo.Debug
-  other-modules:
+
     Anapo.Component.Internal
+    Anapo.VDOM.Internal
+  other-modules:
     Anapo.Component.Elements
     Anapo.Component.Attributes
     Anapo.Component.Events

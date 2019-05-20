@@ -35,4 +35,6 @@ let
   js-framework-benchmark = haskellPackages.callPackage ./js-framework-benchmark/js-framework-benchmark.nix {
     inherit anapo;
   };
-in { inherit anapo anapo-test-app js-framework-benchmark; }
+in { inherit anapo anapo-test-app js-framework-benchmark; } // (if ghcjs then {} else {
+  anapo-blaze = haskellPackages.callPackage ./anapo-blaze/anapo-blaze.nix { inherit anapo; };
+})

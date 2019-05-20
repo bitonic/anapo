@@ -50,10 +50,10 @@ module Anapo.Component
   , zoomCtxL
   , askContext
   , viewContext
-  , UnliftJSM
-  , askUnliftJSM
-  , unliftJSM
-  , actionUnliftJSM
+  , actionUnliftIO
+  , dangerousLiftIO
+  , dangerousLiftJSM
+  , dangerousLiftAction
 
     -- * Component
   , Component

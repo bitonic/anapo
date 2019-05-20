@@ -46,12 +46,12 @@ makeLenses ''TodoState
 todoComponent :: Node () TodoState
 todoComponent = div_ [] $ do
   st <- ask
-  u <- liftAction askUnliftJSM
+  u <- actionUnliftIO
   n$ div_ [class_ "row align-items-center"] $ do
     n$ div_ [class_ "col-md-auto"] $ do
       n$ componentL_ tsInput STIP
         { stipButtonText = "Add #" <> tshow (Map.size (st ^. tsTodoElements) + 1)
-        , stipOnSubmit = unliftJSM u $ dispatch $ do
+        , stipOnSubmit = liftIO $ unliftIO u $ dispatch $ do
             curText <- use (tsInput.compState)
             when (curText /= "") $ do
               let newTodoItem = TodoItemState False curText

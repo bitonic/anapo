@@ -153,7 +153,7 @@ rowsComponent =
       let
         go !ix = if ix < len
           then do
-            Row{..} <- liftIO (MV.unsafeRead _stateRows ix)
+            Row{..} <- dangerousLiftIO (MV.unsafeRead _stateRows ix)
             let cl = if Just _rowId == _stateSelected
                   then "danger"
                   else ""

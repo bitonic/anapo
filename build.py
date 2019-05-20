@@ -45,6 +45,8 @@ if args.project:
     build(args.project, not args.ghc)
 else:
   for ghcjs in [True, False]:
-    projects = ["anapo", "anapo-test-app", "js-framework-benchmark"]
+    projects = ["anapo", "anapo-test-app", "js-framework-benchmark", "anapo-blaze"]
     for project in projects:
-      build_nix(project, ghcjs)
+      # anapo-blaze does not build on GHCjs
+      if not (project == "anapo-blaze" and ghcjs):
+        build_nix(project, ghcjs)
