@@ -433,7 +433,7 @@ assertContext :: HasCallStack => Text -> Maybe ctx -> ctx
 assertContext compName mbCtx =
   case mbCtx of
     Nothing -> do
-      error ("Could not get the component for viewer " <> T.unpack compName)
+      error ("Could not get the context for component " <> show compName)
     Just ctx -> ctx
 
 {-# INLINE askContext #-}
