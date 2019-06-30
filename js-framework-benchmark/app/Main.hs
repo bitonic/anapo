@@ -107,7 +107,7 @@ rowsComponent =
               n$ button_ [type_ "button", class_ "btn btn-primary btn-block", id_ "swaprows", onclick_ swapRows] (n$ "Swap Rows")
     n$ table_ [class_ "table table-hover table-striped test-data"] $
       n$ tbody_ [] rowsDom
-    n$ span_ [class_ "preloadicon glyphicon glyphicon-remove", attribute "aria-hidden" "true"] ()
+    n$ span_ [class_ "preloadicon glyphicon glyphicon-remove", textAttribute "aria-hidden" "true"] ()
   where
     runCount count _ ev = do
       preventDefault ev
@@ -164,7 +164,7 @@ rowsComponent =
                   n$ a_ [onclick_ (select _rowId)] (n$ text _rowLabel)
                 n$ td_ [class_ "col-md-1"] $ do
                   n$ a_ [onclick_ (delete ix)] $
-                    n$ span_ [class_ "glyphicon glyphicon-remove", attribute "aria-hidden" "true"] ()
+                    n$ span_ [class_ "glyphicon glyphicon-remove", textAttribute "aria-hidden" "true"] ()
                 n$ td_ [class_ "col-md-6"] ()
             go (ix+1)
           else return ()
