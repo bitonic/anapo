@@ -190,6 +190,7 @@ mainJSM = installNodeBody
       DOM.liftJSM (cont State{_stateRows = rows, _stateSelected = Nothing}))
   rowsComponent
   (const True)
+  (const True)
   (\err -> text ("Got error: " <> T.pack (show err)))
   IMAppend
 

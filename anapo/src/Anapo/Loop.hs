@@ -25,6 +25,7 @@ import qualified Data.HashMap.Strict as HMS
 import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
 import Control.Exception.Safe (try)
 import Data.List (foldl')
+import GHC.Stack
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -70,6 +71,8 @@ nodeLoop :: forall st.
   -> Node () st
   -- ^ how to render the state. returns whether the exception should be re-thrown
   -> (SomeException -> Bool)
+  -- ^ Whether to error or warn on exception
+  -> (SomeException -> Bool)
   -- ^ Whether to re-throw exceptions. For exceptions that return 'False' here, we will
   -- simply render them, emit a warning, and shut down.
   -> (SomeException -> Node () ())
@@ -81,7 +84,7 @@ nodeLoop :: forall st.
   -> DOM.JSM V.RenderedNode
   -- ^ returns the rendered node, when there is nothing left to
   -- do. might never terminate
-nodeLoop withState node shouldRethrow excComp injectMode root = do
+nodeLoop withState node shouldLogError shouldRethrow excComp injectMode root = do
   -- dispatch channel
   dispatchChan :: Chan (DispatchMsg st) <- liftIO newChan
   let
@@ -156,19 +159,23 @@ nodeLoop withState node shouldRethrow excComp injectMode root = do
     (withState $ \st0 -> do
       -- what to do in case of exceptions
       let
+        logException :: HasCallStack => SomeException -> Text -> DOM.JSM ()
+        logException exc = if shouldLogError exc
+          then logError
+          else logWarn
         onErrRethrow :: V.RenderedNode -> SomeException -> DOM.JSM a
         onErrRethrow rendered err = do
-          logError ("Got exception, will render it and rethrow: " <> pack (show err))
+          logException err ("Got exception, will render it and rethrow: " <> pack (show err))
           vdom <- simpleNode () (excComp err)
           void (V.reconciliate rendered [] vdom)
-          logError ("Just got exception and rendered, rethrowing: " <> pack (show err))
+          logException err ("Just got exception and rendered, rethrowing: " <> pack (show err))
           liftIO (throwIO err)
         onErrNoRethrow :: V.RenderedNode -> SomeException -> DOM.JSM ()
         onErrNoRethrow rendered err = do
-          logWarn ("Got exception, will render it and not rethrow: " <> pack (show err))
+          logException err ("Got exception, will render it and not rethrow: " <> pack (show err))
           vdom <- simpleNode () (excComp err)
           void (V.reconciliate rendered [] vdom)
-          logWarn ("Just got exception and rendered, won't rethrow: " <> pack (show err))
+          logException err ("Just got exception and rendered, won't rethrow: " <> pack (show err))
           liftIO (throwIO err)
         onErr :: V.RenderedNode -> SomeException -> DOM.JSM ()
         onErr rendered err = if shouldRethrow err
@@ -280,13 +287,18 @@ installNodeBody ::
      (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st
   -> (SomeException -> Bool)
+  -- ^ Whether to error or warn on exception
+  -> (SomeException -> Bool)
+  -- ^ Whether to re-throw exceptions. For exceptions that return 'False' here, we will
+  -- simply render them, emit a warning, and shut down.
   -> (SomeException -> Node () ())
+  -- ^ How to render exceptions
   -> InstallMode
   -> DOM.JSM ()
-installNodeBody getSt vdom0 shouldRethrow excVdom injectMode = do
+installNodeBody getSt vdom0 shouldLogError shouldRethrow excVdom injectMode = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.Document.getBodyUnchecked doc
-  void (nodeLoop getSt vdom0 shouldRethrow excVdom injectMode (DOM.toNode body))
+  void (nodeLoop getSt vdom0 shouldLogError shouldRethrow excVdom injectMode (DOM.toNode body))
 
 {-# INLINABLE installNode #-}
 installNode ::
@@ -294,12 +306,17 @@ installNode ::
   => (forall a. (st -> DOM.JSM a) -> Action () st a)
   -> Node () st
   -> (SomeException -> Bool)
+  -- ^ Whether to error or warn on exception
+  -> (SomeException -> Bool)
+  -- ^ Whether to re-throw exceptions. For exceptions that return 'False' here, we will
+  -- simply render them, emit a warning, and shut down.
   -> (SomeException -> Node () ())
+  -- ^ How to render exceptions
   -> InstallMode
   -> el
   -> DOM.JSM ()
-installNode getSt vdom0 shouldRethrow excVdom injectMode container = do
-  void (nodeLoop getSt vdom0 shouldRethrow excVdom injectMode (DOM.toNode container))
+installNode getSt vdom0 shouldLogError shouldRethrow excVdom injectMode container = do
+  void (nodeLoop getSt vdom0 shouldLogError shouldRethrow excVdom injectMode (DOM.toNode container))
 
 addCallStack :: CallStack -> Text -> Text
 addCallStack stack = case getCallStack stack of
