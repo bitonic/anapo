@@ -691,9 +691,21 @@ patchElement :: forall el ctx st.
   -> Node ctx st
 patchElement node0 patches0 = liftAction $ do
   u <- askUnliftJSM
+  handler :: HandleException <- liftAction (Action (\env _trav -> return (aeHandleException env)))
   let
     wrapCallback :: (el -> Action ctx st ()) -> (DOM.HTMLElement -> DOM.JSM ())
-    wrapCallback cback (DOM.HTMLElement el_) = unliftJSM u . cback =<< DOM.fromJSValUnchecked el_
+    wrapCallback cback (DOM.HTMLElement el_) = do
+      -- handle exceptions in callbacks very much like in threads, so that
+      -- they won't bring down the entire website.
+      x <- DOM.fromJSValUnchecked el_
+      liftIO $ uninterruptibleMask $ \restore -> do
+        mbRes <- tryAny (restore (unliftIO u (cback x)))
+        case mbRes of
+          Right () -> return ()
+          Left err -> do
+            tid <- myThreadId
+            logWarn ("Caught exception while executing event callback with thread id " <> pack (show tid) <> ", will handle it upstream: " <> pack (show err))
+            handler err
   let
     mkPatches :: V.Node -> [NodePatch el ctx st] -> JS.JSM V.Node
     mkPatches !node = \case
