@@ -22,9 +22,7 @@ mainJSM = do
   installNodeBody
     (\cont -> testAppsWith (liftJSM . cont))
     testAppsComponent
-    (const True)
-    (const True)
-    (\exc -> testAppsError (tshow exc))
+    (\_ctx exc -> return (HEShutdown (testAppsError (tshow exc))))
     IMAppend
 
 main :: IO ()

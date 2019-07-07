@@ -4,6 +4,8 @@ module Anapo.Loop
   ( installNodeBody
   , installNode
   , InstallMode(..)
+  , ExceptionContext(..)
+  , HandledException(..)
   ) where
 
 import Control.Concurrent.Chan (Chan, writeChan, readChan, newChan)
@@ -14,7 +16,7 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
 import Data.Monoid ((<>))
 import Control.Exception.Safe (throwIO, tryAsync, SomeException(..), bracket, finally, Exception, Typeable)
 import Control.Exception (BlockedIndefinitelyOnMVar)
-import Control.Concurrent (MVar, newEmptyMVar, tryPutMVar, readMVar)
+import Control.Concurrent (MVar, newEmptyMVar, tryPutMVar, takeMVar)
 import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef, writeIORef)
 import qualified Control.Concurrent.Async as Async
 import Data.HashSet (HashSet)
@@ -22,7 +24,6 @@ import qualified Data.HashSet as HS
 import Control.Concurrent (ThreadId, killThread, myThreadId)
 import Control.Monad.State (runStateT, put, get, lift)
 import qualified Data.HashMap.Strict as HMS
-import GHC.Stack (CallStack, SrcLoc(..), getCallStack)
 import Control.Exception.Safe (try)
 import Data.List (foldl')
 import GHC.Stack
@@ -65,18 +66,29 @@ data InstallMode =
     IMAppend -- ^ append the node inside the the provided container
   | IMEraseAndAppend -- ^ clear everything in the container and append
 
+data ExceptionContext =
+    ECThread
+  -- ^ the exception came up in a thread
+  | ECUpdatingState
+  -- ^ the exception came up while updating the state because of a dispatch
+  | ECRendering
+  -- ^ the exception came up while rendering
+
+data HandledException =
+    HEIgnore -- ^ just continue going as if nothing happened
+  | HEShutdown (Node () ()) -- ^ render the given node and shutdown
+
 {-# INLINABLE nodeLoop #-}
 nodeLoop :: forall st.
      (forall a. (st -> DOM.JSM a) -> Action () st a)
+  -- ^ Function initializing the state.
   -> Node () st
-  -- ^ how to render the state. returns whether the exception should be re-thrown
-  -> (SomeException -> Bool)
-  -- ^ Whether to error or warn on exception
-  -> (SomeException -> Bool)
-  -- ^ Whether to re-throw exceptions. For exceptions that return 'False' here, we will
-  -- simply render them, emit a warning, and shut down.
-  -> (SomeException -> Node () ())
-  -- ^ how to render exceptions
+  -- ^ The top-level component
+  -> (ExceptionContext -> SomeException -> DOM.JSM HandledException)
+  -- ^ How to handle exceptions.
+  -- Note that you should should do your own logging of exceptions here,
+  -- the loop itself will only print some info messages. This handler
+  -- should really not throw!
   -> InstallMode
   -- ^ how to place the node
   -> DOM.Node
@@ -84,7 +96,7 @@ nodeLoop :: forall st.
   -> DOM.JSM V.RenderedNode
   -- ^ returns the rendered node, when there is nothing left to
   -- do. might never terminate
-nodeLoop withState node shouldLogError shouldRethrow excComp injectMode root = do
+nodeLoop withState node handleException injectMode root = do
   -- dispatch channel
   dispatchChan :: Chan (DispatchMsg st) <- liftIO newChan
   let
@@ -159,28 +171,18 @@ nodeLoop withState node shouldLogError shouldRethrow excComp injectMode root = d
     (withState $ \st0 -> do
       -- what to do in case of exceptions
       let
-        logException :: HasCallStack => SomeException -> Text -> DOM.JSM ()
-        logException exc = if shouldLogError exc
-          then logError
-          else logWarn
-        onErrRethrow :: V.RenderedNode -> SomeException -> DOM.JSM a
-        onErrRethrow rendered err = do
-          logException err ("Got exception, will render it and rethrow: " <> pack (show err))
-          vdom <- simpleNode () (excComp err)
-          void (V.reconciliate rendered [] vdom)
-          logException err ("Just got exception and rendered, rethrowing: " <> pack (show err))
-          liftIO (throwIO err)
-        onErrNoRethrow :: V.RenderedNode -> SomeException -> DOM.JSM ()
-        onErrNoRethrow rendered err = do
-          logException err ("Got exception, will render it and not rethrow: " <> pack (show err))
-          vdom <- simpleNode () (excComp err)
-          void (V.reconciliate rendered [] vdom)
-          logException err ("Just got exception and rendered, won't rethrow: " <> pack (show err))
-          liftIO (throwIO err)
-        onErr :: V.RenderedNode -> SomeException -> DOM.JSM ()
-        onErr rendered err = if shouldRethrow err
-          then onErrRethrow rendered err
-          else onErrNoRethrow rendered err
+        onErr :: DOM.JSM () -> V.RenderedNode -> ExceptionContext -> SomeException -> DOM.JSM ()
+        onErr continue rendered ctx err = do
+          logInfo ("Got exception " <> pack (show err) <> ", will ask upstream to handle it")
+          handled <- handleException ctx err
+          case handled of
+            HEShutdown comp -> do
+              logInfo "Exception handler asked for a shutdown, will render and terminate"
+              vdom <- simpleNode () comp
+              void (V.reconciliate rendered [] vdom)
+            HEIgnore -> do
+              logInfo "Exception handler asked for an ignore, will continue"
+              continue
       -- main loop
       let
         go ::
@@ -191,11 +193,16 @@ nodeLoop withState node shouldLogError shouldRethrow excComp injectMode root = d
           -> DOM.JSM ()
         go compRoot !rendered = do
           -- get the next update or the next exception. we are biased
-          -- towards exceptions since we want to exit immediately when
-          -- there is a failure.
-          fOrErr :: Either SomeException (Maybe (DispatchMsg st)) <- liftIO (Async.race (readMVar excVar) getMsg)
+          -- towards exceptions since we want to give the caller the
+          -- chance to exit immediately if there is a failure.
+          --
+          -- note that it's important to 'takeMVar', rather than to
+          -- 'readMVar', since the handler might ignore the exception,
+          -- so if we did 'readMVar' we'd end up in an infinite loop.
+          fOrErr :: Either SomeException (Maybe (DispatchMsg st)) <- liftIO (Async.race (takeMVar excVar) getMsg)
           case fOrErr of
-            Left err -> onErr rendered err
+            Left err -> do
+              onErr (go compRoot rendered) rendered ECThread err
             Right Nothing -> do
               logInfo "No state update received, terminating component loop"
               return ()
@@ -212,7 +219,7 @@ nodeLoop withState node shouldLogError shouldRethrow excComp injectMode root = d
                       case mbComp of
                         Just{} -> do
                           -- fail if we already visited
-                          lift $ onErrRethrow rendered $ SomeException $ AnapoException
+                          lift $ throwIO $ AnapoException
                             "nodeLoop: visited multiple elements in the affine traversal for component! check if your AffineTraversal are really affine"
                         Nothing -> do
                           mbCtx <- liftIO (readIORef (_componentContext comp))
@@ -228,8 +235,8 @@ nodeLoop withState node shouldLogError shouldRethrow excComp injectMode root = d
                   compRoot)
                 Nothing
               case compOrErr of
-                Left err ->
-                  onErr rendered err
+                Left err -> do
+                  onErr (go compRoot rendered) rendered ECUpdatingState err
                 Right (compRoot', mbComp) -> do
                   logDebug ("State updated (" <> pack (show updateDt) <> "), might re render")
                   case mbComp of
@@ -240,16 +247,23 @@ nodeLoop withState node shouldLogError shouldRethrow excComp injectMode root = d
                       case rerender of
                         UnsafeDontRerender -> do
                           logDebug ("Not rerendering component " <> _componentName comp <> " since the update function returned UnsafeDontRerender")
-                          return ()
+                          go compRoot' rendered
                         Rerender -> do
                           positions <- liftIO (readIORef (_componentPositions comp))
                           logDebug ("Rendering component " <> _componentName comp <> " at " <> pack (show (HMS.size positions)) <> " positions")
                           -- do not leave half-done DOM in place, run
                           -- everything synchronously
-                          synchronously $ for_ (HMS.toList positions) $ \(pos, props) -> do
+                          --
+                          -- important to 'try' wrapping the synchronously: this way
+                          -- we'll catch "thread would block" errors.
+                          mbErr <- try $ synchronously $ for_ (HMS.toList positions) $ \(pos, props) -> do
                             vdom <- runComp pos travComp comp props
                             V.reconciliate rendered pos vdom
-                      go compRoot' rendered
+                          case mbErr of
+                            Left err -> do
+                              onErr (go compRoot rendered) rendered ECRendering err
+                            Right () -> do
+                              go compRoot' rendered
       tid <- liftIO myThreadId
       finally
         (do
@@ -285,38 +299,38 @@ removeAllChildren node = go
 {-# INLINABLE installNodeBody #-}
 installNodeBody ::
      (forall a. (st -> DOM.JSM a) -> Action () st a)
+  -- ^ Function initializing the state.
   -> Node () st
-  -> (SomeException -> Bool)
-  -- ^ Whether to error or warn on exception
-  -> (SomeException -> Bool)
-  -- ^ Whether to re-throw exceptions. For exceptions that return 'False' here, we will
-  -- simply render them, emit a warning, and shut down.
-  -> (SomeException -> Node () ())
-  -- ^ How to render exceptions
+  -- ^ The top-level component
+  -> (ExceptionContext -> SomeException -> DOM.JSM HandledException)
+  -- ^ How to handle exceptions.
+  -- Note that you should should do your own logging of exceptions here,
+  -- the loop itself will only print some info messages. This handler
+  -- should really not throw!
   -> InstallMode
   -> DOM.JSM ()
-installNodeBody getSt vdom0 shouldLogError shouldRethrow excVdom injectMode = do
+installNodeBody getSt handleExceptions excVdom injectMode = do
   doc <- DOM.currentDocumentUnchecked
   body <- DOM.Document.getBodyUnchecked doc
-  void (nodeLoop getSt vdom0 shouldLogError shouldRethrow excVdom injectMode (DOM.toNode body))
+  void (nodeLoop getSt handleExceptions excVdom injectMode (DOM.toNode body))
 
 {-# INLINABLE installNode #-}
 installNode ::
      (DOM.IsNode el)
   => (forall a. (st -> DOM.JSM a) -> Action () st a)
+  -- ^ Function initializing the state.
   -> Node () st
-  -> (SomeException -> Bool)
-  -- ^ Whether to error or warn on exception
-  -> (SomeException -> Bool)
-  -- ^ Whether to re-throw exceptions. For exceptions that return 'False' here, we will
-  -- simply render them, emit a warning, and shut down.
-  -> (SomeException -> Node () ())
-  -- ^ How to render exceptions
+  -- ^ The top-level component
+  -> (ExceptionContext -> SomeException -> DOM.JSM HandledException)
+  -- ^ How to handle exceptions.
+  -- Note that you should should do your own logging of exceptions here,
+  -- the loop itself will only print some info messages. This handler
+  -- should really not throw!
   -> InstallMode
   -> el
   -> DOM.JSM ()
-installNode getSt vdom0 shouldLogError shouldRethrow excVdom injectMode container = do
-  void (nodeLoop getSt vdom0 shouldLogError shouldRethrow excVdom injectMode (DOM.toNode container))
+installNode getSt handleExceptions excVdom injectMode container = do
+  void (nodeLoop getSt handleExceptions excVdom injectMode (DOM.toNode container))
 
 addCallStack :: CallStack -> Text -> Text
 addCallStack stack = case getCallStack stack of
