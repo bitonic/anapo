@@ -2,6 +2,6 @@ let pkgs = import <nixpkgs> {};
 in pkgs.fetchFromGitHub {
  owner = "bitonic";
  repo = "jsaddle";
- rev = "55a9e5af2573a2b0a26b09c2ac87aab3b6de1bc0";
- sha256 = "18xqq657m01zlw0awz671rk56m11a1y3ay9crgfd7920nwc5pfs6";
+ rev = "fbbd7c1d320dd7eddb965e365744c2405618b4dd";
+ sha256 = "1xg4phpyybdkrhg43n82dlcw2j8qpn3qnn4zdxyj284mpvdng5zr";
 }
