@@ -322,7 +322,7 @@ namespace Render {
   // appends to callbacksToRelease
   function removeNode(container: HTMLElement, rvdom: RenderedNode, callbacksToRelease: VDom.CallbackToken) {
     // call the callback first
-    VDom.callLifecycleCallback(container, rvdom.vdom.callbacks, "willRemove");
+    VDom.callLifecycleCallback(rvdom.dom, rvdom.vdom.callbacks, "willRemove");
     // cleanup the children
     if (rvdom.children) {
       cleanupChildren(rvdom.children, callbacksToRelease);

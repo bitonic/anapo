@@ -240,7 +240,7 @@ var Render;
     // appends to callbacksToRelease
     function removeNode(container, rvdom, callbacksToRelease) {
         // call the callback first
-        VDom.callLifecycleCallback(container, rvdom.vdom.callbacks, "willRemove");
+        VDom.callLifecycleCallback(rvdom.dom, rvdom.vdom.callbacks, "willRemove");
         // cleanup the children
         if (rvdom.children) {
             cleanupChildren(rvdom.children, callbacksToRelease);
