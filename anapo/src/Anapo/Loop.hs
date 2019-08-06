@@ -15,8 +15,7 @@ import Data.Foldable (traverse_, for_)
 import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
 import Data.Monoid ((<>))
 import Control.Exception.Safe (throwIO, tryAsync, SomeException(..), bracket, finally, Exception, Typeable)
-import Control.Exception (BlockedIndefinitelyOnMVar)
-import Control.Concurrent (MVar, newEmptyMVar, tryPutMVar, takeMVar)
+import Control.Exception (BlockedIndefinitelyOnMVar(..))
 import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef, writeIORef)
 import qualified Control.Concurrent.Async as Async
 import Data.HashSet (HashSet)
@@ -98,18 +97,7 @@ nodeLoop :: forall st.
   -- do. might never terminate
 nodeLoop withState node handleException injectMode root = do
   -- dispatch channel
-  dispatchChan :: Chan (DispatchMsg st) <- liftIO newChan
-  let
-    getMsg = do
-      mbF :: Either BlockedIndefinitelyOnMVar (DispatchMsg st) <- tryAsync (readChan dispatchChan)
-      case mbF of
-        Left{} -> do
-          logInfo "got undefinitedly blocked on mvar on dispatch channel, will stop"
-          return Nothing
-        Right f -> return (Just f)
-  -- exception mvar
-  excVar :: MVar SomeException <- liftIO newEmptyMVar
-  let handler err = void (tryPutMVar excVar err)
+  dispatchChan :: Chan (Either SomeException (DispatchMsg st)) <- liftIO newChan
   -- set of threads
   tidsRef :: IORef (HashSet ThreadId) <- liftIO (newIORef mempty)
   let
@@ -123,8 +111,8 @@ nodeLoop withState node handleException injectMode root = do
     actionEnv :: ActionEnv (Component () () st)
     actionEnv = ActionEnv
       { aeRegisterThread = register
-      , aeHandleException = handler
-      , aeDispatch = Dispatch (\stack travComp modify -> writeChan dispatchChan (DispatchMsg travComp modify stack))
+      , aeHandleException = \exc -> writeChan dispatchChan (Left exc)
+      , aeDispatch = Dispatch (\stack travComp modify -> writeChan dispatchChan (Right (DispatchMsg travComp modify stack)))
       }
   let
     actionTrav ::
@@ -192,21 +180,17 @@ nodeLoop withState node handleException injectMode root = do
           -- ^ the rendered node
           -> DOM.JSM ()
         go compRoot !rendered = do
-          -- get the next update or the next exception. we are biased
-          -- towards exceptions since we want to give the caller the
-          -- chance to exit immediately if there is a failure.
-          --
-          -- note that it's important to 'takeMVar', rather than to
-          -- 'readMVar', since the handler might ignore the exception,
-          -- so if we did 'readMVar' we'd end up in an infinite loop.
-          fOrErr :: Either SomeException (Maybe (DispatchMsg st)) <- liftIO (Async.race (takeMVar excVar) getMsg)
-          case fOrErr of
-            Left err -> do
-              onErr (go compRoot rendered) rendered ECThread err
-            Right Nothing -> do
-              logInfo "No state update received, terminating component loop"
-              return ()
-            Right (Just (DispatchMsg travComp modif stack)) -> do
+          -- get the next update or the next exception, or observe the end of events.
+          eEvent :: Either BlockedIndefinitelyOnMVar (Either SomeException (DispatchMsg st))
+            <- liftIO $ tryAsync (readChan dispatchChan)
+          case eEvent of
+            Left BlockedIndefinitelyOnMVar{} -> do
+              logInfo "Got BlockedIndefinitelyOnMVar on dispatch channel, there can be no further state updates; terminating component loop"
+
+            Right (Left exc) -> do
+              onErr (go compRoot rendered) rendered ECThread exc
+
+            Right (Right (DispatchMsg travComp modif stack)) -> do
               logDebug (addCallStack stack "About to update state")
               -- traverse to the component using StateT, failing
               -- if we reach anything twice (it'd mean it's not an
