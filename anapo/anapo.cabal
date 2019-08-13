@@ -46,7 +46,8 @@ library
     unordered-containers,
     vector,
     jsaddle,
-    ghc-prim
+    ghc-prim,
+    stm
   if !impl(ghcjs)
     build-depends:
       text
