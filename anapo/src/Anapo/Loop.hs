@@ -8,17 +8,14 @@ module Anapo.Loop
   , HandledException(..)
   ) where
 
-import Control.Concurrent.Chan (Chan, writeChan, readChan, newChan)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (void, when)
 import Data.Foldable (traverse_, for_)
 import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
 import Data.Monoid ((<>))
 import Control.Exception.Safe (throwIO, tryAsync, SomeException(..), bracket, finally, Exception, Typeable)
-import Control.Exception (BlockedIndefinitelyOnMVar)
-import Control.Concurrent (MVar, newEmptyMVar, tryPutMVar, takeMVar)
+import Control.Exception (BlockedIndefinitelyOnSTM)
 import Data.IORef (IORef, readIORef, atomicModifyIORef', newIORef, writeIORef)
-import qualified Control.Concurrent.Async as Async
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 import Control.Concurrent (ThreadId, killThread, myThreadId)
@@ -27,6 +24,7 @@ import qualified Data.HashMap.Strict as HMS
 import Control.Exception.Safe (try)
 import Data.List (foldl')
 import GHC.Stack
+import Control.Concurrent.STM
 
 import qualified GHCJS.DOM as DOM
 import qualified GHCJS.DOM.Types as DOM
@@ -97,19 +95,29 @@ nodeLoop :: forall st.
   -- ^ returns the rendered node, when there is nothing left to
   -- do. might never terminate
 nodeLoop withState node handleException injectMode root = do
+  -- exception tmvar
+  excVar :: TMVar SomeException <- liftIO newEmptyTMVarIO
+  let handler err = void (atomically (tryPutTMVar excVar err))
   -- dispatch channel
-  dispatchChan :: Chan (DispatchMsg st) <- liftIO newChan
+  dispatchChan :: TChan (DispatchMsg st) <- liftIO newTChanIO
   let
-    getMsg = do
-      mbF :: Either BlockedIndefinitelyOnMVar (DispatchMsg st) <- tryAsync (readChan dispatchChan)
+    -- 'Nothing' means that no update will ever be received again.
+    getErrOrMsg :: IO (Maybe (Either SomeException (DispatchMsg st)))
+    getErrOrMsg = do
+      -- get the next update or the next exception. we are biased
+      -- towards exceptions since we want to give the caller the
+      -- chance to exit immediately if there is a failure.
+      --
+      -- note that it's important to 'takeTMVar', rather than to
+      -- 'readTMVar', since the handler might ignore the exception,
+      -- so if we did 'readTMVar' we'd end up in an infinite loop.
+      mbF :: Either BlockedIndefinitelyOnSTM (Either SomeException (DispatchMsg st)) <-
+        tryAsync (atomically (fmap Left (takeTMVar excVar) `orElse` fmap Right (readTChan dispatchChan)))
       case mbF of
         Left{} -> do
-          logInfo "got undefinitedly blocked on mvar on dispatch channel, will stop"
+          logInfo "got undefinitedly blocked on stm while getting exception or next state update, will stop"
           return Nothing
-        Right f -> return (Just f)
-  -- exception mvar
-  excVar :: MVar SomeException <- liftIO newEmptyMVar
-  let handler err = void (tryPutMVar excVar err)
+        Right x -> return (Just x)
   -- set of threads
   tidsRef :: IORef (HashSet ThreadId) <- liftIO (newIORef mempty)
   let
@@ -124,7 +132,7 @@ nodeLoop withState node handleException injectMode root = do
     actionEnv = ActionEnv
       { aeRegisterThread = register
       , aeHandleException = handler
-      , aeDispatch = Dispatch (\stack travComp modify -> writeChan dispatchChan (DispatchMsg travComp modify stack))
+      , aeDispatch = Dispatch (\stack travComp modify -> atomically (writeTChan dispatchChan (DispatchMsg travComp modify stack)))
       }
   let
     actionTrav ::
@@ -192,21 +200,14 @@ nodeLoop withState node handleException injectMode root = do
           -- ^ the rendered node
           -> DOM.JSM ()
         go compRoot !rendered = do
-          -- get the next update or the next exception. we are biased
-          -- towards exceptions since we want to give the caller the
-          -- chance to exit immediately if there is a failure.
-          --
-          -- note that it's important to 'takeMVar', rather than to
-          -- 'readMVar', since the handler might ignore the exception,
-          -- so if we did 'readMVar' we'd end up in an infinite loop.
-          fOrErr :: Either SomeException (Maybe (DispatchMsg st)) <- liftIO (Async.race (takeMVar excVar) getMsg)
+          fOrErr :: Maybe (Either SomeException (DispatchMsg st)) <- liftIO getErrOrMsg
           case fOrErr of
-            Left err -> do
-              onErr (go compRoot rendered) rendered ECThread err
-            Right Nothing -> do
+            Nothing -> do
               logInfo "No state update received, terminating component loop"
               return ()
-            Right (Just (DispatchMsg travComp modif stack)) -> do
+            Just (Left err) -> do
+              onErr (go compRoot rendered) rendered ECThread err
+            Just (Right (DispatchMsg travComp modif stack)) -> do
               logDebug (addCallStack stack "About to update state")
               -- traverse to the component using StateT, failing
               -- if we reach anything twice (it'd mean it's not an
